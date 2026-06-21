@@ -107,7 +107,7 @@
       // (e.g. Formspree/Netlify Forms) and remove preventDefault above.
       if (success) {
         success.classList.add("show");
-        success.scrollIntoView({ behavior: "smooth", block: "center" });
+        success.scrollIntoView({ behavior: "smooth", block: "start" });
       }
       form.querySelectorAll("input, textarea, select").forEach(function (i) {
         if (i.type !== "submit") i.value = "";
