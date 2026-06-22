@@ -17,6 +17,7 @@ import payRouter from './routes/pay.js';
 import googleOAuthRouter from './routes/google_oauth.js';
 import cronRouter from './routes/cron.js';
 import smsWebhookRouter from './routes/sms_webhook.js';
+import filesRouter from './routes/files.js';
 import inngestRouter from './routes/inngest.js';
 import adminApiRouter from './routes/admin/index.js';
 import './inngest/index.js'; // register background workflows (also used by the dev fallback)
@@ -50,6 +51,7 @@ export function createApp() {
   app.use('/api/pay', payRouter);
   app.use('/api/integrations/google', googleOAuthRouter);
   app.use('/api/webhooks/sms', smsWebhookRouter);
+  app.use('/api/files', filesRouter);
   app.use('/api/cron', cronRouter);
   // Only expose the Inngest serve endpoint when configured (prod). In dev the
   // in-process fallback runs workflows, so the endpoint isn't needed.

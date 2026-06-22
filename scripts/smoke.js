@@ -350,6 +350,26 @@ async function main() {
     const consent = await dbm.queryOne("SELECT status FROM customer_contact_consents WHERE tenant_id=1 AND address='+14105557777' ORDER BY captured_at DESC LIMIT 1");
     assert.equal(consent.status, 'opted_out');
   });
+  await check('[storage] save + serve a file (local driver)', async () => {
+    const { saveFile, signedUrl } = await import('../src/lib/storage.js');
+    const { getTenantById } = await import('../src/lib/tenants.js');
+    const tenant = await getTenantById(1);
+    const f = await saveFile(tenant, { buffer: Buffer.from('hello oarflow'), filename: 'note.txt', contentType: 'text/plain', kind: 'attachment', ownerType: 'customer', ownerId: 1 });
+    assert.ok(f.id && f.storage_key);
+    const url = await signedUrl(f);
+    const res = await fetch(url);
+    assert.equal(res.status, 200);
+    assert.equal(await res.text(), 'hello oarflow');
+    const bad = await fetch(`${base}/api/files/${f.id}?token=wrong`);
+    assert.equal(bad.status, 404);
+  });
+  await check('[permissions] role capabilities resolve correctly', async () => {
+    const { hasCapability } = await import('../src/lib/permissions.js');
+    assert.equal(hasCapability({ role: 'owner', capabilities: [] }, 'settings.manage'), true);
+    assert.equal(hasCapability({ role: 'staff', capabilities: [] }, 'settings.manage'), false);
+    assert.equal(hasCapability({ role: 'staff', capabilities: [] }, 'appointments.manage'), true);
+    assert.equal(hasCapability({ role: 'staff', capabilities: ['reports.view'] }, 'reports.view'), true);
+  });
   await check('[substrate] oncePerKey is idempotent', async () => {
     const { oncePerKey } = await import('../src/lib/events.js');
     let runs = 0;

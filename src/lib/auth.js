@@ -26,7 +26,7 @@ export async function getSessionContext(token) {
   if (!token) return null;
   const row = await queryOne(
     `SELECT s.id AS session_id, s.expires_at, s.revoked_at,
-            u.id AS user_id, u.username, u.display_name, u.role, u.tenant_id, u.is_active
+            u.id AS user_id, u.username, u.display_name, u.role, u.tenant_id, u.is_active, u.capabilities
        FROM admin_sessions s JOIN admin_users u ON u.id = s.admin_user_id
       WHERE s.session_token_hash = $1`,
     [sha256(token)],
@@ -35,7 +35,7 @@ export async function getSessionContext(token) {
   if (new Date(row.expires_at).getTime() < Date.now()) return null;
   query('UPDATE admin_sessions SET last_seen_at = now() WHERE id = $1', [row.session_id]).catch(() => {});
   return {
-    admin: { userId: row.user_id, username: row.username, displayName: row.display_name, role: row.role, tenantId: row.tenant_id },
+    admin: { userId: row.user_id, username: row.username, displayName: row.display_name, role: row.role, tenantId: row.tenant_id, capabilities: row.capabilities || [] },
   };
 }
 

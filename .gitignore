@@ -19,5 +19,6 @@ npm-debug.log*
 *.log
 .pglite/
 data/pgdata/
+.storage/
 dist/
 /assets/

@@ -15,6 +15,7 @@ import { sendTemplated, detailsTable } from '../lib/email_templates.js';
 import { syncAppointment } from '../lib/google_calendar.js';
 import { config } from '../config.js';
 import { formatDateLabel, formatTimeLabel, ymdInTimeZone } from '../lib/dates.js';
+import { emitEvent } from '../lib/events.js';
 
 const router = express.Router();
 
@@ -131,6 +132,7 @@ router.post('/:slug/book', asyncHandler(async (req, res) => {
       MANAGE_URL: `${config.baseUrl}/book?appt=${appt.access_token}`,
     }, { type: 'appointment', id: appt.id }).catch(() => {});
 
+    emitEvent('appointment.scheduled', { tenantId: tenant.id, appointmentId: appt.id, customerId, source: 'online' }).catch(() => {});
     return res.json({ ok: true, status: 'scheduled', appointmentId: appt.id, token: appt.access_token, mode });
   }
 
@@ -168,6 +170,7 @@ router.post('/:slug/book', asyncHandler(async (req, res) => {
     REQUESTED_SLOTS: slotsHtml, MANAGE_URL: `${config.baseUrl}/book?appt=${appt.access_token}`,
   }, { type: 'appointment', id: appt.id }).catch(() => {});
 
+  emitEvent('appointment.requested', { tenantId: tenant.id, appointmentId: appt.id, customerId, source: 'online' }).catch(() => {});
   return res.json({ ok: true, status: 'requested', appointmentId: appt.id, token: appt.access_token, mode });
 }));
 

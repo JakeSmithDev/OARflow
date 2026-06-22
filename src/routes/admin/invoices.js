@@ -7,6 +7,7 @@ import { query, queryOne } from '../../lib/db.js';
 import { createInvoice, updateInvoice, recordPayment, balanceCents } from '../../lib/invoices.js';
 import { sendTemplated, htmlEscape } from '../../lib/email_templates.js';
 import { ownsId } from '../../lib/ownership.js';
+import { emitEvent } from '../../lib/events.js';
 import { isConfigured as stripeConfigured } from '../../lib/stripe.js';
 import { logAudit } from '../../lib/audit.js';
 import { formatCents } from '../../lib/money.js';
@@ -135,6 +136,7 @@ router.post('/:id/send', asyncHandler(async (req, res) => {
     PAY_URL: payUrl, TERMS: inv.terms || '',
   }, { type: 'invoice', id });
   await logAudit({ tenantId: req.tenant.id, adminUsername: req.admin.username, action: 'invoice_send', entityType: 'invoice', entityId: id });
+  emitEvent('invoice.sent', { tenantId: req.tenant.id, invoiceId: id, customerId: inv.customer_id }).catch(() => {});
   res.json({ ok: true, emailed: r.ok, payUrl });
 }));
 
@@ -168,6 +170,7 @@ router.post('/:id/payment', asyncHandler(async (req, res) => {
     }
   }
   await logAudit({ tenantId: req.tenant.id, adminUsername: req.admin.username, action: 'invoice_payment', entityType: 'invoice', entityId: id, details: { amount } });
+  if (invoice?.status === 'paid') emitEvent('invoice.paid', { tenantId: req.tenant.id, invoiceId: id, customerId: invoice.customer_id }).catch(() => {});
   res.json({ ok: true, invoice });
 }));
 

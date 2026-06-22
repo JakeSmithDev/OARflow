@@ -18,6 +18,8 @@
     "smoke": "node scripts/smoke.js"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1074.0",
+    "@aws-sdk/s3-request-presigner": "^3.1074.0",
     "@electric-sql/pglite": "^0.2.17",
     "cookie": "^0.7.2",
     "dotenv": "^16.4.7",

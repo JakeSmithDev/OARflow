@@ -81,6 +81,20 @@ export const config = {
   // Secret required to invoke cron endpoints (X-Cron-Key header or ?key=).
   cronKey: process.env.CRON_KEY || 'dev-cron-key',
 
+  // File storage. Defaults to local disk (dev/demo); set S3_* (works with AWS
+  // S3, Cloudflare R2, MinIO) for production object storage.
+  storage: {
+    localDir: process.env.STORAGE_LOCAL_DIR || './.storage',
+    s3: {
+      bucket: process.env.S3_BUCKET || '',
+      region: process.env.S3_REGION || 'auto',
+      endpoint: process.env.S3_ENDPOINT || '',          // R2/MinIO custom endpoint
+      accessKeyId: process.env.S3_ACCESS_KEY_ID || '',
+      secretAccessKey: process.env.S3_SECRET_ACCESS_KEY || '',
+      publicBaseUrl: process.env.S3_PUBLIC_BASE_URL || '', // optional CDN/public bucket URL
+    },
+  },
+
   // Platform-level Twilio (optional fallback for "platform-managed" SMS mode).
   // Most tenants BYO their own creds in Settings → Integrations.
   twilio: {
