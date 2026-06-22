@@ -38,3 +38,17 @@ defineWorkflow({
   trigger: { event: 'appointment.completed' },
   fn: async ({ event }) => { await recordJobRun(event.data.tenantId, 'appointment.completed', { appointmentId: event.data.appointmentId }); },
 });
+
+// Async SMS send with retries. Callers emitEvent('notification.sms', { tenantId, ... }).
+defineWorkflow({
+  id: 'send-sms',
+  trigger: { event: 'notification.sms' },
+  fn: async ({ event, step }) => {
+    const { sendSms } = await import('../lib/sms.js');
+    const { getTenantById } = await import('../lib/tenants.js');
+    const d = event.data;
+    const tenant = await getTenantById(d.tenantId);
+    if (!tenant) return;
+    await step.run('send', () => sendSms(tenant, d));
+  },
+});

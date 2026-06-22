@@ -319,6 +319,37 @@ async function main() {
     const jr = await dbm.queryOne("SELECT count(*)::int n FROM job_runs WHERE workflow='appointment.completed'");
     assert.ok(jr.n >= 1, 'local handler ran (job_run recorded)');
   });
+  await check('[sms] dev send records message + conversation', async () => {
+    const { sendSms } = await import('../src/lib/sms.js');
+    const { getTenantById } = await import('../src/lib/tenants.js');
+    const dbm = await import('../src/lib/db.js');
+    const tenant = await getTenantById(1);
+    const r = await sendSms(tenant, { to: '4105551234', body: 'Test from OARFlow', customerId: 1, purpose: 'transactional' });
+    assert.ok(r.ok && r.status === 'sent');
+    const m = await dbm.queryOne("SELECT count(*)::int n FROM sms_messages WHERE tenant_id=1 AND direction='outbound'");
+    assert.ok(m.n >= 1);
+    const c = await dbm.queryOne("SELECT count(*)::int n FROM sms_conversations WHERE tenant_id=1 AND phone_e164='+14105551234'");
+    assert.equal(c.n, 1);
+  });
+  await check('[sms] opt-out suppresses sends', async () => {
+    const { sendSms, setConsent } = await import('../src/lib/sms.js');
+    const { getTenantById } = await import('../src/lib/tenants.js');
+    const tenant = await getTenantById(1);
+    await setConsent(1, { phone: '+14105559999', status: 'opted_out', source: 'admin' });
+    const r = await sendSms(tenant, { to: '4105559999', body: 'should not send', purpose: 'marketing' });
+    assert.equal(r.ok, false); assert.equal(r.reason, 'opted_out');
+  });
+  await check('[sms] inbound webhook records msg + STOP opts out', async () => {
+    const dbm = await import('../src/lib/db.js');
+    await dbm.query("UPDATE tenants SET settings = jsonb_set(settings::jsonb, '{integrations,sms,fromNumber}', '\"+15005550006\"') WHERE id=1");
+    const params = new URLSearchParams({ From: '+14105557777', To: '+15005550006', Body: 'STOP', MessageSid: 'SM_test_1', NumMedia: '0' });
+    const res = await fetch(base + '/api/webhooks/sms/twilio', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: params });
+    assert.equal(res.status, 200);
+    const inb = await dbm.queryOne("SELECT count(*)::int n FROM sms_messages WHERE direction='inbound' AND provider_message_id='SM_test_1'");
+    assert.equal(inb.n, 1);
+    const consent = await dbm.queryOne("SELECT status FROM customer_contact_consents WHERE tenant_id=1 AND address='+14105557777' ORDER BY captured_at DESC LIMIT 1");
+    assert.equal(consent.status, 'opted_out');
+  });
   await check('[substrate] oncePerKey is idempotent', async () => {
     const { oncePerKey } = await import('../src/lib/events.js');
     let runs = 0;

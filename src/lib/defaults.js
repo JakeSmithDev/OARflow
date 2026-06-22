@@ -64,6 +64,17 @@ export function defaultTenantSettings(overrides = {}) {
       stripe: { secretKey: '', publishableKey: '', webhookSecret: '', mode: 'test' },
       google: { connected: false, calendarId: 'primary', accessToken: '', refreshToken: '', expiryDate: 0, email: '' },
       email: { provider: 'auto', from: '', replyTo: '' },
+      sms: {
+        provider: 'twilio', credentialMode: 'byo',
+        accountSid: '', authToken: '', fromNumber: '', messagingServiceSid: '',
+        brandStatus: 'not_started', campaignId: '',
+        quietHours: { start: '21:00', end: '08:00' },
+        optInText: 'Reply STOP to opt out, HELP for help. Msg & data rates may apply.',
+      },
+      voice: {
+        provider: 'none', enabled: false, accountSid: '', authToken: '', fromNumber: '',
+        aiProvider: 'none', forwardTo: '', greeting: '', transcripts: true,
+      },
     },
     ...overrides,
   };

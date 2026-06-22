@@ -83,6 +83,7 @@
     send: '<line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>',
     cal: '<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>',
     menu: '<path d="M3 12h18M3 6h18M3 18h18"/>',
+    messaging: '<path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>',
   };
   OF.icon = (name, size = 18) => `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICONS[name] || ''}</svg>`;
 
@@ -136,6 +137,7 @@
       ['schedule', 'Schedule', '/admin/schedule'],
       ['requests', 'Requests', '/admin/requests', 'requests'],
       ['appointments', 'Appointments', '/admin/appointments'],
+      ['messaging', 'Messages', '/admin/messaging', 'sms'],
     ]],
     ['Customers & Revenue', [
       ['customers', 'Customers', '/admin/customers'],
@@ -215,6 +217,7 @@
     { path: '/admin/schedule', file: 'schedule', view: 'schedule' },
     { path: '/admin/requests', file: 'requests', view: 'requests' },
     { path: '/admin/appointments', file: 'appointments', view: 'appointments' },
+    { path: '/admin/messaging', file: 'messaging', view: 'messaging' },
     { path: '/admin/customers', file: 'customers', view: 'customers' },
     { path: '/admin/invoices', file: 'invoices', view: 'invoices' },
     { path: '/admin/plans', file: 'plans', view: 'recurring' },

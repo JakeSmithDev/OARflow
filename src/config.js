@@ -81,6 +81,14 @@ export const config = {
   // Secret required to invoke cron endpoints (X-Cron-Key header or ?key=).
   cronKey: process.env.CRON_KEY || 'dev-cron-key',
 
+  // Platform-level Twilio (optional fallback for "platform-managed" SMS mode).
+  // Most tenants BYO their own creds in Settings → Integrations.
+  twilio: {
+    accountSid: process.env.TWILIO_ACCOUNT_SID || '',
+    authToken: process.env.TWILIO_AUTH_TOKEN || '',
+    fromNumber: process.env.TWILIO_FROM_NUMBER || '',
+  },
+
   // Inngest (event-driven background jobs). When unset, OARFlow runs an
   // in-process fallback executor so everything works keyless in dev/demo.
   inngest: {

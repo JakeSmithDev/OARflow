@@ -45,7 +45,8 @@ async function navCounts(tenantId, tz) {
     "SELECT count(*)::int n FROM follow_ups WHERE tenant_id=$1 AND status='pending' AND due_at <= $2",
     [tenantId, dayEnd.toISOString()],
   );
-  return { requests: reqs.rows[0].n, followups: fus.rows[0].n };
+  const sms = await query("SELECT COALESCE(SUM(unread_count),0)::int n FROM sms_conversations WHERE tenant_id=$1", [tenantId]).catch(() => ({ rows: [{ n: 0 }] }));
+  return { requests: reqs.rows[0].n, followups: fus.rows[0].n, sms: sms.rows[0].n };
 }
 
 router.get('/counts', asyncHandler(async (req, res) => {

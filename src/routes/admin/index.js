@@ -8,6 +8,7 @@ import invoicesRouter from './invoices.js';
 import plansRouter from './plans.js';
 import followUpsRouter from './follow_ups.js';
 import settingsRouter from './settings.js';
+import messagingRouter from './messaging.js';
 
 const router = express.Router();
 
@@ -19,5 +20,6 @@ router.use('/invoices', invoicesRouter);
 router.use('/plans', plansRouter);
 router.use('/follow-ups', followUpsRouter);
 router.use('/settings', settingsRouter);
+router.use('/messaging', messagingRouter);
 
 export default router;

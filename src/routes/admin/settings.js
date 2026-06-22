@@ -9,6 +9,7 @@ import { updateTenantProfile, updateTenantSettings, getTenantById } from '../../
 import { hashPassword, encryptSecret } from '../../lib/crypto.js';
 import { defaultEmailTemplates } from '../../lib/defaults.js';
 import { isConfigured as stripeConfigured } from '../../lib/stripe.js';
+import { isSmsConfigured as smsConfigured } from '../../lib/sms.js';
 import { isConnected as googleConnected } from '../../lib/google_calendar.js';
 import { emailProviderName } from '../../config.js';
 import { logAudit } from '../../lib/audit.js';
@@ -43,6 +44,10 @@ router.get('/', asyncHandler(async (req, res) => {
       googleEmail: t.settings.integrations.google.email || '',
       emailProvider: emailProviderName(),
       emailFrom: t.settings.integrations.email.from || '',
+      smsEnabled: smsConfigured(t),
+      smsFrom: t.settings.integrations.sms?.fromNumber || '',
+      smsProvider: t.settings.integrations.sms?.provider || 'twilio',
+      smsBrandStatus: t.settings.integrations.sms?.brandStatus || 'not_started',
     },
   });
 }));
@@ -252,6 +257,31 @@ router.put('/integrations/email', asyncHandler(async (req, res) => {
   const b = req.body || {};
   await updateTenantSettings(req.tenant.id, { integrations: { email: { from: b.from || '', replyTo: b.replyTo || '' } } });
   res.json({ ok: true });
+}));
+router.put('/integrations/sms', asyncHandler(async (req, res) => {
+  const b = req.body || {};
+  const patch = { integrations: { sms: {} } };
+  if (b.provider !== undefined) patch.integrations.sms.provider = b.provider;
+  if (b.credentialMode !== undefined) patch.integrations.sms.credentialMode = b.credentialMode;
+  if (b.accountSid !== undefined) patch.integrations.sms.accountSid = b.accountSid;
+  if (b.authToken) patch.integrations.sms.authToken = encryptSecret(b.authToken); // encrypted at rest
+  if (b.fromNumber !== undefined) patch.integrations.sms.fromNumber = b.fromNumber;
+  if (b.messagingServiceSid !== undefined) patch.integrations.sms.messagingServiceSid = b.messagingServiceSid;
+  if (b.brandStatus !== undefined) patch.integrations.sms.brandStatus = b.brandStatus;
+  if (b.campaignId !== undefined) patch.integrations.sms.campaignId = b.campaignId;
+  if (b.optInText !== undefined) patch.integrations.sms.optInText = b.optInText;
+  const t = await updateTenantSettings(req.tenant.id, patch);
+  // Register/refresh the tenant's sending number for inbound routing.
+  if (t.settings.integrations.sms.fromNumber) {
+    await query(
+      `INSERT INTO tenant_phone_numbers (tenant_id, provider, phone_e164, credential_mode, messaging_service_sid, a2p_campaign_id, registration_status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)
+       ON CONFLICT (tenant_id, phone_e164) DO UPDATE SET provider=$2, credential_mode=$4, messaging_service_sid=$5, a2p_campaign_id=$6, registration_status=$7`,
+      [req.tenant.id, t.settings.integrations.sms.provider, t.settings.integrations.sms.fromNumber, t.settings.integrations.sms.credentialMode,
+       t.settings.integrations.sms.messagingServiceSid || null, t.settings.integrations.sms.campaignId || null, t.settings.integrations.sms.brandStatus || 'not_started'],
+    );
+  }
+  res.json({ ok: true, smsEnabled: smsConfigured(await getTenantById(req.tenant.id)) });
 }));
 
 export default router;
