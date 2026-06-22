@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Your estimate</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Poppins:wght@600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/assets/app/app.css" />
+  <style>
+    :root { --navy:#0a2740; }
+    body { background: linear-gradient(180deg, var(--brand-tint-2), var(--bg) 220px); }
+    h1,h2,#company { font-family:'Poppins',var(--font); letter-spacing:-0.01em; }
+    #company { color: var(--navy); }
+    .wrap { max-width: 540px; margin: 0 auto; padding: 36px 18px 80px; }
+    .bk-head { display:flex; align-items:center; gap:13px; margin-bottom: 22px; }
+    .bk-head .logo { width:46px;height:46px;border-radius:13px;background:linear-gradient(135deg,var(--brand),color-mix(in srgb,var(--brand) 55%,#86efac));display:grid;place-items:center;color:#fff;font-weight:800;font-size:20px;box-shadow:inset 0 0 0 1px rgba(255,255,255,.18); }
+    .totline { display:flex; justify-content:space-between; padding:5px 0; }
+    .totline.grand { border-top:1px solid var(--line); margin-top:8px; padding-top:12px; font-weight:800; font-size:19px; }
+    .ok-screen { text-align:center; padding: 30px 10px; }
+    .ok-screen .big { width:70px;height:70px;border-radius:50%;background:var(--ok-tint);color:var(--ok);display:grid;place-items:center;margin:0 auto 16px; }
+    .approve-box { border:1px solid var(--line); border-radius:14px; padding:16px; margin-top:16px; background:var(--card); }
+    .approve-box label { font-weight:600; font-size:13px; display:block; margin-bottom:6px; }
+    .legal { color:var(--muted); font-size:12px; line-height:1.5; margin-top:10px; }
+    .pill { display:inline-block; padding:3px 10px; border-radius:999px; font-size:12px; font-weight:700; }
+    .pill.accepted { background:var(--ok-tint); color:var(--ok); }
+    .pill.declined { background:#fef2f2; color:#b91c1c; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="bk-head"><div class="logo" id="logo">·</div><div><h1 id="company" style="font-size:20px">Estimate</h1><p class="muted small" id="sub" style="margin:2px 0 0"></p></div></div>
+    <div id="view"><div class="loading-page"><span class="spinner"></span></div></div>
+  </div>
+  <script>
+    const esc = (s)=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const qp = new URLSearchParams(location.search);
+    const id = qp.get('estimate'); const token = qp.get('token');
+    let CUR = 'USD';
+    const money = (c)=>{ try{return new Intl.NumberFormat('en-US',{style:'currency',currency:CUR}).format((c||0)/100);}catch{return '$'+((c||0)/100).toFixed(2);} };
+
+    async function load() {
+      if (!id || !token) { document.getElementById('view').innerHTML = `<div class="card card-pad center">Invalid link.</div>`; return; }
+      let d;
+      try { d = await (await fetch(`/api/quotes/${id}?token=${encodeURIComponent(token)}`)).json(); } catch { d = {ok:false}; }
+      if (!d.ok) { document.getElementById('view').innerHTML = `<div class="card card-pad center">${esc(d.error||'Estimate not found.')}</div>`; return; }
+      CUR = d.estimate.currency || 'USD';
+      const b = d.tenant.branding||{};
+      if (b.primaryColor) document.documentElement.style.setProperty('--brand', b.primaryColor);
+      document.getElementById('logo').textContent = (b.logoText||d.tenant.name||'O')[0];
+      document.getElementById('company').textContent = b.logoText || d.tenant.name;
+      document.getElementById('sub').textContent = `Estimate ${d.estimate.number}`;
+      render(d.estimate, d.tenant);
+    }
+
+    function totals(e){
+      const li = (e.lineItems||[]).map(x=>`<div class="totline"><span>${esc(x.label)}${x.quantity>1?` ×${x.quantity}`:''}</span><span class="mono">${money(x.amount_cents)}</span></div>`).join('');
+      return `<div class="card card-pad">
+        ${li}<hr class="divider" style="margin:8px 0">
+        <div class="totline"><span class="muted">Subtotal</span><span class="mono">${money(e.subtotalCents)}</span></div>
+        ${e.discountCents?`<div class="totline"><span class="muted">Discount</span><span class="mono">−${money(e.discountCents)}</span></div>`:''}
+        ${e.taxCents?`<div class="totline"><span class="muted">Tax</span><span class="mono">${money(e.taxCents)}</span></div>`:''}
+        <div class="totline grand"><span>Total</span><span class="mono">${money(e.totalCents)}</span></div>
+      </div>
+      ${e.notes?`<p class="muted small" style="margin-top:12px">${esc(e.notes)}</p>`:''}`;
+    }
+
+    function render(e, tenant){
+      if (e.status==='accepted' || e.status==='converted') return accepted(e);
+      if (e.status==='declined') { document.getElementById('view').innerHTML = totals(e) + `<div class="card card-pad center" style="margin-top:14px"><span class="pill declined">Declined</span><p class="muted small" style="margin-top:8px">You declined this estimate. Contact ${esc(tenant.name)} if that was a mistake.</p></div>`; return; }
+      const expired = e.validUntil && new Date(e.validUntil) < new Date(new Date().toDateString());
+      document.getElementById('view').innerHTML = totals(e) + (expired
+        ? `<div class="card card-pad center muted" style="margin-top:14px">This estimate expired on ${esc(String(e.validUntil).slice(0,10))}. Please contact ${esc(tenant.name)} for an updated quote.</div>`
+        : `<div class="approve-box">
+            <label for="nm">Type your full name to approve</label>
+            <input id="nm" class="input" placeholder="Your full name" autocomplete="name" />
+            <div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap">
+              <button class="btn btn-primary btn-lg" id="approve" style="flex:1;min-width:180px">Approve ${money(e.totalCents)}</button>
+              <button class="btn btn-ghost" id="decline">Decline</button>
+            </div>
+            <p class="legal">By typing your name and clicking Approve, you agree to this estimate and authorize ${esc(tenant.name)} to schedule the work. Your name, date, and IP address are recorded as your electronic signature.${e.terms?` ${esc(e.terms)}`:''}</p>
+          </div>`);
+      const ap = document.getElementById('approve');
+      if (ap) ap.onclick = async () => {
+        const name = document.getElementById('nm').value.trim();
+        if (!name) { document.getElementById('nm').focus(); return; }
+        ap.disabled=true; ap.textContent='Approving…';
+        try { const r = await (await fetch(`/api/quotes/${id}/accept`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token, name})})).json();
+          if (r.ok) accepted({ ...e, status:'accepted', acceptedName:name }); else { alert(r.error||'Could not approve.'); ap.disabled=false; ap.textContent='Try again'; } }
+        catch { ap.disabled=false; ap.textContent='Try again'; }
+      };
+      const dc = document.getElementById('decline');
+      if (dc) dc.onclick = async () => {
+        if (!confirm('Decline this estimate?')) return;
+        try { await fetch(`/api/quotes/${id}/decline`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token})}); } catch {}
+        location.reload();
+      };
+    }
+
+    function accepted(e){ document.getElementById('view').innerHTML = totals(e) + `<div class="ok-screen" style="margin-top:14px">
+      <div class="big"><svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg></div>
+      <h2>Estimate approved</h2><p class="muted" style="margin-top:8px">Thank you${e.acceptedName?`, ${esc(e.acceptedName)}`:''}! We'll be in touch to schedule your service.</p></div>`; }
+    load();
+  </script>
+</body>
+</html>

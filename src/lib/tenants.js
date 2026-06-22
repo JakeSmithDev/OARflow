@@ -70,4 +70,13 @@ export async function nextInvoiceNumber(tenantId) {
   return `INV-${row.invoice_seq}`;
 }
 
-export default { getTenantById, getTenantBySlug, getDefaultTenant, updateTenantSettings, updateTenantProfile, nextInvoiceNumber, deepMerge };
+/** Atomically allocate the next estimate number for a tenant (e.g. EST-1001). */
+export async function nextEstimateNumber(tenantId) {
+  const row = await queryOne(
+    'UPDATE tenants SET estimate_seq = estimate_seq + 1 WHERE id = $1 RETURNING estimate_seq',
+    [tenantId],
+  );
+  return `EST-${row.estimate_seq}`;
+}
+
+export default { getTenantById, getTenantBySlug, getDefaultTenant, updateTenantSettings, updateTenantProfile, nextInvoiceNumber, nextEstimateNumber, deepMerge };

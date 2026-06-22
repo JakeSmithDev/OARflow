@@ -172,6 +172,17 @@ export function defaultEmailTemplates() {
       text: 'Hi {{CUSTOMER_NAME}}, we received your payment of {{AMOUNT_PAID}} toward invoice {{INVOICE_NUMBER}}. — {{COMPANY_NAME}}',
     },
     {
+      type: 'estimate',
+      subject: 'Your estimate {{ESTIMATE_NUMBER}} from {{COMPANY_NAME}} — {{ESTIMATE_TOTAL}}',
+      html: `<p>Hi {{CUSTOMER_NAME}},</p>
+<p>Thanks for the opportunity. Here is your estimate, total <strong>{{ESTIMATE_TOTAL}}</strong>.</p>
+{{ESTIMATE_SUMMARY}}
+<p style="text-align:center;margin:28px 0;"><a class="btn" href="{{ACCEPT_URL}}">Review &amp; approve online</a></p>
+<p style="color:#64748b;font-size:13px">Good through {{VALID_UNTIL}}. {{TERMS}}</p>
+<p>— {{COMPANY_NAME}}</p>`,
+      text: 'Hi {{CUSTOMER_NAME}}, your estimate {{ESTIMATE_NUMBER}} total is {{ESTIMATE_TOTAL}}. Review & approve online: {{ACCEPT_URL}} — {{COMPANY_NAME}}',
+    },
+    {
       type: 'follow_up',
       subject: 'How did everything go? — {{COMPANY_NAME}}',
       html: `<p>Hi {{CUSTOMER_NAME}},</p>

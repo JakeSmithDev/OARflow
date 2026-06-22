@@ -14,6 +14,7 @@ import { serverError } from './lib/http.js';
 import stripeWebhookRouter from './routes/stripe_webhook.js';
 import publicRouter from './routes/public.js';
 import payRouter from './routes/pay.js';
+import quotesRouter from './routes/quotes.js';
 import googleOAuthRouter from './routes/google_oauth.js';
 import cronRouter from './routes/cron.js';
 import smsWebhookRouter from './routes/sms_webhook.js';
@@ -49,6 +50,7 @@ export function createApp() {
   app.use('/api/admin', adminApiRouter);
   app.use('/api/public', publicRouter);
   app.use('/api/pay', payRouter);
+  app.use('/api/quotes', quotesRouter);
   app.use('/api/integrations/google', googleOAuthRouter);
   app.use('/api/webhooks/sms', smsWebhookRouter);
   app.use('/api/files', filesRouter);
@@ -66,6 +68,7 @@ export function createApp() {
   app.get(/^\/admin(\/.*)?$/, (req, res) => sendShell(res, 'admin/index.html'));
   app.get(/^\/book(\/.*)?$/, (req, res) => sendShell(res, 'book/index.html'));
   app.get(/^\/pay(\/.*)?$/, (req, res) => sendShell(res, 'pay/index.html'));
+  app.get(/^\/quote(\/.*)?$/, (req, res) => sendShell(res, 'quote/index.html'));
 
   // 404
   app.use((req, res) => {

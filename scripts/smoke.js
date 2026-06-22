@@ -117,6 +117,34 @@ async function main() {
   await check('duplicate-safe ledger keeps total correct', async () => { const { data } = await call('/api/admin/invoices/' + invId); assert.equal(data.invoice.amount_paid_cents, data.invoice.total_cents); });
   await check('public pay view reflects paid', async () => { const { data } = await call(`/api/pay/${invId}?token=${invToken}`, { auth: false }); assert.equal(data.paid, true); });
 
+  // --- Quotes / estimates (clickwrap accept -> convert) ---
+  let estId; let estToken;
+  await check('create an estimate (tax + discount totals)', async () => {
+    const { data } = await call('/api/admin/estimates', { method: 'POST', body: { customerId: 1, lineItems: [{ label: 'Termite Inspection', unit_amount_cents: 9900, taxable: true }, { label: 'Treatment', unit_amount_cents: 45000, taxable: true }], taxRatePercent: 6, discountCents: 5000 } });
+    estId = data.estimate.id; estToken = data.estimate.access_token;
+    assert.equal(data.estimate.status, 'draft'); assert.ok(/^EST-/.test(data.estimate.number));
+    assert.equal(data.estimate.total_cents, Math.round((9900 + 45000 - 5000) * 1.06)); // 52894
+  });
+  await check('send estimate produces a /quote approve link', async () => { const { data } = await call(`/api/admin/estimates/${estId}/send`, { method: 'POST' }); assert.ok(data.ok); assert.ok(data.acceptUrl.includes('/quote?estimate=')); });
+  await check('public quote view is token-guarded', async () => {
+    const bad = await call(`/api/quotes/${estId}?token=wrong`, { auth: false }); assert.equal(bad.status, 404);
+    const ok = await call(`/api/quotes/${estId}?token=${estToken}`, { auth: false }); assert.equal(ok.data.estimate.status, 'sent');
+  });
+  await check('clickwrap accept records signature snapshot', async () => {
+    const r = await call(`/api/quotes/${estId}/accept`, { method: 'POST', auth: false, body: { token: estToken, name: 'Dana Whitfield' } });
+    assert.ok(r.data.ok, JSON.stringify(r.data));
+    const { data } = await call('/api/admin/estimates/' + estId);
+    assert.equal(data.estimate.status, 'converted'); // auto-converts to draft invoice on accept
+    assert.equal(data.estimate.accepted_name, 'Dana Whitfield'); assert.ok(data.estimate.accepted_at);
+    assert.ok(data.estimate.converted_invoice_id, 'should have spawned an invoice');
+  });
+  await check('accepted estimate cannot be edited', async () => { const { status } = await call('/api/admin/estimates/' + estId, { method: 'PATCH', body: { discountCents: 0 } }); assert.equal(status, 400); });
+  await check('convert is idempotent (same invoice id)', async () => {
+    const before = (await call('/api/admin/estimates/' + estId)).data.estimate.converted_invoice_id;
+    const { data } = await call(`/api/admin/estimates/${estId}/convert`, { method: 'POST' });
+    assert.equal(data.invoiceId, before);
+  });
+
   // --- Recurring plans + subscriptions ---
   await check('plans overview returns MRR + plans', async () => { const { data } = await call('/api/admin/plans'); assert.ok(data.plans.length >= 4); assert.ok(data.metrics.mrrCents > 0); });
   let newPlanId;
