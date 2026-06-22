@@ -211,6 +211,42 @@ async function main() {
     assert.ok(text.split('\n')[0].includes('Month'), 'csv header present');
   });
 
+  // --- Reviews / NPS (no rating gating) ---
+  await check('set a public review platform URL', async () => {
+    const { data } = await call('/api/admin/reviews/settings', { method: 'PUT', body: { platforms: { google: 'https://g.page/r/demo/review' } } });
+    assert.ok(data.ok);
+  });
+  let revToken;
+  await check('request a review (email) returns a token', async () => {
+    const { data } = await call('/api/admin/reviews/request', { method: 'POST', body: { customerId: 1, channel: 'email' } });
+    assert.ok(data.ok); revToken = data.request.access_token; assert.ok(revToken);
+  });
+  await check('public review page is token-guarded + shows links', async () => {
+    assert.equal((await call('/api/reviews?token=bad', { auth: false })).status, 404);
+    const { data } = await call('/api/reviews?token=' + revToken, { auth: false });
+    assert.ok(data.ok); assert.ok(data.platforms.google);
+  });
+  await check('5-star response records + returns public links', async () => {
+    const { data } = await call('/api/reviews/respond', { method: 'POST', auth: false, body: { token: revToken, rating: 5, comment: 'Great!' } });
+    assert.ok(data.ok); assert.ok(data.platforms.google);
+  });
+  await check('LOW rating still gets public links (no gating)', async () => {
+    const r = (await call('/api/admin/reviews/request', { method: 'POST', body: { customerId: 2, channel: 'email' } })).data.request;
+    const { data } = await call('/api/reviews/respond', { method: 'POST', auth: false, body: { token: r.access_token, rating: 1, comment: 'unhappy' } });
+    assert.ok(data.platforms.google, 'public links must show even for 1-star');
+  });
+  await check('review metrics reflect responses', async () => {
+    const { data } = await call('/api/admin/reviews');
+    assert.ok(data.metrics.responses >= 2); assert.ok(data.metrics.avgRating > 0);
+  });
+  await check('review request is idempotent per appointment', async () => {
+    const appt = (await call('/api/admin/appointments')).data.appointments[0];
+    assert.ok(appt, 'need a seeded appointment');
+    const a1 = (await call('/api/admin/reviews/request', { method: 'POST', body: { customerId: appt.customer_id, appointmentId: appt.id } })).data.request;
+    const a2 = (await call('/api/admin/reviews/request', { method: 'POST', body: { customerId: appt.customer_id, appointmentId: appt.id } })).data.request;
+    assert.equal(a1.id, a2.id);
+  });
+
   // --- Recurring plans + subscriptions ---
   await check('plans overview returns MRR + plans', async () => { const { data } = await call('/api/admin/plans'); assert.ok(data.plans.length >= 4); assert.ok(data.metrics.mrrCents > 0); });
   let newPlanId;

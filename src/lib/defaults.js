@@ -70,6 +70,16 @@ export function defaultTenantSettings(overrides = {}) {
         { id: 'annual_renewal', name: 'Annual renewal reminder', trigger: 'after_completion', offsetDays: 330, channel: 'task', templateType: null, active: true },
       ],
     },
+    reviews: {
+      // Automatically ask for a review after a completed job. We never gate by
+      // rating — every customer gets the public-review links regardless of score.
+      enabled: true,
+      autoRequest: true,
+      delayHours: 24,
+      channel: 'email',            // 'email' | 'sms'
+      platforms: { google: '', yelp: '', facebook: '' },
+      smsTemplate: 'Hi {{CUSTOMER_NAME}}, thanks for choosing {{COMPANY_NAME}}! How did we do? {{REVIEW_URL}}',
+    },
     integrations: {
       stripe: { secretKey: '', publishableKey: '', webhookSecret: '', mode: 'test' },
       google: { connected: false, calendarId: 'primary', accessToken: '', refreshToken: '', expiryDate: 0, email: '' },
@@ -181,6 +191,15 @@ export function defaultEmailTemplates() {
 <p style="color:#64748b;font-size:13px">Good through {{VALID_UNTIL}}. {{TERMS}}</p>
 <p>— {{COMPANY_NAME}}</p>`,
       text: 'Hi {{CUSTOMER_NAME}}, your estimate {{ESTIMATE_NUMBER}} total is {{ESTIMATE_TOTAL}}. Review & approve online: {{ACCEPT_URL}} — {{COMPANY_NAME}}',
+    },
+    {
+      type: 'review_request',
+      subject: 'How did we do, {{CUSTOMER_NAME}}?',
+      html: `<p>Hi {{CUSTOMER_NAME}},</p>
+<p>Thanks for choosing {{COMPANY_NAME}} for your {{SERVICE_NAME}}. We'd love a quick word on how it went — it takes about 30 seconds and really helps our small business.</p>
+<p style="text-align:center;margin:28px 0;"><a class="btn" href="{{REVIEW_URL}}">Leave a quick review</a></p>
+<p>Thank you!<br>— {{COMPANY_NAME}}</p>`,
+      text: 'Hi {{CUSTOMER_NAME}}, thanks for choosing {{COMPANY_NAME}}. How did we do? Leave a quick review: {{REVIEW_URL}}',
     },
     {
       type: 'follow_up',

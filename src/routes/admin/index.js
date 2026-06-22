@@ -11,6 +11,7 @@ import followUpsRouter from './follow_ups.js';
 import settingsRouter from './settings.js';
 import messagingRouter from './messaging.js';
 import reportsRouter from './reports.js';
+import reviewsRouter from './reviews.js';
 
 const router = express.Router();
 
@@ -25,5 +26,6 @@ router.use('/follow-ups', followUpsRouter);
 router.use('/settings', settingsRouter);
 router.use('/messaging', messagingRouter);
 router.use('/reports', reportsRouter);
+router.use('/reviews', reviewsRouter);
 
 export default router;

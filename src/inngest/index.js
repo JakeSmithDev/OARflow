@@ -7,6 +7,7 @@ import { getTenantById } from '../lib/tenants.js';
 import { processDueReminders } from '../lib/reminders.js';
 import { generateDueCycles } from '../lib/recurring.js';
 import { processDueFollowUps } from '../lib/follow_ups.js';
+import { processDueReviews } from '../lib/reviews.js';
 
 /** Daily maintenance across all tenants. Shared by the Inngest cron (prod) and
  *  the /api/cron/daily endpoint (dev / Vercel cron). Idempotent at the row level
@@ -19,8 +20,9 @@ export async function runDailyMaintenance() {
     const cycles = await generateDueCycles(tenant).catch((e) => ({ error: e.message }));
     const followups = await processDueFollowUps(tenant).catch((e) => ({ error: e.message }));
     const reminders = await processDueReminders(tenant).catch((e) => ({ error: e.message }));
-    await recordJobRun(id, 'daily_maintenance', { cycles, followups, reminders });
-    summary.push({ tenant: id, cycles, followups, reminders });
+    const reviews = await processDueReviews(tenant).catch((e) => ({ error: e.message }));
+    await recordJobRun(id, 'daily_maintenance', { cycles, followups, reminders, reviews });
+    summary.push({ tenant: id, cycles, followups, reminders, reviews });
   }
   return summary;
 }
@@ -36,7 +38,17 @@ defineWorkflow({
 defineWorkflow({
   id: 'on-appointment-completed',
   trigger: { event: 'appointment.completed' },
-  fn: async ({ event }) => { await recordJobRun(event.data.tenantId, 'appointment.completed', { appointmentId: event.data.appointmentId }); },
+  fn: async ({ event }) => {
+    await recordJobRun(event.data.tenantId, 'appointment.completed', { appointmentId: event.data.appointmentId });
+    // Enqueue a post-service review request (idempotent per appointment).
+    const t = await getTenantById(event.data.tenantId);
+    if (t?.settings?.reviews?.enabled && t.settings.reviews.autoRequest) {
+      const { queryOne } = await import('../lib/db.js');
+      const { maybeAutoRequest } = await import('../lib/reviews.js');
+      const appt = await queryOne('SELECT * FROM appointments WHERE id=$1 AND tenant_id=$2', [event.data.appointmentId, event.data.tenantId]);
+      if (appt) await maybeAutoRequest(t, appt).catch(() => {});
+    }
+  },
 });
 
 // Send an SMS appointment confirmation when one is scheduled (idempotent).
