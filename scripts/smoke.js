@@ -152,16 +152,32 @@ async function main() {
   await check('list + edit email template', async () => { const list = await call('/api/admin/settings/email-templates'); assert.ok(list.data.templates.length >= 7); const put = await call('/api/admin/settings/email-templates/follow_up', { method: 'PUT', body: { subject: 'Checking in!', html: '<p>Hi {{CUSTOMER_NAME}}</p>', text: 'Hi' } }); assert.ok(put.data.ok); });
   await check('add a team member', async () => { const { data } = await call('/api/admin/settings/users', { method: 'POST', body: { username: 'tech1', password: 'temp12345', displayName: 'Tech One', role: 'staff' } }); assert.ok(data.user.id); });
   await check('save stripe keys (test placeholders)', async () => { const { data } = await call('/api/admin/settings/integrations/stripe', { method: 'PUT', body: { publishableKey: 'pk_test_x' } }); assert.ok(data.ok); });
-  await check('[fix] stripe secret is encrypted at rest, never returned', async () => {
-    await call('/api/admin/settings/integrations/stripe', { method: 'PUT', body: { secretKey: 'sk_test_supersecret' } });
+  await check('[fix] stripe secret encrypted at rest + decrypts', async () => {
+    await call('/api/admin/settings/integrations/stripe', { method: 'PUT', body: { secretKey: 'sk_test_supersecret', webhookSecret: 'whsec_topsecret' } });
     const dbmod = await import('../src/lib/db.js');
     const row = await dbmod.queryOne("SELECT settings FROM tenants WHERE slug='pasternack'");
     const stored = row.settings.integrations.stripe.secretKey;
     assert.ok(stored.startsWith('enc:v1:'), 'secret stored encrypted');
     const { decryptSecret } = await import('../src/lib/crypto.js');
     assert.equal(decryptSecret(stored), 'sk_test_supersecret');
+  });
+  await check('[fix] settings response leaks NO secrets or tokens', async () => {
+    // Plant a Google refresh token (plaintext in settings) to prove it is redacted.
+    const dbmod = await import('../src/lib/db.js');
+    const cur = (await dbmod.queryOne("SELECT settings FROM tenants WHERE slug='pasternack'")).settings;
+    cur.integrations.google = { ...(cur.integrations.google || {}), connected: true, refreshToken: 'rtok_LEAKME', accessToken: 'atok_LEAKME' };
+    await dbmod.query("UPDATE tenants SET settings=$1::jsonb WHERE slug='pasternack'", [JSON.stringify(cur)]);
     const overview = await call('/api/admin/settings');
-    assert.equal(overview.data.integrations.stripeSecret, undefined, 'secret never returned to client');
+    const blob = JSON.stringify(overview.data);
+    assert.ok(!blob.includes('enc:v1:'), 'no encrypted secret in response');
+    assert.ok(!blob.includes('rtok_LEAKME') && !blob.includes('atok_LEAKME'), 'no google tokens in response');
+    assert.ok(!blob.includes('whsec_'), 'no webhook secret in response');
+    assert.equal(overview.data.settings.integrations, undefined, 'settings.integrations stripped');
+  });
+  await check('[fix] stripe fails closed when a tenant secret cannot be decrypted', async () => {
+    const { stripeSecret } = await import('../src/lib/stripe.js');
+    const tenant = { settings: { integrations: { stripe: { secretKey: 'enc:v1:not-real-ciphertext' } } } };
+    assert.equal(stripeSecret(tenant), '', 'undecryptable tenant secret yields empty (no platform fallback)');
   });
   await check('cron daily runs without auth fails; with key passes', async () => {
     const noauth = await call('/api/cron/daily', { auth: false });

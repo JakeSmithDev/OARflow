@@ -5,14 +5,21 @@ import Stripe from 'stripe';
 import { config } from '../config.js';
 import { decryptSecret } from './crypto.js';
 
+// Fail CLOSED: if a tenant has its own stored secret but decryption fails
+// (e.g. ENCRYPTION_KEY changed/missing), return '' rather than falling back to
+// the platform key — never route a tenant's payments to the wrong Stripe account.
 export function stripeSecret(tenant) {
-  return decryptSecret(tenant?.settings?.integrations?.stripe?.secretKey) || config.stripe.secretKey || '';
+  const stored = tenant?.settings?.integrations?.stripe?.secretKey || '';
+  if (stored) return decryptSecret(stored);
+  return config.stripe.secretKey || '';
 }
 export function publishableKey(tenant) {
   return tenant?.settings?.integrations?.stripe?.publishableKey || config.stripe.publishableKey || '';
 }
 export function webhookSecret(tenant) {
-  return decryptSecret(tenant?.settings?.integrations?.stripe?.webhookSecret) || config.stripe.webhookSecret || '';
+  const stored = tenant?.settings?.integrations?.stripe?.webhookSecret || '';
+  if (stored) return decryptSecret(stored);
+  return config.stripe.webhookSecret || '';
 }
 
 const cache = new Map();

@@ -133,6 +133,15 @@ done; task follow-ups wait in the queue for staff.
   `ENCRYPTION_KEY` (recommended) or falls back to `TOKEN_SECRET`; set a
   dedicated value in production. For the highest assurance, move secrets to a
   managed secrets store / Stripe Connect instead of per-tenant keys.
+- The settings API **redacts** the entire `integrations` block (Stripe
+  ciphertext, Google OAuth tokens) from every response — only a safe summary
+  (`stripeEnabled`, publishable key, `googleConnected`, etc.) is sent to the
+  client. Stripe key resolution **fails closed**: if a tenant has its own stored
+  secret but it can't be decrypted (e.g. `ENCRYPTION_KEY` changed), it returns
+  empty rather than falling back to the platform key, so payments are never
+  routed to the wrong account.
+- Migrating an older deployment with plaintext secrets: run
+  `npm run encrypt-secrets` once to re-encrypt them in place (idempotent).
 
 ## Reselling / white-labeling — checklist
 

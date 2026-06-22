@@ -14,6 +14,7 @@
     "migrate:status": "node scripts/migrate.js --status",
     "seed": "node scripts/seed.js",
     "setup": "node scripts/migrate.js && node scripts/seed.js",
+    "encrypt-secrets": "node scripts/encrypt-secrets.js",
     "smoke": "node scripts/smoke.js"
   },
   "dependencies": {

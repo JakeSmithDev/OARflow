@@ -19,13 +19,22 @@ const router = express.Router();
 router.use(requireAdmin());
 router.use(requireRole('owner'));
 
+// Strip all sensitive integration material (Stripe secret/webhook ciphertext,
+// Google OAuth tokens) before sending settings to the client. The client only
+// needs the safe `integrations` summary built separately below.
+function redactSettings(settings) {
+  const clone = JSON.parse(JSON.stringify(settings || {}));
+  delete clone.integrations;
+  return clone;
+}
+
 // --- Overview -------------------------------------------------------------
 router.get('/', asyncHandler(async (req, res) => {
   const t = req.tenant;
   res.json({
     ok: true,
     profile: { name: t.name, slug: t.slug, timezone: t.timezone, currency: t.currency, contactEmail: t.contact_email, contactPhone: t.contact_phone, address: t.address },
-    settings: t.settings,
+    settings: redactSettings(t.settings),
     integrations: {
       stripeEnabled: stripeConfigured(t),
       stripePublishable: t.settings.integrations.stripe.publishableKey || '',
@@ -55,7 +64,7 @@ router.put('/settings', asyncHandler(async (req, res) => {
   for (const k of allowed) if (patch[k] !== undefined) clean[k] = patch[k];
   const t = await updateTenantSettings(req.tenant.id, clean);
   await logAudit({ tenantId: req.tenant.id, adminUsername: req.admin.username, action: 'settings_update', details: { sections: Object.keys(clean) } });
-  res.json({ ok: true, settings: t.settings });
+  res.json({ ok: true, settings: redactSettings(t.settings) });
 }));
 
 // --- Services -------------------------------------------------------------
