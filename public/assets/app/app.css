@@ -264,6 +264,17 @@ input[type=color] { padding: 4px; height: 42px; cursor: pointer; }
 .tabbar { display:flex; gap:4px; border-bottom:1px solid var(--line); margin-bottom: 18px; }
 .tabbar button { background:none; border:none; padding:11px 14px; font-weight:600; font-size:14px; color:var(--muted); cursor:pointer; border-bottom:2px solid transparent; margin-bottom:-1px; }
 .tabbar button.active { color:var(--brand); border-bottom-color:var(--brand); }
+/* Reports bar chart (no external lib) */
+.rep-chart { display:flex; align-items:flex-end; gap:10px; height:150px; padding-top:8px; overflow-x:auto; }
+.rep-bar { display:flex; flex-direction:column; align-items:center; justify-content:flex-end; gap:6px; min-width:34px; flex:1; }
+.rep-bar-fill { width:60%; min-width:18px; max-width:46px; background:linear-gradient(180deg,var(--brand),color-mix(in srgb,var(--brand) 60%,#86efac)); border-radius:6px 6px 0 0; transition:height .3s ease; }
+.rep-bar-lbl { font-size:11px; color:var(--muted); white-space:nowrap; }
+@media print {
+  .sidebar, .topbar, .app-actions, #picker, #printBtn, #csvBtn { display:none !important; }
+  .app-main, .content { margin:0 !important; padding:0 !important; }
+  .card { box-shadow:none !important; border:1px solid #e2e8f0 !important; }
+  body { background:#fff !important; }
+}
 
 @media (max-width: 920px) {
   .app { grid-template-columns: 1fr; }

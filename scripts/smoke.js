@@ -183,6 +183,34 @@ async function main() {
     assert.ok(!data.paymentMethods.some((p) => p.id === pmId));
   });
 
+  // --- Reporting v1 ---
+  await check('reports index returns catalog + KPIs', async () => {
+    const { data } = await call('/api/admin/reports?from=2026-01-01&to=2026-12-31');
+    assert.ok(data.reports.length >= 7); assert.ok(typeof data.kpis.collectedCents === 'number'); assert.ok('outstandingCents' in data.kpis);
+  });
+  await check('revenue_by_month report runs (date_trunc + totals)', async () => {
+    const { data } = await call('/api/admin/reports/revenue_by_month?from=2026-01-01&to=2026-12-31');
+    assert.equal(data.report.key, 'revenue_by_month');
+    assert.ok(data.report.columns.some((c) => c.key === 'net' && c.type === 'money'));
+    assert.ok(data.report.totals && typeof data.report.totals.net === 'number');
+  });
+  await check('ar_aging report buckets outstanding balances', async () => {
+    const { data } = await call('/api/admin/reports/ar_aging');
+    assert.equal(data.report.rows.length, 5); assert.equal(data.report.rows[0].bucket, 'Current');
+  });
+  await check('sales_by_service + recurring_snapshot run', async () => {
+    assert.ok((await call('/api/admin/reports/sales_by_service?from=2026-01-01&to=2026-12-31')).data.report);
+    const rec = (await call('/api/admin/reports/recurring_snapshot')).data.report;
+    assert.ok(rec.columns.some((c) => c.key === 'mrr'));
+  });
+  await check('unknown report 400s', async () => { const { status } = await call('/api/admin/reports/nope'); assert.equal(status, 400); });
+  await check('CSV export returns text/csv with header row', async () => {
+    const res = await fetch(base + '/api/admin/reports/revenue_by_month.csv?from=2026-01-01&to=2026-12-31', { headers: { Cookie: cookie } });
+    assert.equal(res.headers.get('content-type').split(';')[0], 'text/csv');
+    const text = await res.text();
+    assert.ok(text.split('\n')[0].includes('Month'), 'csv header present');
+  });
+
   // --- Recurring plans + subscriptions ---
   await check('plans overview returns MRR + plans', async () => { const { data } = await call('/api/admin/plans'); assert.ok(data.plans.length >= 4); assert.ok(data.metrics.mrrCents > 0); });
   let newPlanId;
