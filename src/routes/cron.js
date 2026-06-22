@@ -10,6 +10,7 @@ import { query } from '../lib/db.js';
 import { getTenantById } from '../lib/tenants.js';
 import { generateDueCycles } from '../lib/recurring.js';
 import { processDueFollowUps } from '../lib/follow_ups.js';
+import { processDueReminders } from '../lib/reminders.js';
 
 const router = express.Router();
 
@@ -28,7 +29,8 @@ async function runDaily() {
     const tenant = await getTenantById(id);
     const cycles = await generateDueCycles(tenant).catch((e) => ({ error: e.message }));
     const followups = await processDueFollowUps(tenant).catch((e) => ({ error: e.message }));
-    summary.push({ tenant: id, cycles, followups });
+    const reminders = await processDueReminders(tenant).catch((e) => ({ error: e.message }));
+    summary.push({ tenant: id, cycles, followups, reminders });
   }
   return summary;
 }

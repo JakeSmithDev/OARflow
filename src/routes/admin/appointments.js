@@ -9,6 +9,7 @@ import { ownsId } from '../../lib/ownership.js';
 import { zonedWallTimeToUtc, ymdInTimeZone } from '../../lib/dates.js';
 import { syncAppointment, deleteAppointmentEvent } from '../../lib/google_calendar.js';
 import { scheduleForCompletion } from '../../lib/follow_ups.js';
+import { sendAppointmentReminder } from '../../lib/reminders.js';
 import { sendTemplated, detailsTable } from '../../lib/email_templates.js';
 import { logAudit } from '../../lib/audit.js';
 import { formatDateLabel, formatTimeLabel } from '../../lib/dates.js';
@@ -217,6 +218,14 @@ router.patch('/:id', asyncHandler(async (req, res) => {
   }
   await logAudit({ tenantId: tenant.id, adminUsername: req.admin.username, action: 'appointment_update', entityType: 'appointment', entityId: id, details: { status: b.status } });
   res.json({ ok: true, appointment: updated });
+}));
+
+// --- Send an appointment reminder now (manual) ---------------------------
+router.post('/:id/send-reminder', asyncHandler(async (req, res) => {
+  const r = await sendAppointmentReminder(req.tenant, toInt(req.params.id));
+  if (!r.ok) return badRequest(res, r.error || 'Could not send reminder.');
+  await logAudit({ tenantId: req.tenant.id, adminUsername: req.admin.username, action: 'appointment_reminder_sent', entityType: 'appointment', entityId: toInt(req.params.id) });
+  res.json({ ok: true });
 }));
 
 // --- Confirm a requested booking -----------------------------------------

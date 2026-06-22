@@ -248,6 +248,36 @@ async function main() {
     assert.equal(forced.status, 200);
   });
 
+  await check('[reminders] due sent + idempotent + out-of-window skipped', async () => {
+    const dbm = await import('../src/lib/db.js');
+    const { processDueReminders } = await import('../src/lib/reminders.js');
+    const { getTenantById } = await import('../src/lib/tenants.js');
+    await call('/api/admin/settings/settings', { method: 'PUT', body: { notifications: { appointmentReminder: { enabled: true, leadHours: 48 } } } });
+    const svc = (await call('/api/admin/appointments/meta/services')).data.services[0];
+    const soon = await call('/api/admin/appointments', { method: 'POST', body: { customer: { name: 'Remind Soon', email: 'soon@example.com' }, serviceId: svc.id, date: ymd(new Date(Date.now() + 86400000)), time: '10:00', force: true } });
+    const far = await call('/api/admin/appointments', { method: 'POST', body: { customer: { name: 'Remind Far', email: 'far@example.com' }, serviceId: svc.id, date: ymd(new Date(Date.now() + 10 * 86400000)), time: '10:00', force: true } });
+    const tenant = await getTenantById(1);
+    const r1 = await processDueReminders(tenant);
+    assert.ok(r1.sent >= 1, 'sent the in-window reminder');
+    const r2 = await processDueReminders(tenant);
+    assert.equal(r2.sent, 0, 'idempotent — no double send');
+    const farRow = await dbm.queryOne('SELECT reminder_sent_at FROM appointments WHERE id=$1', [far.data.appointment.id]);
+    assert.equal(farRow.reminder_sent_at, null, 'out-of-window appointment not reminded');
+    const soonRow = await dbm.queryOne('SELECT reminder_sent_at FROM appointments WHERE id=$1', [soon.data.appointment.id]);
+    assert.ok(soonRow.reminder_sent_at, 'in-window appointment stamped');
+  });
+  await check('[reminders] manual send-reminder endpoint + disabled toggle', async () => {
+    const svc = (await call('/api/admin/appointments/meta/services')).data.services[0];
+    const a = await call('/api/admin/appointments', { method: 'POST', body: { customer: { name: 'Manual Remind', email: 'mr@example.com' }, serviceId: svc.id, date: ymd(new Date(Date.now() + 3 * 86400000)), time: '09:00', force: true } });
+    const r = await call(`/api/admin/appointments/${a.data.appointment.id}/send-reminder`, { method: 'POST' });
+    assert.ok(r.data.ok);
+    const { processDueReminders } = await import('../src/lib/reminders.js');
+    const { getTenantById } = await import('../src/lib/tenants.js');
+    await call('/api/admin/settings/settings', { method: 'PUT', body: { notifications: { appointmentReminder: { enabled: false, leadHours: 48 } } } });
+    const off = await processDueReminders(await getTenantById(1));
+    assert.equal(off.disabled, true, 'no reminders when disabled');
+  });
+
   await check('[fix] staff role blocked from settings, allowed for ops', async () => {
     await call('/api/admin/auth/logout', { method: 'POST' });
     cookie = '';

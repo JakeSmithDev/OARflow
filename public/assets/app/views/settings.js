@@ -31,6 +31,7 @@ const OF = window.OF;
     // ---- Booking & availability ----
     function bookingTab(root){
       const bk = S.settings.booking, av = S.settings.availability;
+      const rem = (S.settings.notifications && S.settings.notifications.appointmentReminder) || { enabled:true, leadHours:24 };
       const hoursRows = DAYS.map((d,i)=>{ const w=(av.hours[i]||av.hours[String(i)]||[])[0]; const closed=!w;
         return `<div class="daygrid"><span style="font-weight:600">${d}</span>
           <input type="time" class="h_start" data-d="${i}" value="${w?w.start:'08:00'}" ${closed?'disabled':''}>
@@ -45,6 +46,11 @@ const OF = window.OF;
         <label class="row" style="gap:8px;margin:6px 0"><input type="checkbox" id="bk_addr" ${bk.collectAddress?'checked':''} style="width:auto"> Require a service address at booking</label>
         ${field('Confirmation message', `<textarea id="bk_msg">${OF.escape(bk.confirmationMessage||'')}</textarea>`)}
         <button class="btn btn-primary" id="saveBooking">Save booking settings</button>`)
+        + card('Appointment reminders', `
+        <p class="muted small" style="margin-top:0">Automatically email customers a reminder before their visit. This is separate from invoicing — reminders never mention a balance.</p>
+        <label class="row" style="gap:8px;margin-bottom:12px"><input type="checkbox" id="rem_on" ${rem.enabled?'checked':''} style="width:auto"> Send appointment reminder emails</label>
+        ${field('Send how many hours before', `<input id="rem_lead" type="number" min="1" max="168" value="${rem.leadHours||24}">`,'e.g. 24 = the day before. Sent by the daily job.')}
+        <button class="btn btn-primary" id="saveReminders">Save reminders</button>`)
         + card('Availability', `
         <div class="grid cols-2">${field('Slot length (minutes)', `<input id="av_slot" type="number" min="15" step="15" value="${av.slotMinutes}">`,'Used when a service has no duration.')}${field('Crews / capacity per slot', `<input id="av_cap" type="number" min="1" value="${av.capacityPerSlot}">`,'How many jobs can run at the same time.')}</div>
         <div class="muted tiny" style="text-transform:uppercase;letter-spacing:.04em;font-weight:700;margin:10px 0 8px">Weekly hours</div>
@@ -52,6 +58,7 @@ const OF = window.OF;
         <button class="btn btn-primary" id="saveAvail" style="margin-top:8px">Save availability</button>`);
       root.querySelectorAll('.h_closed').forEach(c=>c.onchange=e=>{const d=e.target.dataset.d;root.querySelector(`.h_start[data-d="${d}"]`).disabled=e.target.checked;root.querySelector(`.h_end[data-d="${d}"]`).disabled=e.target.checked;});
       root.querySelector('#saveBooking').onclick=async()=>{await OF.put('/api/admin/settings/settings',{booking:{defaultMode:root.querySelector('#bk_mode').value,requestSlotCount:+root.querySelector('#bk_count').value,leadTimeHours:+root.querySelector('#bk_lead').value,maxDaysOut:+root.querySelector('#bk_max').value,collectAddress:root.querySelector('#bk_addr').checked,confirmationMessage:root.querySelector('#bk_msg').value}});OF.toast('Saved','ok');};
+      root.querySelector('#saveReminders').onclick=async()=>{await OF.put('/api/admin/settings/settings',{notifications:{appointmentReminder:{enabled:root.querySelector('#rem_on').checked,leadHours:+root.querySelector('#rem_lead').value||24}}});OF.toast('Saved','ok');};
       root.querySelector('#saveAvail').onclick=async()=>{const hours={};DAYS.forEach((_,i)=>{const closed=root.querySelector(`.h_closed[data-d="${i}"]`).checked;hours[i]=closed?[]:[{start:root.querySelector(`.h_start[data-d="${i}"]`).value,end:root.querySelector(`.h_end[data-d="${i}"]`).value}];});await OF.put('/api/admin/settings/settings',{availability:{slotMinutes:+root.querySelector('#av_slot').value,capacityPerSlot:+root.querySelector('#av_cap').value,hours}});OF.toast('Saved','ok');};
       root.insertAdjacentHTML('beforeend','<div id="exceptions"><div class="loading-page"><span class="spinner"></span></div></div>');
       loadExceptions(root);

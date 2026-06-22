@@ -59,7 +59,7 @@ router.patch('/profile', asyncHandler(async (req, res) => {
 router.put('/settings', asyncHandler(async (req, res) => {
   const patch = req.body || {};
   // only allow known top-level config sections
-  const allowed = ['branding', 'booking', 'availability', 'invoicing'];
+  const allowed = ['branding', 'booking', 'availability', 'invoicing', 'notifications'];
   const clean = {};
   for (const k of allowed) if (patch[k] !== undefined) clean[k] = patch[k];
   const t = await updateTenantSettings(req.tenant.id, clean);

@@ -43,6 +43,10 @@ export function defaultTenantSettings(overrides = {}) {
       footerNote: 'Thank you for trusting us with your home.',
       dueDays: 7,
     },
+    notifications: {
+      // Upcoming-appointment reminder emails (NOT balance/invoice reminders).
+      appointmentReminder: { enabled: true, leadHours: 24 },
+    },
     followups: {
       rules: [
         { id: 'post_service', name: 'Post-service check-in', trigger: 'after_completion', offsetDays: 3, channel: 'email', templateType: 'follow_up', active: true },
@@ -91,6 +95,16 @@ export function defaultEmailTemplates() {
 <p><a href="{{MANAGE_URL}}">Manage your appointment</a></p>
 <p>— {{COMPANY_NAME}}</p>`,
       text: 'Hi {{CUSTOMER_NAME}}, your {{SERVICE_NAME}} is confirmed for {{APPOINTMENT_DATE}} at {{APPOINTMENT_TIME}}. — {{COMPANY_NAME}}',
+    },
+    {
+      type: 'appointment_reminder',
+      subject: 'Reminder: {{SERVICE_NAME}} on {{APPOINTMENT_DATE}}',
+      html: `<p>Hi {{CUSTOMER_NAME}},</p>
+<p>This is a friendly reminder of your upcoming appointment with {{COMPANY_NAME}}:</p>
+{{DETAILS}}
+<p>If you need to make a change, just <a href="{{MANAGE_URL}}">manage your appointment</a> or reply to this email.</p>
+<p>See you soon!<br>— {{COMPANY_NAME}}</p>`,
+      text: 'Hi {{CUSTOMER_NAME}}, a reminder of your {{SERVICE_NAME}} on {{APPOINTMENT_DATE}} at {{APPOINTMENT_TIME}}. Manage it: {{MANAGE_URL}} — {{COMPANY_NAME}}',
     },
     {
       type: 'appointment_rescheduled',

@@ -71,10 +71,12 @@ const OF = window.OF;
               <button class="btn btn-secondary btn-sm" id="rescheduleBtn">Update time</button></div>`:''}
             <div class="row wrap" style="gap:8px">
               ${a.status==='scheduled'?`<button class="btn btn-primary btn-sm" data-act="completed">${OF.icon('check',15)} Mark completed</button>`:''}
+              ${a.status==='scheduled'?`<button class="btn btn-secondary btn-sm" id="remindBtn">${OF.icon('send',15)} Send reminder</button>`:''}
               ${a.status!=='canceled'&&a.status!=='completed'?`<button class="btn btn-secondary btn-sm" data-act="no_show">No-show</button>`:''}
               ${a.status!=='canceled'?`<button class="btn btn-danger-soft btn-sm" data-act="cancel">Cancel</button>`:''}
               <a class="btn btn-secondary btn-sm" href="/admin/invoices?new=1&appointment=${a.id}&customer=${a.customer_id}">${OF.icon('invoices',15)} Create invoice</a>
             </div>
+            ${a.reminder_sent_at?`<div class="tiny muted" style="margin-top:8px">${OF.icon('check',12)} Reminder sent ${OF.dateTime(a.reminder_sent_at)}</div>`:''}
             ${invoices.length?`<div><span class="muted small">Invoices</span>${invoices.map(i=>`<div class="row between" style="padding:6px 0"><a href="/admin/invoices?id=${i.id}">${OF.escape(i.number)}</a>${OF.statusBadge(i.status)}<span class="mono">${OF.money(i.total_cents)}</span></div>`).join('')}</div>`:''}
           </div>
         </div>`, { wide:true });
@@ -83,6 +85,7 @@ const OF = window.OF;
       dr.q('#saveNotes')?.addEventListener('click', async()=>{ await OF.patch('/api/admin/appointments/'+id,{internalNotes:dr.q('#internalNotes').value}); OF.toast('Notes saved','ok'); });
       dr.q('#confirmBtn')?.addEventListener('click', async()=>{ const sel=dr.el.querySelector('input[name=slot]:checked'); if(!sel) return OF.toast('Pick a time first','error'); if(await doForce(force=>OF.post(`/api/admin/appointments/${id}/confirm`,{slotIndex:+sel.value,notify:true,force}))){ OF.toast('Confirmed & customer notified','ok'); reload(); } });
       dr.q('#rescheduleBtn')?.addEventListener('click', async()=>{ const date=dr.q('#rDate').value,time=dr.q('#rTime').value; if(!date||!time) return OF.toast('Pick date & time','error'); if(await doForce(force=>OF.patch('/api/admin/appointments/'+id,{date,time,notify:true,force}))){ OF.toast('Rescheduled','ok'); reload(); } });
+      dr.q('#remindBtn')?.addEventListener('click', async()=>{ try{ await OF.post(`/api/admin/appointments/${id}/send-reminder`); OF.toast('Reminder sent','ok'); reload(); }catch(e){ OF.toast(e.message,'error'); } });
       dr.el.querySelectorAll('[data-act]').forEach(b=>b.addEventListener('click', async()=>{
         const act=b.dataset.act;
         if(act==='cancel'){ if(!(await OF.confirm({title:'Cancel appointment?',body:'<p class="muted">The customer can be notified by email.</p>',confirmText:'Cancel appointment',danger:true}))) return; await OF.patch('/api/admin/appointments/'+id,{status:'canceled',notify:true}); OF.toast('Canceled','ok'); }
