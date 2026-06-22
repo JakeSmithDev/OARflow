@@ -98,6 +98,14 @@ router.post('/:id/payment-methods', asyncHandler(async (req, res) => {
   res.json(r);
 }));
 
+// Generate (or reuse) the customer's self-service portal link.
+router.post('/:id/portal-link', asyncHandler(async (req, res) => {
+  const c = await loadCustomer(req); if (!c) return notFound(res);
+  const { ensurePortalToken, portalUrl } = await import('../../lib/portal.js');
+  const token = await ensurePortalToken(req.tenant, c.id);
+  res.json({ ok: true, url: portalUrl(token) });
+}));
+
 // Generate (or reuse) a tokenized hosted save-card link to text/email a customer.
 router.post('/:id/card-link', asyncHandler(async (req, res) => {
   const c = await loadCustomer(req); if (!c) return notFound(res);

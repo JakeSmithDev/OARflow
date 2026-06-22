@@ -282,6 +282,31 @@ async function main() {
     assert.equal(data.appointment.status, 'scheduled');
   });
 
+  // --- Customer self-service portal (magic-link) ---
+  let portalToken;
+  await check('admin can mint a customer portal link', async () => {
+    const { data } = await call('/api/admin/customers/1/portal-link', { method: 'POST' });
+    assert.ok(data.url.includes('/portal?token=')); portalToken = new URL(data.url).searchParams.get('token');
+  });
+  await check('portal /me returns the customer dashboard', async () => {
+    const { data } = await call('/api/portal/me?token=' + portalToken, { auth: false });
+    assert.ok(data.ok); assert.ok(data.customer.name); assert.ok(Array.isArray(data.invoices)); assert.ok(Array.isArray(data.upcoming));
+    assert.ok(data.tenant.bookUrl.includes('/book'));
+  });
+  await check('portal rejects a bad token', async () => {
+    assert.equal((await call('/api/portal/me?token=nope', { auth: false })).status, 404);
+  });
+  await check('request-link never leaks existence (+dev link)', async () => {
+    const hit = await call('/api/portal/request-link', { method: 'POST', auth: false, body: { email: (await call('/api/admin/customers/1')).data.customer.email } });
+    assert.ok(hit.data.ok); assert.ok(hit.data.devLink, 'dev link returned outside production');
+    const miss = await call('/api/portal/request-link', { method: 'POST', auth: false, body: { email: 'nobody-xyz@example.com' } });
+    assert.ok(miss.data.ok); assert.ok(!miss.data.devLink, 'no link for unknown email');
+  });
+  await check('portal can mint its own save-card link', async () => {
+    const { data } = await call('/api/portal/card-link', { method: 'POST', auth: false, body: { token: portalToken } });
+    assert.ok(data.url.includes('/save-card?customer='));
+  });
+
   // --- Accounting export (CSV + QuickBooks IIF) ---
   await check('accounting summary reflects invoices + payments', async () => {
     const { data } = await call('/api/admin/accounting?from=2026-01-01&to=2026-12-31');

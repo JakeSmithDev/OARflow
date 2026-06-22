@@ -17,6 +17,7 @@ import payRouter from './routes/pay.js';
 import quotesRouter from './routes/quotes.js';
 import saveCardRouter from './routes/save_card.js';
 import reviewsPublicRouter from './routes/reviews_public.js';
+import portalRouter from './routes/portal.js';
 import googleOAuthRouter from './routes/google_oauth.js';
 import cronRouter from './routes/cron.js';
 import smsWebhookRouter from './routes/sms_webhook.js';
@@ -57,6 +58,7 @@ export function createApp() {
   app.use('/api/quotes', quotesRouter);
   app.use('/api/save-card', saveCardRouter);
   app.use('/api/reviews', reviewsPublicRouter);
+  app.use('/api/portal', portalRouter);
   app.use('/api/integrations/google', googleOAuthRouter);
   app.use('/api/webhooks/sms', smsWebhookRouter);
   app.use('/api/files', filesRouter);
@@ -77,6 +79,7 @@ export function createApp() {
   app.get(/^\/quote(\/.*)?$/, (req, res) => sendShell(res, 'quote/index.html'));
   app.get(/^\/save-card(\/.*)?$/, (req, res) => sendShell(res, 'save-card/index.html'));
   app.get(/^\/review(\/.*)?$/, (req, res) => sendShell(res, 'review/index.html'));
+  app.get(/^\/portal(\/.*)?$/, (req, res) => sendShell(res, 'portal/index.html'));
 
   // 404
   app.use((req, res) => {

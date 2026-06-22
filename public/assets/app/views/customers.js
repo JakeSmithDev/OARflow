@@ -31,6 +31,7 @@ const OF = window.OF;
             <a class="btn btn-primary btn-sm" href="/admin/appointments?new=1&name=${encodeURIComponent(c.name)}">${OF.icon('plus',15)} Appointment</a>
             <a class="btn btn-secondary btn-sm" href="/admin/invoices?new=1&customer=${c.id}">${OF.icon('invoices',15)} Invoice</a>
             <a class="btn btn-secondary btn-sm" href="/admin/plans?enroll=${c.id}">${OF.icon('recurring',15)} Enroll plan</a>
+            <button class="btn btn-ghost btn-sm" id="portalBtn">Portal link</button>
             <button class="btn btn-ghost btn-sm" id="editBtn">Edit</button>
           </div>
           <div id="editForm" class="hidden card card-pad" style="margin-bottom:16px">
@@ -70,6 +71,7 @@ const OF = window.OF;
       });
       dr.q('#cardLinkBtn')?.addEventListener('click', async()=>{ const r=await OF.post(`/api/admin/customers/${id}/card-link`); navigator.clipboard?.writeText(r.url); OF.toast('Card link copied — text or email it to the customer','ok'); });
       dr.q('#editBtn').onclick=()=>dr.q('#editForm').classList.toggle('hidden');
+      dr.q('#portalBtn').onclick=async()=>{ const r=await OF.post(`/api/admin/customers/${id}/portal-link`); navigator.clipboard?.writeText(r.url); OF.toast('Portal link copied — share it with the customer','ok'); };
       dr.q('#saveCust').onclick=async()=>{
         await OF.patch('/api/admin/customers/'+id,{name:dr.q('#e_name').value,email:dr.q('#e_email').value,phone:dr.q('#e_phone').value,address:dr.q('#e_addr').value,city:dr.q('#e_city').value,state:dr.q('#e_state').value,postalCode:dr.q('#e_zip').value,notes:dr.q('#e_notes').value});
         OF.toast('Saved','ok'); dr.close(); refresh();

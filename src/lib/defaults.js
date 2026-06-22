@@ -196,6 +196,16 @@ export function defaultEmailTemplates() {
       text: 'Hi {{CUSTOMER_NAME}}, your estimate {{ESTIMATE_NUMBER}} total is {{ESTIMATE_TOTAL}}. Review & approve online: {{ACCEPT_URL}} — {{COMPANY_NAME}}',
     },
     {
+      type: 'portal_link',
+      subject: 'Your {{COMPANY_NAME}} account',
+      html: `<p>Hi {{CUSTOMER_NAME}},</p>
+<p>Here's your secure link to view appointments, invoices, and saved payment methods with {{COMPANY_NAME}}.</p>
+<p style="text-align:center;margin:28px 0;"><a class="btn" href="{{PORTAL_URL}}">Open my account</a></p>
+<p class="muted" style="color:#64748b;font-size:13px">For your security, don't share this link. You can request a new one anytime.</p>
+<p>— {{COMPANY_NAME}}</p>`,
+      text: 'Hi {{CUSTOMER_NAME}}, open your {{COMPANY_NAME}} account: {{PORTAL_URL}}',
+    },
+    {
       type: 'review_request',
       subject: 'How did we do, {{CUSTOMER_NAME}}?',
       html: `<p>Hi {{CUSTOMER_NAME}},</p>
