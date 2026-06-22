@@ -199,6 +199,16 @@ export function defaultEmailTemplates() {
       text: 'Hi {{CUSTOMER_NAME}}, your estimate {{ESTIMATE_NUMBER}} total is {{ESTIMATE_TOTAL}}. Review & approve online: {{ACCEPT_URL}} — {{COMPANY_NAME}}',
     },
     {
+      type: 'document_request',
+      subject: 'Please review & sign: {{DOCUMENT_TITLE}}',
+      html: `<p>Hi {{CUSTOMER_NAME}},</p>
+<p>{{COMPANY_NAME}} has a document ready for you to review and sign: <strong>{{DOCUMENT_TITLE}}</strong>.</p>
+<p style="text-align:center;margin:28px 0;"><a class="btn" href="{{DOCUMENT_URL}}">Review &amp; sign</a></p>
+<p class="muted" style="color:#64748b;font-size:13px">It only takes a minute and is securely recorded.</p>
+<p>— {{COMPANY_NAME}}</p>`,
+      text: 'Hi {{CUSTOMER_NAME}}, please review & sign "{{DOCUMENT_TITLE}}" from {{COMPANY_NAME}}: {{DOCUMENT_URL}}',
+    },
+    {
       type: 'portal_link',
       subject: 'Your {{COMPANY_NAME}} account',
       html: `<p>Hi {{CUSTOMER_NAME}},</p>

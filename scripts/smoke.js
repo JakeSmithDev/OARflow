@@ -359,6 +359,40 @@ async function main() {
     assert.ok(data.ok); assert.equal(data.status, 'completed');
   });
 
+  // --- Documents + e-signature ---
+  let tplId; let docId; let docToken;
+  await check('create a document template with merge fields', async () => {
+    const { data } = await call('/api/admin/documents/templates', { method: 'POST', body: { name: 'Service Agreement', requiresSignature: true, body: 'Agreement between {{COMPANY_NAME}} and {{CUSTOMER_NAME}}. Signed {{TODAY}}.' } });
+    assert.ok(data.ok); tplId = data.template.id;
+  });
+  await check('create a document renders the merge snapshot', async () => {
+    const { data } = await call('/api/admin/documents', { method: 'POST', body: { customerId: 1, templateId: tplId } });
+    assert.ok(data.ok, JSON.stringify(data)); docId = data.document.id; docToken = data.document.access_token;
+    assert.ok(data.document.body.includes('Pasternack'), 'company merged');
+    assert.ok(!data.document.body.includes('{{'), 'no unrendered placeholders');
+  });
+  await check('send document marks it sent + returns a sign link', async () => {
+    const { data } = await call(`/api/admin/documents/${docId}/send`, { method: 'POST' });
+    assert.ok(data.signUrl.includes('/document?token='));
+  });
+  await check('public document view is token-guarded', async () => {
+    assert.equal((await call('/api/documents?token=bad', { auth: false })).status, 404);
+    const { data } = await call('/api/documents?token=' + docToken, { auth: false });
+    assert.ok(data.ok); assert.equal(data.document.requiresSignature, true);
+  });
+  await check('clickwrap + drawn signature binds the document', async () => {
+    const r = await call('/api/documents/sign', { method: 'POST', auth: false, body: { token: docToken, name: 'Dana Whitfield', signatureDataUrl: 'data:image/png;base64,' + PNG1x1 } });
+    assert.ok(r.data.ok, JSON.stringify(r.data));
+    const { data } = await call('/api/admin/documents/' + docId);
+    assert.equal(data.document.status, 'signed'); assert.equal(data.document.signed_name, 'Dana Whitfield');
+    assert.ok(data.document.signed_ip); assert.ok(data.signatureUrl, 'drawn signature saved as a file');
+  });
+  await check('signing requires a typed name', async () => {
+    const d2 = (await call('/api/admin/documents', { method: 'POST', body: { customerId: 1, templateId: tplId } })).data.document;
+    const r = await call('/api/documents/sign', { method: 'POST', auth: false, body: { token: d2.access_token } });
+    assert.equal(r.status, 400);
+  });
+
   // --- Route optimization + GPS ---
   await check('routing requires technicianId + date', async () => {
     assert.equal((await call('/api/admin/routing')).status, 400);

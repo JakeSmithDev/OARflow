@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Review &amp; sign</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Poppins:wght@600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/assets/app/app.css" />
+  <style>
+    :root { --navy:#0a2740; }
+    body { background: linear-gradient(180deg, var(--brand-tint-2), var(--bg) 220px); }
+    h1,h2,#company { font-family:'Poppins',var(--font); letter-spacing:-0.01em; }
+    .wrap { max-width: 640px; margin: 0 auto; padding: 30px 18px 80px; }
+    .bk-head { display:flex; align-items:center; gap:13px; margin-bottom: 20px; }
+    .bk-head .logo { width:46px;height:46px;border-radius:13px;background:linear-gradient(135deg,var(--brand),color-mix(in srgb,var(--brand) 55%,#86efac));display:grid;place-items:center;color:#fff;font-weight:800;font-size:20px; }
+    .doc-body { white-space:pre-wrap; line-height:1.65; font-size:15px; }
+    .sign-box { border:1px solid var(--line); border-radius:14px; padding:16px; margin-top:16px; background:var(--card); }
+    .sig { border:1px dashed var(--line); border-radius:12px; touch-action:none; width:100%; height:160px; background:#fff; }
+    .legal { color:var(--muted); font-size:12px; line-height:1.5; margin-top:10px; }
+    .ok-screen { text-align:center; padding: 26px 10px; }
+    .ok-screen .big { width:66px;height:66px;border-radius:50%;background:var(--ok-tint);color:var(--ok);display:grid;place-items:center;margin:0 auto 14px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="bk-head"><div class="logo" id="logo">·</div><div><h1 id="company" style="font-size:20px">Document</h1><p class="muted small" id="sub" style="margin:2px 0 0"></p></div></div>
+    <div id="view"><div class="loading-page"><span class="spinner"></span></div></div>
+  </div>
+  <script>
+    const esc=(s)=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const token=new URLSearchParams(location.search).get('token');
+    let TENANT={};
+
+    async function load(){
+      if(!token){ fail('Invalid link.'); return; }
+      let d; try{ d=await (await fetch(`/api/documents?token=${encodeURIComponent(token)}`)).json(); }catch{ d={ok:false}; }
+      if(!d.ok){ fail(d.error||'This link is no longer valid.'); return; }
+      TENANT=d.tenant; const b=d.tenant.branding||{};
+      if(b.primaryColor) document.documentElement.style.setProperty('--brand',b.primaryColor);
+      document.getElementById('logo').textContent=(b.logoText||d.tenant.name||'O')[0];
+      document.getElementById('company').textContent=b.logoText||d.tenant.name;
+      document.getElementById('sub').textContent=d.document.title;
+      render(d.document);
+    }
+    function fail(m){ document.getElementById('view').innerHTML=`<div class="card card-pad center">${esc(m)}</div>`; }
+
+    function render(doc){
+      if(doc.status==='signed') return signed(doc);
+      if(doc.status==='declined'){ document.getElementById('view').innerHTML=`<div class="card card-pad"><div class="doc-body">${esc(doc.body)}</div></div><div class="card card-pad center muted" style="margin-top:14px">You declined this document.</div>`; return; }
+      document.getElementById('view').innerHTML = `<div class="card card-pad"><div class="doc-body">${esc(doc.body)}</div></div>
+        ${doc.requiresSignature?`<div class="sign-box">
+          <label style="font-weight:600;font-size:13px;display:block;margin-bottom:6px">Type your full name to sign</label>
+          <input id="nm" class="input" placeholder="Your full name" autocomplete="name">
+          <div style="margin-top:12px"><label style="font-weight:600;font-size:13px;display:block;margin-bottom:6px">Draw your signature (optional)</label><canvas class="sig" id="sig"></canvas><div style="text-align:right;margin-top:4px"><a id="clr" class="link-btn" style="cursor:pointer">Clear</a></div></div>
+          <div style="display:flex;gap:10px;margin-top:12px;flex-wrap:wrap"><button class="btn btn-primary btn-lg" id="sign" style="flex:1;min-width:160px">Agree &amp; sign</button><button class="btn btn-ghost" id="decline">Decline</button></div>
+          <p class="legal">By typing your name and clicking Agree &amp; sign, you agree to this document and consent to sign electronically. Your name, date, and IP address are recorded as your signature.</p>
+        </div>`:`<div class="sign-box"><button class="btn btn-primary btn-lg btn-block" id="ack">I acknowledge this document</button></div>`}`;
+      let sig=null;
+      if(doc.requiresSignature) sig=setupSig();
+      const signBtn=document.getElementById('sign')||document.getElementById('ack');
+      if(signBtn) signBtn.onclick=async()=>{
+        const name=(document.getElementById('nm')?.value||'').trim();
+        if(doc.requiresSignature && !name){ document.getElementById('nm').focus(); return; }
+        signBtn.disabled=true; signBtn.textContent='Signing…';
+        const body={ token, name }; if(sig&&sig.dirty()) body.signatureDataUrl=sig.dataUrl();
+        try{ const r=await (await fetch('/api/documents/sign',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json();
+          if(r.ok) signed({signedName:name}); else { alert(r.error||'Could not sign.'); signBtn.disabled=false; signBtn.textContent='Try again'; } }
+        catch{ signBtn.disabled=false; signBtn.textContent='Try again'; }
+      };
+      const dc=document.getElementById('decline');
+      if(dc) dc.onclick=async()=>{ if(!confirm('Decline this document?'))return; try{ await fetch('/api/documents/decline',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token})}); }catch{} location.reload(); };
+    }
+
+    function setupSig(){
+      const cv=document.getElementById('sig'); const ctx=cv.getContext('2d');
+      const ratio=window.devicePixelRatio||1; const rect=cv.getBoundingClientRect();
+      cv.width=rect.width*ratio; cv.height=rect.height*ratio; ctx.scale(ratio,ratio); ctx.lineWidth=2.2; ctx.lineCap='round'; ctx.strokeStyle='#0a2740';
+      let drawing=false,last=null,dirty=false;
+      const pos=(e)=>{ const r=cv.getBoundingClientRect(); const t=e.touches?e.touches[0]:e; return {x:t.clientX-r.left,y:t.clientY-r.top}; };
+      const start=(e)=>{ drawing=true; last=pos(e); e.preventDefault(); };
+      const move=(e)=>{ if(!drawing)return; const p=pos(e); ctx.beginPath(); ctx.moveTo(last.x,last.y); ctx.lineTo(p.x,p.y); ctx.stroke(); last=p; dirty=true; e.preventDefault(); };
+      const end=()=>{ drawing=false; };
+      cv.addEventListener('mousedown',start); cv.addEventListener('mousemove',move); window.addEventListener('mouseup',end);
+      cv.addEventListener('touchstart',start,{passive:false}); cv.addEventListener('touchmove',move,{passive:false}); cv.addEventListener('touchend',end);
+      document.getElementById('clr').onclick=()=>{ ctx.clearRect(0,0,cv.width,cv.height); dirty=false; };
+      return { dirty:()=>dirty, dataUrl:()=>cv.toDataURL('image/png') };
+    }
+    function signed(doc){ document.getElementById('view').innerHTML=`<div class="ok-screen"><div class="big"><svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg></div><h2>Signed — thank you!</h2><p class="muted" style="margin-top:8px">${doc.signedName?esc(doc.signedName)+', a':'A'} copy has been recorded${TENANT.name?' by '+esc(TENANT.name):''}.</p></div>`; }
+    load();
+  </script>
+</body>
+</html>

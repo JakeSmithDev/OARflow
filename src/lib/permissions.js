@@ -8,14 +8,14 @@ export const CAPS = [
   'invoices.manage', 'payments.manage', 'estimates.manage', 'plans.manage',
   'messaging.use', 'followups.manage', 'reports.view', 'reviews.manage',
   'settings.manage', 'team.manage', 'integrations.manage', 'compliance.manage',
-  'dispatch.manage', 'field.work',
+  'dispatch.manage', 'field.work', 'documents.manage',
 ];
 
 // Default capabilities by role.
 const ROLE_CAPS = {
   owner: ['*'],
-  manager: ['schedule.view', 'appointments.manage', 'requests.manage', 'customers.manage', 'invoices.manage', 'payments.manage', 'estimates.manage', 'plans.manage', 'messaging.use', 'followups.manage', 'reports.view', 'reviews.manage', 'dispatch.manage'],
-  staff: ['schedule.view', 'appointments.manage', 'requests.manage', 'customers.manage', 'invoices.manage', 'estimates.manage', 'messaging.use', 'followups.manage'],
+  manager: ['schedule.view', 'appointments.manage', 'requests.manage', 'customers.manage', 'invoices.manage', 'payments.manage', 'estimates.manage', 'plans.manage', 'messaging.use', 'followups.manage', 'reports.view', 'reviews.manage', 'dispatch.manage', 'documents.manage'],
+  staff: ['schedule.view', 'appointments.manage', 'requests.manage', 'customers.manage', 'invoices.manage', 'estimates.manage', 'messaging.use', 'followups.manage', 'documents.manage'],
   tech: ['schedule.view', 'field.work'],
 };
 
