@@ -3,15 +3,16 @@
 // is not configured, so the app runs fully without it.
 import Stripe from 'stripe';
 import { config } from '../config.js';
+import { decryptSecret } from './crypto.js';
 
 export function stripeSecret(tenant) {
-  return tenant?.settings?.integrations?.stripe?.secretKey || config.stripe.secretKey || '';
+  return decryptSecret(tenant?.settings?.integrations?.stripe?.secretKey) || config.stripe.secretKey || '';
 }
 export function publishableKey(tenant) {
   return tenant?.settings?.integrations?.stripe?.publishableKey || config.stripe.publishableKey || '';
 }
 export function webhookSecret(tenant) {
-  return tenant?.settings?.integrations?.stripe?.webhookSecret || config.stripe.webhookSecret || '';
+  return decryptSecret(tenant?.settings?.integrations?.stripe?.webhookSecret) || config.stripe.webhookSecret || '';
 }
 
 const cache = new Map();

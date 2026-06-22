@@ -152,6 +152,17 @@ async function main() {
   await check('list + edit email template', async () => { const list = await call('/api/admin/settings/email-templates'); assert.ok(list.data.templates.length >= 7); const put = await call('/api/admin/settings/email-templates/follow_up', { method: 'PUT', body: { subject: 'Checking in!', html: '<p>Hi {{CUSTOMER_NAME}}</p>', text: 'Hi' } }); assert.ok(put.data.ok); });
   await check('add a team member', async () => { const { data } = await call('/api/admin/settings/users', { method: 'POST', body: { username: 'tech1', password: 'temp12345', displayName: 'Tech One', role: 'staff' } }); assert.ok(data.user.id); });
   await check('save stripe keys (test placeholders)', async () => { const { data } = await call('/api/admin/settings/integrations/stripe', { method: 'PUT', body: { publishableKey: 'pk_test_x' } }); assert.ok(data.ok); });
+  await check('[fix] stripe secret is encrypted at rest, never returned', async () => {
+    await call('/api/admin/settings/integrations/stripe', { method: 'PUT', body: { secretKey: 'sk_test_supersecret' } });
+    const dbmod = await import('../src/lib/db.js');
+    const row = await dbmod.queryOne("SELECT settings FROM tenants WHERE slug='pasternack'");
+    const stored = row.settings.integrations.stripe.secretKey;
+    assert.ok(stored.startsWith('enc:v1:'), 'secret stored encrypted');
+    const { decryptSecret } = await import('../src/lib/crypto.js');
+    assert.equal(decryptSecret(stored), 'sk_test_supersecret');
+    const overview = await call('/api/admin/settings');
+    assert.equal(overview.data.integrations.stripeSecret, undefined, 'secret never returned to client');
+  });
   await check('cron daily runs without auth fails; with key passes', async () => {
     const noauth = await call('/api/cron/daily', { auth: false });
     assert.equal(noauth.status, 401);

@@ -32,6 +32,9 @@ export const config = {
   sessionTtlHours: Number(process.env.SESSION_TTL_HOURS || 12),
   // Secret used to sign public access tokens (invoice pay links, booking mgmt).
   tokenSecret: process.env.TOKEN_SECRET || 'dev-insecure-token-secret-change-me',
+  // Key for encrypting sensitive tenant credentials at rest (Stripe secrets).
+  // Falls back to TOKEN_SECRET; set a dedicated 32+ char value in production.
+  encryptionKey: process.env.ENCRYPTION_KEY || '',
   totpIssuer: process.env.TOTP_ISSUER || 'OARFlow',
 
   // Bootstrap credentials for the first admin user of the default tenant.

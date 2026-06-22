@@ -153,7 +153,7 @@
       ${items.map(([icon, label, href, countKey]) => `
         <a class="nav-link ${active === icon ? 'active' : ''}" href="${href}">
           ${OF.icon(icon)} <span>${label}</span>
-          ${countKey && counts[countKey] ? `<span class="badge-count">${counts[countKey]}</span>` : ''}
+          ${countKey ? `<span class="badge-count" data-count="${countKey}"${counts[countKey] ? '' : ' hidden'}>${counts[countKey] || ''}</span>` : ''}
         </a>`).join('')}
     `).join('');
     const u = OF.session || {};
@@ -182,30 +182,64 @@
       </main>`;
   }
 
-  /** Boot an admin page: guard auth, render shell, then call cfg.render(contentEl, ctx). */
-  OF.page = async function (cfg) {
-    const root = document.getElementById('app') || document.body;
-    try {
-      const s = await api('/api/admin/auth/session');
-      OF.session = s.user; OF.tenant = s.tenant;
-    } catch {
-      location.href = '/admin/login?next=' + encodeURIComponent(location.pathname + location.search);
-      return;
-    }
-    document.title = (cfg.title ? cfg.title + ' · ' : '') + (OF.tenant.name || 'OARFlow');
-    root.className = 'app';
-    let counts = {};
-    try { counts = (await api('/api/admin/dashboard/counts')).counts || {}; } catch { /* optional */ }
-    root.innerHTML = renderShell(cfg.active, counts);
+  // Session/tenant/counts are cached per-tab so the shell paints instantly on
+  // every navigation (no blank flash) — the sidebar feels static.
+  const CACHE_KEY = 'oarflow_admin_cache';
+  function readCache() { try { return JSON.parse(sessionStorage.getItem(CACHE_KEY) || 'null'); } catch { return null; } }
+  function writeCache(o) { try { sessionStorage.setItem(CACHE_KEY, JSON.stringify(o)); } catch { /* */ } }
+  OF.clearCache = () => { try { sessionStorage.removeItem(CACHE_KEY); } catch { /* */ } };
+
+  function applyCounts(counts) {
+    document.querySelectorAll('.badge-count[data-count]').forEach((el) => {
+      const n = counts[el.dataset.count] || 0;
+      if (n) { el.textContent = n; el.hidden = false; } else { el.hidden = true; }
+    });
+  }
+
+  function bindShell(cfg) {
     document.getElementById('pageTitle').textContent = cfg.title || '';
     document.getElementById('pageSub').textContent = cfg.subtitle || '';
-    document.getElementById('logoutBtn').addEventListener('click', async () => {
-      await api('/api/admin/auth/logout', { method: 'POST' }).catch(() => {});
-      location.href = '/admin/login';
-    });
-    document.getElementById('menuToggle')?.addEventListener('click', () => {
-      document.getElementById('sidebar')?.classList.toggle('open');
-    });
+    const lo = document.getElementById('logoutBtn');
+    if (lo && !lo._bound) { lo._bound = 1; lo.addEventListener('click', async () => { OF.clearCache(); await api('/api/admin/auth/logout', { method: 'POST' }).catch(() => {}); location.href = '/admin/login'; }); }
+    const mt = document.getElementById('menuToggle');
+    if (mt && !mt._bound) { mt._bound = 1; mt.addEventListener('click', () => document.getElementById('sidebar')?.classList.toggle('open')); }
+  }
+
+  /** Boot an admin page: paint the cached shell instantly, validate in the
+   *  background, then call cfg.render(contentEl, ctx). */
+  OF.page = async function (cfg) {
+    const root = document.getElementById('app') || document.body;
+    root.className = 'app';
+    document.title = (cfg.title ? cfg.title + ' · ' : '') + 'OARFlow';
+
+    const cached = readCache();
+    let painted = false;
+    if (cached && cached.tenant) {
+      OF.session = cached.session; OF.tenant = cached.tenant;
+      root.innerHTML = renderShell(cfg.active, cached.counts || {});
+      bindShell(cfg);
+      document.title = (cfg.title ? cfg.title + ' · ' : '') + (OF.tenant.name || 'OARFlow');
+      painted = true;
+    }
+
+    let s;
+    try { s = await api('/api/admin/auth/session'); }
+    catch { OF.clearCache(); location.href = '/admin/login?next=' + encodeURIComponent(location.pathname + location.search); return; }
+    OF.session = s.user; OF.tenant = s.tenant;
+    const counts = (cached && cached.counts) || {};
+    writeCache({ session: s.user, tenant: s.tenant, counts });
+
+    if (!painted) {
+      root.innerHTML = renderShell(cfg.active, counts);
+      bindShell(cfg);
+      document.title = (cfg.title ? cfg.title + ' · ' : '') + (OF.tenant.name || 'OARFlow');
+    }
+
+    // Refresh nav counts in the background (updates badges + cache for next nav).
+    api('/api/admin/dashboard/counts').then((r) => {
+      const fresh = r.counts || {}; applyCounts(fresh); writeCache({ session: OF.session, tenant: OF.tenant, counts: fresh });
+    }).catch(() => {});
+
     const content = document.getElementById('content');
     try {
       await cfg.render(content, { session: OF.session, tenant: OF.tenant, setActions: (html) => { document.getElementById('pageActions').innerHTML = html; } });

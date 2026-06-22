@@ -255,7 +255,10 @@
         <div class="big"><svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg></div>
         <h2>${requested?'Request received!':'You\'re booked!'}</h2>
         <p class="muted" style="max-width:420px;margin:10px auto 0">${requested?(CFG.booking.confirmationMessage||'We\'ll confirm one of your preferred times by email shortly.'):'A confirmation email is on its way. We look forward to seeing you!'}</p>
-        <div class="navbtns" style="justify-content:center"><button class="btn btn-secondary" onclick="location.href='/book?t=${encodeURIComponent(slug)}'">Book another</button></div>
+        <div class="navbtns" style="justify-content:center">
+          <a class="btn btn-primary btn-lg" href="/">Back to homepage</a>
+          <a class="btn btn-secondary btn-lg" href="/services.html">Browse our services</a>
+        </div>
       </div>`;
     }
 
@@ -272,7 +275,7 @@
           ${a.serviceAddress?`<div class="row between"><span class="muted">Address</span><b>${esc(a.serviceAddress)}</b></div>`:''}
           ${a.status==='requested'&&a.requestedSlots?`<div><span class="muted small">Proposed:</span><ul style="margin:6px 0;padding-left:18px">${a.requestedSlots.map(s=>`<li>${fmtDate(new Date(s.start))} · ${fmtTime(new Date(s.start))}</li>`).join('')}</ul></div>`:''}
         </div>
-        <div class="navbtns"><button class="btn btn-secondary" onclick="location.href='/book?t=${encodeURIComponent(slug)}'">Book another</button></div>`;
+        <div class="navbtns"><a class="btn btn-secondary" href="/">Back to homepage</a></div>`;
       } catch(e){ $('#view').innerHTML = `<div class="card card-pad center">${esc(e.message)}</div>`; }
     }
 

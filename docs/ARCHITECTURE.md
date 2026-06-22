@@ -125,9 +125,14 @@ done; task follow-ups wait in the queue for staff.
 - Public endpoints are rate-limited (`rate_limits`).
 - Invoice/appointment public pages are guarded by unguessable access tokens.
 - Set a strong `TOKEN_SECRET` and rotate the seeded admin password in production.
-- Tenant-stored integration secrets are kept in `settings` JSONB; for
-  higher-security deployments, encrypt these at rest or move them to a secrets
-  manager.
+- Tenant Stripe credentials (secret key + webhook signing secret) are
+  **encrypted at rest with AES-256-GCM** (`src/lib/crypto.js`,
+  `encryptSecret`/`decryptSecret`) before being written to `settings` JSONB, and
+  are **never returned to the client** — the settings API only exposes
+  `stripeEnabled` and the publishable key. The encryption key comes from
+  `ENCRYPTION_KEY` (recommended) or falls back to `TOKEN_SECRET`; set a
+  dedicated value in production. For the highest assurance, move secrets to a
+  managed secrets store / Stripe Connect instead of per-tenant keys.
 
 ## Reselling / white-labeling — checklist
 

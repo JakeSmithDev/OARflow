@@ -44,4 +44,40 @@ export function safeEqual(a, b) {
   return crypto.timingSafeEqual(ab, bb);
 }
 
-export default { hashPassword, verifyPassword, randomToken, sha256, signValue, safeEqual };
+// --- Secret encryption at rest (AES-256-GCM) -----------------------------
+// Used for sensitive tenant-stored credentials (e.g. Stripe secret + webhook
+// secret). Key derives from ENCRYPTION_KEY (recommended) or TOKEN_SECRET.
+function encKey() {
+  return crypto.createHash('sha256').update(config.encryptionKey || config.tokenSecret).digest();
+}
+const ENC_PREFIX = 'enc:v1:';
+
+/** Encrypt a secret for storage. Returns 'enc:v1:<base64>' (or '' for empty). */
+export function encryptSecret(plain) {
+  if (!plain) return '';
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', encKey(), iv);
+  const ct = Buffer.concat([cipher.update(String(plain), 'utf8'), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return ENC_PREFIX + Buffer.concat([iv, tag, ct]).toString('base64');
+}
+
+/** Decrypt a stored secret. Plaintext (non-prefixed) values pass through. */
+export function decryptSecret(stored) {
+  if (!stored) return '';
+  const s = String(stored);
+  if (!s.startsWith(ENC_PREFIX)) return s;
+  try {
+    const raw = Buffer.from(s.slice(ENC_PREFIX.length), 'base64');
+    const iv = raw.subarray(0, 12); const tag = raw.subarray(12, 28); const ct = raw.subarray(28);
+    const decipher = crypto.createDecipheriv('aes-256-gcm', encKey(), iv);
+    decipher.setAuthTag(tag);
+    return Buffer.concat([decipher.update(ct), decipher.final()]).toString('utf8');
+  } catch {
+    return '';
+  }
+}
+
+export function isEncrypted(v) { return typeof v === 'string' && v.startsWith(ENC_PREFIX); }
+
+export default { hashPassword, verifyPassword, randomToken, sha256, signValue, safeEqual, encryptSecret, decryptSecret, isEncrypted };

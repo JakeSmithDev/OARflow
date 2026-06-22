@@ -6,7 +6,7 @@ import { requireAdmin, requireRole } from '../../lib/auth.js';
 import { asyncHandler, badRequest, notFound, toInt } from '../../lib/http.js';
 import { query, queryOne } from '../../lib/db.js';
 import { updateTenantProfile, updateTenantSettings, getTenantById } from '../../lib/tenants.js';
-import { hashPassword } from '../../lib/crypto.js';
+import { hashPassword, encryptSecret } from '../../lib/crypto.js';
 import { defaultEmailTemplates } from '../../lib/defaults.js';
 import { isConfigured as stripeConfigured } from '../../lib/stripe.js';
 import { isConnected as googleConnected } from '../../lib/google_calendar.js';
@@ -226,9 +226,10 @@ router.delete('/overrides/:id', asyncHandler(async (req, res) => {
 router.put('/integrations/stripe', asyncHandler(async (req, res) => {
   const b = req.body || {};
   const patch = { integrations: { stripe: {} } };
-  if (b.secretKey !== undefined) patch.integrations.stripe.secretKey = b.secretKey;
+  // Secret + webhook secret are encrypted at rest; publishable key is public.
+  if (b.secretKey !== undefined) patch.integrations.stripe.secretKey = b.secretKey ? encryptSecret(b.secretKey) : '';
   if (b.publishableKey !== undefined) patch.integrations.stripe.publishableKey = b.publishableKey;
-  if (b.webhookSecret !== undefined) patch.integrations.stripe.webhookSecret = b.webhookSecret;
+  if (b.webhookSecret !== undefined) patch.integrations.stripe.webhookSecret = b.webhookSecret ? encryptSecret(b.webhookSecret) : '';
   await updateTenantSettings(req.tenant.id, patch);
   const t = await getTenantById(req.tenant.id);
   res.json({ ok: true, stripeEnabled: stripeConfigured(t) });
