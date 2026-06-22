@@ -8,6 +8,7 @@ import { technicianByFieldToken, technicianJobs, isAssigned } from '../lib/techn
 import { saveFile, listFiles, signedUrl } from '../lib/storage.js';
 import { decodeUpload, IMAGE_TYPES } from '../lib/uploads.js';
 import { sendAppointmentSms } from '../lib/notify_sms.js';
+import { mapsUrl } from '../lib/routing.js';
 import { scheduleForCompletion } from '../lib/follow_ups.js';
 import { emitEvent } from '../lib/events.js';
 import { zonedWallTimeToUtc, ymdInTimeZone } from '../lib/dates.js';
@@ -40,6 +41,7 @@ router.get('/me', asyncHandler(async (req, res) => {
     technician: { name: ctx.tech.name, color: ctx.tech.color },
     tenant: { name: ctx.tenant.name, branding: ctx.tenant.settings.branding, timezone: ctx.tenant.timezone },
     jobs,
+    routeUrl: mapsUrl(jobs.map((j) => ({ address: j.service_address })), ctx.tenant.address),
   });
 }));
 

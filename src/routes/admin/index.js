@@ -14,6 +14,7 @@ import reportsRouter from './reports.js';
 import reviewsRouter from './reviews.js';
 import techniciansRouter from './technicians.js';
 import accountingRouter from './accounting.js';
+import routingRouter from './routing.js';
 
 const router = express.Router();
 
@@ -31,5 +32,6 @@ router.use('/reports', reportsRouter);
 router.use('/reviews', reviewsRouter);
 router.use('/technicians', techniciansRouter);
 router.use('/accounting', accountingRouter);
+router.use('/routing', routingRouter);
 
 export default router;

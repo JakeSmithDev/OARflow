@@ -98,6 +98,9 @@ export function defaultTenantSettings(overrides = {}) {
       // CSV/IIF export now; a live API sync (e.g. QuickBooks Online) can be added
       // later behind the same accounting provider interface.
       accounting: { provider: 'export', realmId: '', accessToken: '', refreshToken: '', expiryDate: 0 },
+      // Geocoding for route optimization. Without a provider, multi-stop map
+      // links still work (the map app geocodes the addresses).
+      geocoding: { provider: 'none', apiKey: '' }, // none|google|mapbox
     },
     ...overrides,
   };

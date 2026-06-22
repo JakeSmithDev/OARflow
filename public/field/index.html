@@ -48,11 +48,11 @@
       const b=d.tenant.branding||{}; if(b.primaryColor) document.documentElement.style.setProperty('--brand',b.primaryColor);
       document.getElementById('title').textContent=`Hi, ${d.technician.name.split(' ')[0]}`;
       document.getElementById('sub').textContent=new Date(d.date+'T12:00:00').toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'})+` · ${d.jobs.length} job${d.jobs.length===1?'':'s'}`;
-      document.getElementById('view').innerHTML = d.jobs.length? d.jobs.map(j=>`<div class="jobcard" data-id="${j.id}" style="border-left-color:${j.service_color||'var(--brand)'}">
+      document.getElementById('view').innerHTML = (d.jobs.length&&d.routeUrl?`<a class="big-btn b-soft" href="${esc(d.routeUrl)}" target="_blank" rel="noopener" style="margin:0 0 12px">🧭 Open today's route in Maps</a>`:'') + (d.jobs.length? d.jobs.map(j=>`<div class="jobcard" data-id="${j.id}" style="border-left-color:${j.service_color||'var(--brand)'}">
         <div class="row between"><span class="when">${tfmt(j.scheduled_start)}</span><span class="badge no-dot">${esc(j.status)}</span></div>
         <div class="t">${esc(j.customer_name)}</div>
         <div class="muted small">${esc(j.service_name||'Service')}${j.service_address?' · '+esc(j.service_address):''}</div></div>`).join('')
-        : '<div class="card card-pad center muted">No jobs scheduled today. Enjoy the quiet! 🌿</div>';
+        : '<div class="card card-pad center muted">No jobs scheduled today. Enjoy the quiet! 🌿</div>');
       document.querySelectorAll('.jobcard').forEach(c=>c.onclick=()=>openJob(c.dataset.id));
     }
 

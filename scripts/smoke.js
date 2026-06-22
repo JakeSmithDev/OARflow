@@ -359,6 +359,22 @@ async function main() {
     assert.ok(data.ok); assert.equal(data.status, 'completed');
   });
 
+  // --- Route optimization + GPS ---
+  await check('routing requires technicianId + date', async () => {
+    assert.equal((await call('/api/admin/routing')).status, 400);
+  });
+  await check('route lists the tech stops + builds a maps link', async () => {
+    await call(`/api/admin/appointments/${assignApptId}`, { method: 'PATCH', body: { serviceAddress: '123 Main St, Baltimore, MD' } });
+    const { data } = await call(`/api/admin/routing?technicianId=${techId}&date=2026-07-15`);
+    assert.ok(data.ok); assert.ok(data.stops.some((s) => s.appointmentId === assignApptId));
+    assert.equal(data.geocoder, false); // no geocoder in dev
+    assert.ok(data.mapsUrl && data.mapsUrl.includes('google.com/maps/dir'));
+  });
+  await check('field /me includes a route map link', async () => {
+    const { data } = await call(`/api/field/me?token=${fieldToken}&date=2026-07-15`, { auth: false });
+    assert.ok(data.routeUrl && data.routeUrl.includes('maps'));
+  });
+
   // --- Reviews / NPS (no rating gating) ---
   await check('set a public review platform URL', async () => {
     const { data } = await call('/api/admin/reviews/settings', { method: 'PUT', body: { platforms: { google: 'https://g.page/r/demo/review' } } });

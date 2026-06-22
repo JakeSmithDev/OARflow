@@ -46,6 +46,30 @@ const OF = window.OF;
       return `<span class="cap-pill" style="background:var(--ok-tint);color:#15803d">${jobs} job${jobs>1?'s':''}</span>`;
     }
 
+    async function routeModal() {
+      if (!TECHS || !TECHS.length) { OF.toast('Add a technician first', 'error'); return; }
+      let techId = techFilter || (TECHS[0] && TECHS[0].id);
+      const day = view === 'day' ? cursor : (view === 'week' ? cursor : cursor);
+      const m = OF.modal(`<div class="modal-head"><h3>Optimize route</h3><button class="x" data-close>&times;</button></div>
+        <div class="modal-body" style="min-height:120px">
+          <div class="grid cols-2"><div class="field"><label>Technician</label><select id="rt_tech">${TECHS.map(t=>`<option value="${t.id}" ${String(t.id)===String(techId)?'selected':''}>${OF.escape(t.name)}</option>`).join('')}</select></div>
+          <div class="field"><label>Date</label><input type="date" id="rt_date" value="${day}"></div></div>
+          <div id="rt_out"><p class="muted small">Choose a technician and date, then optimize.</p></div>
+        </div>
+        <div class="modal-foot"><button class="btn btn-secondary" data-close>Close</button><button class="btn btn-primary" id="rt_go">Optimize</button></div>`, { wide:true });
+      async function run() {
+        const t = m.q('#rt_tech').value; const dt = m.q('#rt_date').value;
+        m.q('#rt_out').innerHTML = '<div class="loading-page" style="min-height:80px"><span class="spinner"></span></div>';
+        const d = await OF.get(`/api/admin/routing?technicianId=${t}&date=${dt}`);
+        if (!d.stops.length) { m.q('#rt_out').innerHTML = '<p class="muted small">No stops for this technician on this day.</p>'; return; }
+        m.q('#rt_out').innerHTML = `${d.optimized?`<div class="badge ok no-dot" style="margin-bottom:8px">Optimized · ${d.totalMiles} mi</div>`:`<p class="tiny muted">${OF.escape(d.reason||'')}</p>`}
+          <ol style="padding-left:18px;margin:8px 0">${d.stops.map(s=>`<li style="padding:5px 0"><b>${s.time?OF.time(s.time):''}</b> ${OF.escape(s.customerName)}<div class="tiny muted">${OF.escape(s.address||'No address')}</div></li>`).join('')}</ol>
+          ${d.mapsUrl?`<a class="btn btn-primary btn-block" href="${d.mapsUrl}" target="_blank" rel="noopener">${OF.icon('pin',15)} Open route in Google Maps</a>`:''}`;
+      }
+      m.q('#rt_go').onclick = run;
+      run();
+    }
+
     let currentRoot;
     async function render(root) {
       currentRoot = root;
@@ -59,6 +83,7 @@ const OF = window.OF;
         <div class="sched-toolbar">
           <button class="arrow" id="prev">‹</button><button class="arrow" id="next">›</button>
           <button class="btn btn-secondary btn-sm" id="today">Today</button>
+          <button class="btn btn-secondary btn-sm" id="routeBtn" title="Optimize the selected technician's route">${OF.icon('pin',14)} Route</button>
           <span class="sched-title">${title}</span>
           <select id="techfilter" style="margin-left:auto;max-width:190px"><option value="">All technicians</option></select>
           <div class="segmented" id="viewseg">
@@ -73,6 +98,7 @@ const OF = window.OF;
       document.getElementById('prev').onclick=()=>{ cursor = view==='month'? addMonth(-1): addYmd(cursor,-step); render(root); };
       document.getElementById('next').onclick=()=>{ cursor = view==='month'? addMonth(1): addYmd(cursor,step); render(root); };
       document.getElementById('today').onclick=()=>{ cursor=todayYmd(); render(root); };
+      document.getElementById('routeBtn').onclick=()=>routeModal();
       document.querySelectorAll('#viewseg [data-v]').forEach(b=>b.onclick=()=>{ view=b.dataset.v; render(root); });
 
       const data = await OF.get(`/api/admin/appointments/calendar?from=${r.from}T00:00:00.000Z&to=${r.to}T00:00:00.000Z`);
