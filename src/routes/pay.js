@@ -33,12 +33,14 @@ router.get('/:id', asyncHandler(async (req, res) => {
     tenant: { name: tenant.name, branding: tenant.settings.branding, timezone: tenant.timezone },
     stripeEnabled: stripeConfigured(tenant),
     paid: inv.status === 'paid',
+    voided: inv.status === 'void',
   });
 }));
 
 router.post('/:id/checkout', asyncHandler(async (req, res) => {
   const inv = await loadInvoice(toInt(req.params.id), String((req.body || {}).token || ''));
   if (!inv) return notFound(res, 'Invoice not found.');
+  if (inv.status === 'void') return badRequest(res, 'This invoice is no longer payable.');
   if (inv.status === 'paid') return badRequest(res, 'This invoice is already paid.');
   const tenant = await getTenantById(inv.tenant_id);
   if (!stripeConfigured(tenant)) return res.json({ ok: false, error: 'Online payment is not enabled. Please contact us to pay.' });

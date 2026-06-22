@@ -4,8 +4,8 @@ import express from 'express';
 import { requireAdmin } from '../../lib/auth.js';
 import { asyncHandler, badRequest, notFound, toInt } from '../../lib/http.js';
 import { query, queryOne } from '../../lib/db.js';
-import { getService, findOrCreateCustomer, createAppointment } from '../../lib/appointments.js';
-import { zonedWallTimeToUtc } from '../../lib/dates.js';
+import { getService, findOrCreateCustomer, createAppointment, fetchDayConflicts, overlapCount, slotCapacity } from '../../lib/appointments.js';
+import { zonedWallTimeToUtc, ymdInTimeZone } from '../../lib/dates.js';
 import { syncAppointment, deleteAppointmentEvent } from '../../lib/google_calendar.js';
 import { scheduleForCompletion } from '../../lib/follow_ups.js';
 import { sendTemplated, detailsTable } from '../../lib/email_templates.js';
@@ -36,6 +36,16 @@ function resolveTimes(tenant, body, durationMin) {
     return { start, end };
   }
   return null;
+}
+
+// Returns a block descriptor if the window is at/over capacity (unless forced).
+async function capacityBlock(tenant, startISO, endISO, excludeId, force) {
+  if (force) return null;
+  const dateYmd = ymdInTimeZone(new Date(startISO), tenant.timezone);
+  const { override } = await fetchDayConflicts(tenant, dateYmd);
+  const cap = slotCapacity(tenant, override);
+  const booked = await overlapCount(tenant.id, startISO, endISO, excludeId);
+  return booked >= cap ? { capacity: cap, booked } : null;
 }
 
 function emailVars(tenant, appt, extra = {}) {
@@ -128,6 +138,8 @@ router.post('/', asyncHandler(async (req, res) => {
   const service = b.serviceId ? await getService(tenant.id, toInt(b.serviceId)) : null;
   const times = resolveTimes(tenant, b, service?.duration_minutes);
   if (!times) return badRequest(res, 'A date and time are required.');
+  const block = await capacityBlock(tenant, times.start.toISOString(), times.end.toISOString(), null, b.force);
+  if (block) return res.status(409).json({ ok: false, code: 'SLOT_FULL', error: `That time is at capacity (${block.booked}/${block.capacity} crews booked). Book anyway?` });
   const appt = await createAppointment(tenant.id, {
     customerId, serviceTypeId: service?.id || null, status: 'scheduled', bookingMode: 'instant', source: 'admin',
     scheduledStart: times.start.toISOString(), scheduledEnd: times.end.toISOString(),
@@ -155,7 +167,11 @@ router.patch('/:id', asyncHandler(async (req, res) => {
 
   if (b.date || b.start) {
     const times = resolveTimes(tenant, b, a.duration_minutes);
-    if (times) { set('scheduled_start', times.start.toISOString()); set('scheduled_end', times.end.toISOString()); set('status', 'scheduled'); }
+    if (times) {
+      const block = await capacityBlock(tenant, times.start.toISOString(), times.end.toISOString(), id, b.force);
+      if (block) return res.status(409).json({ ok: false, code: 'SLOT_FULL', error: `That time is at capacity (${block.booked}/${block.capacity} crews booked). Reschedule anyway?` });
+      set('scheduled_start', times.start.toISOString()); set('scheduled_end', times.end.toISOString()); set('status', 'scheduled');
+    }
   }
   if (b.serviceAddress !== undefined) set('service_address', b.serviceAddress);
   if (b.internalNotes !== undefined) set('internal_notes', b.internalNotes);
@@ -197,6 +213,8 @@ router.post('/:id/confirm', asyncHandler(async (req, res) => {
     start = zonedWallTimeToUtc(b.date, b.time, tenant.timezone); end = new Date(start.getTime() + (a.duration_minutes || 60) * 60000);
   } else return badRequest(res, 'Choose a time to confirm.');
 
+  const block = await capacityBlock(tenant, start.toISOString(), end.toISOString(), id, b.force);
+  if (block) return res.status(409).json({ ok: false, code: 'SLOT_FULL', error: `That time is at capacity (${block.booked}/${block.capacity} crews booked). Confirm anyway?` });
   await query(
     "UPDATE appointments SET status='scheduled', scheduled_start=$2, scheduled_end=$3, updated_at=now() WHERE id=$1",
     [id, start.toISOString(), end.toISOString()],

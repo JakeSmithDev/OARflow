@@ -16,6 +16,18 @@
 
     async function loadServices() { if (!SERVICES.length) SERVICES = (await OF.get('/api/admin/appointments/meta/services')).services; return SERVICES; }
 
+    // Run an action; if the slot is at capacity, ask to override and retry with force.
+    async function doForce(fn) {
+      try { await fn(false); return true; }
+      catch (e) {
+        if (e.code === 'SLOT_FULL') {
+          if (await OF.confirm({ title: 'Time slot is full', body: `<p class="muted">${OF.escape(e.message)}</p>`, confirmText: 'Book anyway' })) { try { await fn(true); return true; } catch (e2) { OF.toast(e2.message, 'error'); return false; } }
+          return false;
+        }
+        OF.toast(e.message, 'error'); return false;
+      }
+    }
+
     function chip(key, label, n) {
       return `<button class="chip ${state.status===key?'active':''}" data-status="${key}">${label}${n!=null?` <span class="n">${n}</span>`:''}</button>`;
     }
@@ -79,8 +91,8 @@
 
       const reload = () => { dr.close(); refresh(); };
       dr.q('#saveNotes')?.addEventListener('click', async()=>{ await OF.patch('/api/admin/appointments/'+id,{internalNotes:dr.q('#internalNotes').value}); OF.toast('Notes saved','ok'); });
-      dr.q('#confirmBtn')?.addEventListener('click', async()=>{ const sel=dr.el.querySelector('input[name=slot]:checked'); if(!sel) return OF.toast('Pick a time first','error'); await OF.post(`/api/admin/appointments/${id}/confirm`,{slotIndex:+sel.value,notify:true}); OF.toast('Confirmed & customer notified','ok'); reload(); });
-      dr.q('#rescheduleBtn')?.addEventListener('click', async()=>{ const date=dr.q('#rDate').value,time=dr.q('#rTime').value; if(!date||!time) return OF.toast('Pick date & time','error'); await OF.patch('/api/admin/appointments/'+id,{date,time,notify:true}); OF.toast('Rescheduled','ok'); reload(); });
+      dr.q('#confirmBtn')?.addEventListener('click', async()=>{ const sel=dr.el.querySelector('input[name=slot]:checked'); if(!sel) return OF.toast('Pick a time first','error'); if(await doForce(force=>OF.post(`/api/admin/appointments/${id}/confirm`,{slotIndex:+sel.value,notify:true,force}))){ OF.toast('Confirmed & customer notified','ok'); reload(); } });
+      dr.q('#rescheduleBtn')?.addEventListener('click', async()=>{ const date=dr.q('#rDate').value,time=dr.q('#rTime').value; if(!date||!time) return OF.toast('Pick date & time','error'); if(await doForce(force=>OF.patch('/api/admin/appointments/'+id,{date,time,notify:true,force}))){ OF.toast('Rescheduled','ok'); reload(); } });
       dr.el.querySelectorAll('[data-act]').forEach(b=>b.addEventListener('click', async()=>{
         const act=b.dataset.act;
         if(act==='cancel'){ if(!(await OF.confirm({title:'Cancel appointment?',body:'<p class="muted">The customer can be notified by email.</p>',confirmText:'Cancel appointment',danger:true}))) return; await OF.patch('/api/admin/appointments/'+id,{status:'canceled',notify:true}); OF.toast('Canceled','ok'); }
@@ -107,7 +119,7 @@
         const body={ customer:{name:m.q('#n_name').value.trim(),email:m.q('#n_email').value.trim(),phone:m.q('#n_phone').value.trim(),address:m.q('#n_addr').value.trim()},
           serviceId:+m.q('#n_service').value, date:m.q('#n_date').value, time:m.q('#n_time').value, serviceAddress:m.q('#n_addr').value.trim(), notes:m.q('#n_notes').value.trim(), notify:m.q('#n_notify').checked };
         if(!body.customer.name||!body.date||!body.time) return OF.toast('Name, date and time are required','error');
-        try { await OF.post('/api/admin/appointments',body); m.close(); OF.toast('Appointment created','ok'); refresh(); } catch(e){ OF.toast(e.message,'error'); }
+        if(await doForce(force=>OF.post('/api/admin/appointments',{...body,force}))){ m.close(); OF.toast('Appointment created','ok'); refresh(); }
       });
     }
 

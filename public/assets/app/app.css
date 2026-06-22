@@ -108,8 +108,9 @@ h1,h2,h3,h4 { margin: 0; font-weight: 700; letter-spacing: -0.01em; color: var(-
 }
 .topbar h1 { font-size: 19px; }
 .topbar .sub { color: var(--muted); font-size: 13px; margin-top: 2px; }
-.topbar .actions { margin-left: auto; display: flex; gap: 10px; align-items: center; }
+.topbar .actions { margin-left: auto; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .content { padding: 24px 28px 60px; max-width: 1280px; width: 100%; }
+.menu-toggle { display: none; width: 38px; height: 38px; border-radius: 9px; border: 1px solid var(--line); background: var(--surface); cursor: pointer; align-items: center; justify-content: center; flex: none; }
 
 /* --- Buttons ------------------------------------------------------------- */
 .btn {
@@ -245,10 +246,18 @@ textarea { resize: vertical; min-height: 80px; }
 
 @media (max-width: 920px) {
   .app { grid-template-columns: 1fr; }
-  .sidebar { position: fixed; left: 0; top: 0; transform: translateX(-100%); transition: transform .2s; z-index: 120; width: 260px; }
+  .sidebar { position: fixed; left: 0; top: 0; transform: translateX(-100%); transition: transform .2s; z-index: 120; width: 260px; box-shadow: var(--shadow-lg); }
   .sidebar.open { transform: none; }
+  .menu-toggle { display: inline-flex; }
   .cols-4 { grid-template-columns: repeat(2, 1fr); }
   .cols-3, .cols-2 { grid-template-columns: 1fr; }
   .content { padding: 18px 16px 60px; }
   .topbar { padding: 14px 16px; }
+}
+@media (max-width: 560px) {
+  .cols-4, .cols-3, .cols-2 { grid-template-columns: 1fr; }
+  .grid[style] { grid-template-columns: 1fr !important; }
+  .topbar h1 { font-size: 17px; }
+  .modal-foot { flex-wrap: wrap; }
+  .scrim { position: fixed; inset: 0; background: rgba(15,23,42,.4); z-index: 110; }
 }

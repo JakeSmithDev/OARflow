@@ -1,6 +1,6 @@
 // Recurring plans (templates) + subscriptions (customer enrollments).
 import express from 'express';
-import { requireAdmin } from '../../lib/auth.js';
+import { requireAdmin, requireRole } from '../../lib/auth.js';
 import { asyncHandler, badRequest, notFound, toInt } from '../../lib/http.js';
 import { query, queryOne } from '../../lib/db.js';
 import { enrollSubscription, generateDueCycles, monthsForInterval } from '../../lib/recurring.js';
@@ -39,8 +39,8 @@ router.get('/', asyncHandler(async (req, res) => {
   res.json({ ok: true, plans: plans.rows, subscriptions: subs.rows, services: services.rows, metrics: { mrrCents: mrr, arrCents: mrr * 12, activeSubs: active.length }, stripeEnabled: stripeConfigured(req.tenant) });
 }));
 
-// --- Create / update / archive plan --------------------------------------
-router.post('/', asyncHandler(async (req, res) => {
+// --- Create / update / archive plan (owner-only) -------------------------
+router.post('/', requireRole('owner'), asyncHandler(async (req, res) => {
   const b = req.body || {};
   if (!b.name) return badRequest(res, 'Plan name is required.');
   const row = await queryOne(
@@ -53,7 +53,7 @@ router.post('/', asyncHandler(async (req, res) => {
   res.json({ ok: true, plan: row });
 }));
 
-router.patch('/:id', asyncHandler(async (req, res) => {
+router.patch('/:id', requireRole('owner'), asyncHandler(async (req, res) => {
   const id = toInt(req.params.id); const b = req.body || {};
   const cols = { name: b.name, description: b.description, interval: b.interval, interval_count: toInt(b.intervalCount), price_cents: b.priceCents != null ? Math.round(b.priceCents) : undefined, service_type_id: b.serviceTypeId !== undefined ? (toInt(b.serviceTypeId) || null) : undefined, auto_schedule: b.autoSchedule, auto_invoice: b.autoInvoice, is_active: b.isActive };
   const sets = []; const params = [id, req.tenant.id];

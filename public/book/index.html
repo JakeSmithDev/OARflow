@@ -19,8 +19,10 @@
     .svc { display:flex; align-items:center; gap:14px; padding:16px 18px; border:1px solid var(--line); border-radius: var(--radius); background:var(--surface); cursor:pointer; transition:.12s; margin-bottom:12px; }
     .svc:hover { border-color: var(--brand); box-shadow: var(--shadow); transform: translateY(-1px); }
     .svc .sdot { width:42px;height:42px;border-radius:11px;flex:none;display:grid;place-items:center;color:#fff;font-weight:700; }
-    .svc .meta { flex:1; } .svc .meta h3 { font-size:16px; } .svc .meta p { margin:3px 0 0; color:var(--muted); font-size:13px; }
-    .svc .price { text-align:right; font-weight:800; font-size:16px; } .svc .price small { display:block; color:var(--muted); font-weight:600; font-size:11px; }
+    .svc .meta { flex:1; min-width:0; } .svc .meta h3 { font-size:16px; } .svc .meta p { margin:3px 0 0; color:var(--muted); font-size:13px; overflow-wrap:anywhere; }
+    .svc .price { text-align:right; font-weight:800; font-size:16px; flex:none; } .svc .price small { display:block; color:var(--muted); font-weight:600; font-size:11px; }
+    .navbtns { flex-wrap:wrap; }
+    @media (max-width:560px){ .wrap{padding:20px 14px 70px;} .svc{padding:13px 14px;} }
     .datestrip { display:flex; gap:8px; overflow-x:auto; padding: 4px 2px 10px; }
     .daybtn { flex:none; width:64px; padding:10px 0; border:1px solid var(--line); border-radius:12px; background:var(--surface); text-align:center; cursor:pointer; transition:.1s; }
     .daybtn:hover { border-color: var(--brand); } .daybtn.active { background:var(--brand); color:#fff; border-color:var(--brand); }
@@ -102,10 +104,10 @@
 
     function dayList() {
       const days = []; const now = new Date();
-      const lead = (CFG.booking.leadTimeHours||0)*3600000;
-      let start = new Date(now.getTime()+lead);
-      // start from the calendar day of the earliest bookable time
-      for (let i=0;i<21;i++){ const d = new Date(start.getTime()+i*86400000); days.push(d); }
+      // Show from today through the admin-configured booking window (the
+      // availability API still filters out too-soon times per the lead time).
+      const span = Math.max(7, Math.min(CFG.booking.maxDaysOut||60, 120));
+      for (let i=0;i<=span;i++){ const d = new Date(now.getTime()+i*86400000); days.push(d); }
       return days;
     }
     function ymd(d){ return new Intl.DateTimeFormat('en-CA',{timeZone:TZ,year:'numeric',month:'2-digit',day:'2-digit'}).format(d); }

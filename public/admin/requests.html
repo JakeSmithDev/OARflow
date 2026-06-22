@@ -44,8 +44,14 @@
       root.querySelectorAll('.confirmBtn').forEach(b=>b.onclick=async()=>{
         const id=b.dataset.id; if(picks[id]==null) return;
         b.disabled=true; b.textContent='Confirming…';
-        try { await OF.post(`/api/admin/appointments/${id}/confirm`,{slotIndex:picks[id],notify:true}); OF.toast('Confirmed & customer notified','ok'); load(root); }
-        catch(e){ OF.toast(e.message,'error'); b.disabled=false; }
+        const send=(force)=>OF.post(`/api/admin/appointments/${id}/confirm`,{slotIndex:picks[id],notify:true,force});
+        try { await send(false); OF.toast('Confirmed & customer notified','ok'); load(root); }
+        catch(e){
+          if(e.code==='SLOT_FULL' && await OF.confirm({title:'Time slot is full',body:`<p class="muted">${OF.escape(e.message)}</p>`,confirmText:'Confirm anyway'})){
+            try{ await send(true); OF.toast('Confirmed & customer notified','ok'); load(root); return; }catch(e2){ OF.toast(e2.message,'error'); }
+          } else if(e.code!=='SLOT_FULL'){ OF.toast(e.message,'error'); }
+          b.disabled=false; b.textContent='Confirm selected';
+        }
       });
       root.querySelectorAll('.declineBtn').forEach(b=>b.onclick=async()=>{
         const id=b.dataset.id;

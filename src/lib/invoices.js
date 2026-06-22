@@ -4,6 +4,7 @@
 import { query, queryOne, withTx } from './db.js';
 import { randomToken } from './crypto.js';
 import { nextInvoiceNumber } from './tenants.js';
+import { addDays, ymdInTimeZone } from './dates.js';
 
 /** Coerce client line items into a normalized shape with computed amounts. */
 export function normalizeLineItems(items) {
@@ -35,6 +36,9 @@ export function computeTotals(lineItems, taxRatePercent = 0, discountCents = 0) 
 export async function createInvoice(tenant, data, createdBy) {
   const totals = computeTotals(data.lineItems, data.taxRatePercent ?? tenant.settings.invoicing.taxRatePercent, data.discountCents);
   const number = await nextInvoiceNumber(tenant.id);
+  // Default the due date from the tenant's "due in N days" setting when not given.
+  const dueDays = Number(tenant.settings.invoicing.dueDays) || 0;
+  const dueDate = data.dueDate || (dueDays > 0 ? ymdInTimeZone(addDays(new Date(), dueDays), tenant.timezone) : null);
   const row = await queryOne(
     `INSERT INTO invoices
        (tenant_id, customer_id, appointment_id, subscription_id, number, status, currency,
@@ -47,7 +51,7 @@ export async function createInvoice(tenant, data, createdBy) {
       tenant.currency, JSON.stringify(totals.items), totals.subtotalCents, totals.discountCents,
       data.taxRatePercent ?? tenant.settings.invoicing.taxRatePercent, totals.taxCents, totals.totalCents,
       data.notes || tenant.settings.invoicing.footerNote || null, data.terms || tenant.settings.invoicing.terms || null,
-      data.dueDate || null, randomToken(), createdBy || null,
+      dueDate, randomToken(), createdBy || null,
     ],
   );
   return row;
@@ -97,10 +101,14 @@ export async function recordPayment(tenant, invoiceId, { amountCents, eventType 
     const paid = Number(sum.rows[0].paid);
     const invRow = await cx.query('SELECT * FROM invoices WHERE id=$1', [invoiceId]);
     const inv = invRow.rows[0];
+    // A void invoice stays void no matter what lands in the ledger — never revive it.
     let status = inv.status;
-    if (paid >= inv.total_cents && inv.total_cents > 0) status = 'paid';
-    else if (paid > 0) status = 'partial';
-    else if (inv.sent_at) status = 'sent';
+    if (inv.status !== 'void') {
+      if (paid >= inv.total_cents && inv.total_cents > 0) status = 'paid';
+      else if (paid > 0) status = 'partial';
+      else if (inv.sent_at) status = 'sent';
+      else status = 'draft';
+    }
     const updated = await cx.query(
       `UPDATE invoices SET amount_paid_cents=$2, status=$3, paid_at=CASE WHEN $3='paid' AND paid_at IS NULL THEN now() ELSE paid_at END, updated_at=now()
        WHERE id=$1 RETURNING *`,

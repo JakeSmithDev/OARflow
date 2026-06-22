@@ -2,7 +2,7 @@
 // business profile, booking + availability, services, invoicing presets, email
 // templates, team members, and integration credentials (Stripe, email).
 import express from 'express';
-import { requireAdmin } from '../../lib/auth.js';
+import { requireAdmin, requireRole } from '../../lib/auth.js';
 import { asyncHandler, badRequest, notFound, toInt } from '../../lib/http.js';
 import { query, queryOne } from '../../lib/db.js';
 import { updateTenantProfile, updateTenantSettings, getTenantById } from '../../lib/tenants.js';
@@ -12,9 +12,12 @@ import { isConfigured as stripeConfigured } from '../../lib/stripe.js';
 import { isConnected as googleConnected } from '../../lib/google_calendar.js';
 import { emailProviderName } from '../../config.js';
 import { logAudit } from '../../lib/audit.js';
+import { zonedWallTimeToUtc } from '../../lib/dates.js';
 
 const router = express.Router();
+// Settings (services, availability, invoicing, integrations, team) is owner-only.
 router.use(requireAdmin());
+router.use(requireRole('owner'));
 
 // --- Overview -------------------------------------------------------------
 router.get('/', asyncHandler(async (req, res) => {
@@ -171,6 +174,52 @@ router.patch('/users/:id', asyncHandler(async (req, res) => {
   const row = await queryOne(`UPDATE admin_users SET ${sets.join(', ')} WHERE id=$1 AND tenant_id=$2 RETURNING id, username, display_name, role, is_active, is_totp_enabled`, params);
   if (!row) return notFound(res);
   res.json({ ok: true, user: row });
+}));
+
+// --- Availability exceptions: blackouts (days off) + per-date overrides ---
+router.get('/availability-exceptions', asyncHandler(async (req, res) => {
+  const blackouts = await query('SELECT id, starts_at, ends_at, reason FROM blackouts WHERE tenant_id=$1 AND ends_at > now() ORDER BY starts_at LIMIT 100', [req.tenant.id]);
+  const overrides = await query('SELECT id, service_date, is_closed, hours_json, capacity, note FROM schedule_overrides WHERE tenant_id=$1 ORDER BY service_date LIMIT 100', [req.tenant.id]);
+  res.json({ ok: true, blackouts: blackouts.rows, overrides: overrides.rows });
+}));
+
+router.post('/blackouts', asyncHandler(async (req, res) => {
+  const b = req.body || {};
+  let startsAt; let endsAt;
+  if (b.date) { // all-day (or range of days) closure in the tenant timezone
+    startsAt = zonedWallTimeToUtc(b.date, '00:00', req.tenant.timezone);
+    endsAt = zonedWallTimeToUtc(b.endDate || b.date, '00:00', req.tenant.timezone);
+    endsAt = new Date(endsAt.getTime() + 86_400_000); // inclusive end day
+  } else if (b.startsAt && b.endsAt) { startsAt = new Date(b.startsAt); endsAt = new Date(b.endsAt); }
+  else return badRequest(res, 'A date is required.');
+  if (!(endsAt > startsAt)) return badRequest(res, 'End must be after start.');
+  const row = await queryOne(
+    'INSERT INTO blackouts (tenant_id, starts_at, ends_at, reason) VALUES ($1,$2,$3,$4) RETURNING id, starts_at, ends_at, reason',
+    [req.tenant.id, startsAt.toISOString(), endsAt.toISOString(), b.reason || null],
+  );
+  res.json({ ok: true, blackout: row });
+}));
+router.delete('/blackouts/:id', asyncHandler(async (req, res) => {
+  await query('DELETE FROM blackouts WHERE id=$1 AND tenant_id=$2', [toInt(req.params.id), req.tenant.id]);
+  res.json({ ok: true });
+}));
+
+router.post('/overrides', asyncHandler(async (req, res) => {
+  const b = req.body || {};
+  if (!b.serviceDate) return badRequest(res, 'A date is required.');
+  const hours = Array.isArray(b.hoursJson) ? JSON.stringify(b.hoursJson) : null;
+  const row = await queryOne(
+    `INSERT INTO schedule_overrides (tenant_id, service_date, is_closed, hours_json, capacity, note)
+     VALUES ($1,$2,$3,$4::jsonb,$5,$6)
+     ON CONFLICT (tenant_id, service_date) DO UPDATE SET is_closed=$3, hours_json=$4::jsonb, capacity=$5, note=$6
+     RETURNING id, service_date, is_closed, hours_json, capacity, note`,
+    [req.tenant.id, b.serviceDate, !!b.isClosed, hours, b.capacity != null ? toInt(b.capacity) : null, b.note || null],
+  );
+  res.json({ ok: true, override: row });
+}));
+router.delete('/overrides/:id', asyncHandler(async (req, res) => {
+  await query('DELETE FROM schedule_overrides WHERE id=$1 AND tenant_id=$2', [toInt(req.params.id), req.tenant.id]);
+  res.json({ ok: true });
 }));
 
 // --- Integration credentials ---------------------------------------------

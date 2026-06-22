@@ -28,7 +28,7 @@
           <td class="cell-strong">${OF.escape(x.title)}${x.note?`<div class="tiny muted">${OF.escape(x.note)}</div>`:''}</td>
           <td>${OF.escape(x.customer_name||'—')}</td>
           <td><span class="${overdue?'badge danger no-dot':''}">${OF.dateLong(x.due_at)}</span></td>
-          <td>${x.channel==='email'?'✉️ Email':'☑️ Task'}</td>
+          <td><span class="row" style="gap:6px">${x.channel==='email'?OF.icon('send',14)+' Email':OF.icon('check',14)+' Task'}</span></td>
           <td class="right">${x.status==='pending'?`<button class="link-btn" data-done="${x.id}">Complete</button> · <button class="link-btn" data-snooze="${x.id}">Snooze 7d</button>`:OF.statusBadge(x.status)}</td>
         </tr>`;}).join('')}</tbody></table></div>`:`<div class="empty"><div class="ic">${OF.icon('followups',22)}</div><p>Nothing here.</p></div>`}</div>`;
       root.querySelectorAll('[data-st]').forEach(b=>b.onclick=async()=>{qStatus=b.dataset.st;await load();renderQueue(root);});

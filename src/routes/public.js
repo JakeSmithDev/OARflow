@@ -8,7 +8,7 @@ import { getTenantBySlug, getDefaultTenant } from '../lib/tenants.js';
 import { computeDayAvailability, dateWithinBookingWindow, monthOpenDays } from '../lib/availability.js';
 import {
   getService, listActiveServices, effectiveBookingMode, findOrCreateCustomer,
-  fetchDayConflicts, createAppointment,
+  fetchDayConflicts, createAppointment, bookInstant, slotCapacity,
 } from '../lib/appointments.js';
 import { queryOne, query } from '../lib/db.js';
 import { sendTemplated, detailsTable } from '../lib/email_templates.js';
@@ -106,11 +106,17 @@ router.post('/:slug/book', asyncHandler(async (req, res) => {
     const match = slots.find((s) => s.start === slot.start && s.available);
     if (!match) return res.status(409).json({ ok: false, error: 'That time was just taken. Please pick another.' });
 
-    const appt = await createAppointment(tenant.id, {
-      customerId, serviceTypeId: service.id, status: 'scheduled', bookingMode: 'instant', source: 'online',
-      scheduledStart: slot.start, scheduledEnd: slot.end, serviceAddress: customer.address || null,
-      notes: customer.notes || null, priceCents: service.base_price_cents,
-    });
+    let appt;
+    try {
+      appt = await bookInstant(tenant, {
+        customerId, serviceTypeId: service.id, status: 'scheduled', source: 'online',
+        scheduledStart: slot.start, scheduledEnd: slot.end, serviceAddress: customer.address || null,
+        notes: customer.notes || null, priceCents: service.base_price_cents,
+      }, { dateYmd, capacity: slotCapacity(tenant, override) });
+    } catch (err) {
+      if (err.code === 'SLOT_TAKEN') return res.status(409).json({ ok: false, error: 'That time was just taken. Please pick another.' });
+      throw err;
+    }
     syncAppointment(tenant, { ...appt, service_name: service.name, customer_name: customer.name, customer_phone: customer.phone }).catch(() => {});
     await sendTemplated(tenant, 'booking_confirmation', customer.email, {
       CUSTOMER_NAME: customer.name, COMPANY_NAME: company, SERVICE_NAME: service.name,
@@ -132,6 +138,22 @@ router.post('/:slug/book', asyncHandler(async (req, res) => {
   const max = tenant.settings.booking.requestSlotCount || 3;
   if (!slots.length) return badRequest(res, 'Please propose at least one preferred time.');
   const requested = slots.slice(0, max);
+
+  // Validate each proposed slot is real: within the booking window and an
+  // actually-available slot for this service on that date.
+  const availByDate = new Map();
+  for (const s of requested) {
+    const start = new Date(s.start);
+    if (Number.isNaN(start.getTime()) || new Date(s.end) <= start) return badRequest(res, 'One of the proposed times is invalid.');
+    const dYmd = ymdInTimeZone(start, tenant.timezone);
+    if (!dateWithinBookingWindow(tenant, dYmd)) return badRequest(res, 'One of the proposed times is outside our booking window.');
+    if (!availByDate.has(dYmd)) {
+      const conf = await fetchDayConflicts(tenant, dYmd);
+      availByDate.set(dYmd, computeDayAvailability({ tenant, service, dateYmd: dYmd, ...conf }));
+    }
+    const ok = availByDate.get(dYmd).some((x) => x.start === s.start && x.available);
+    if (!ok) return badRequest(res, 'One of the proposed times is no longer available. Please pick from the open times.');
+  }
 
   const appt = await createAppointment(tenant.id, {
     customerId, serviceTypeId: service.id, status: 'requested', bookingMode: 'request', source: 'online',

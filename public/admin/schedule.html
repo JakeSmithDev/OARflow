@@ -41,7 +41,8 @@
       const rows = d.appointments;
       const agenda = document.getElementById('agenda');
       if (!rows.length) { agenda.innerHTML = `<div class="empty"><div class="ic">${OF.icon('schedule',22)}</div><p>Nothing scheduled. Enjoy the quiet — or <a href="/admin/appointments?new=1">add a job</a>.</p></div>`; return; }
-      agenda.innerHTML = `<div class="card-pad agenda">` + rows.map(a=>`
+      const done = rows.filter(a=>a.status==='completed').length;
+      agenda.innerHTML = `<div class="card-head"><h3>${rows.length} appointment${rows.length===1?'':'s'}</h3><span class="muted small" style="margin-left:auto">${done} completed</span></div><div class="card-pad agenda">` + rows.map(a=>`
         <div class="slot-row">
           <div class="time">${OF.time(a.scheduled_start)}</div>
           <div class="job" onclick="location.href='/admin/appointments?id=${a.id}'">

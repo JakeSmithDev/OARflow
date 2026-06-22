@@ -5,7 +5,7 @@ import { requireAdmin } from '../../lib/auth.js';
 import { asyncHandler, badRequest, notFound, toInt } from '../../lib/http.js';
 import { query, queryOne } from '../../lib/db.js';
 import { createInvoice, updateInvoice, recordPayment, balanceCents } from '../../lib/invoices.js';
-import { sendTemplated } from '../../lib/email_templates.js';
+import { sendTemplated, htmlEscape } from '../../lib/email_templates.js';
 import { isConfigured as stripeConfigured } from '../../lib/stripe.js';
 import { logAudit } from '../../lib/audit.js';
 import { formatCents } from '../../lib/money.js';
@@ -17,7 +17,7 @@ router.use(requireAdmin());
 function summaryHtml(tenant, inv) {
   const cur = tenant.currency;
   const rows = (inv.line_items || []).map((li) =>
-    `<tr><td style="padding:4px 0">${li.label}${li.quantity > 1 ? ` ×${li.quantity}` : ''}</td><td style="padding:4px 0;text-align:right">${formatCents(li.amount_cents, cur)}</td></tr>`).join('');
+    `<tr><td style="padding:4px 0">${htmlEscape(li.label)}${li.quantity > 1 ? ` ×${li.quantity}` : ''}</td><td style="padding:4px 0;text-align:right">${formatCents(li.amount_cents, cur)}</td></tr>`).join('');
   return `<table style="width:100%;border-collapse:collapse;font-size:14px;margin:12px 0">
     ${rows}
     <tr><td style="padding:6px 0;border-top:1px solid #e2e8f0;color:#64748b">Subtotal</td><td style="padding:6px 0;border-top:1px solid #e2e8f0;text-align:right">${formatCents(inv.subtotal_cents, cur)}</td></tr>
@@ -138,6 +138,10 @@ router.post('/:id/payment', asyncHandler(async (req, res) => {
   const b = req.body || {};
   const amount = Math.round(Number(b.amountCents) || 0);
   if (!amount) return badRequest(res, 'Enter a payment amount.');
+  const current = await queryOne('SELECT status FROM invoices WHERE tenant_id=$1 AND id=$2', [req.tenant.id, id]);
+  if (!current) return notFound(res);
+  if (current.status === 'void') return badRequest(res, 'This invoice is void and cannot take payments.');
+  if (current.status === 'paid' && amount > 0) return badRequest(res, 'This invoice is already paid in full.');
   const { invoice } = await recordPayment(req.tenant, id, {
     amountCents: amount, eventType: amount < 0 ? 'refund' : 'payment',
     method: b.method || 'cash', note: b.note, createdBy: req.admin.username,

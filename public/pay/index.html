@@ -41,6 +41,7 @@
       document.getElementById('company').textContent = b.logoText || d.tenant.name;
       document.getElementById('sub').textContent = `Invoice ${d.invoice.number}`;
       const i = d.invoice;
+      if (d.voided || i.status==='void') { document.getElementById('view').innerHTML = `<div class="card card-pad center muted">This invoice has been canceled and is no longer payable. Please contact ${esc(d.tenant.name)} with any questions.</div>`; return; }
       if (qp.get('paid') || i.status==='paid') return success(i);
       const li = (i.lineItems||[]).map(x=>`<div class="totline"><span>${esc(x.label)}${x.quantity>1?` ×${x.quantity}`:''}</span><span class="mono">${money(x.amount_cents)}</span></div>`).join('');
       document.getElementById('view').innerHTML = `<div class="card card-pad">

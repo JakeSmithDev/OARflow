@@ -22,14 +22,16 @@
     try { data = await res.json(); } catch { /* non-json */ }
     if (raw) return { res, data };
     if (!res.ok || (data && data.ok === false)) {
-      const msg = (data && data.error) || `Request failed (${res.status})`;
-      throw new Error(msg);
+      const err = new Error((data && data.error) || `Request failed (${res.status})`);
+      err.code = data && data.code; err.status = res.status;
+      throw err;
     }
     return data;
   }
   OF.api = api;
   OF.get = (p) => api(p);
   OF.post = (p, body) => api(p, { method: 'POST', body });
+  OF.put = (p, body) => api(p, { method: 'PUT', body });
   OF.patch = (p, body) => api(p, { method: 'PATCH', body });
   OF.del = (p, body) => api(p, { method: 'DELETE', body });
 
@@ -80,6 +82,7 @@
     bell: '<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 0 1-3.46 0"/>',
     send: '<line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>',
     cal: '<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>',
+    menu: '<path d="M3 12h18M3 6h18M3 18h18"/>',
   };
   OF.icon = (name, size = 18) => `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICONS[name] || ''}</svg>`;
 
@@ -162,7 +165,7 @@
         </div>
         ${navHtml}
         <div class="spacer"></div>
-        <a class="nav-link ${active === 'settings' ? 'active' : ''}" href="/admin/settings">${OF.icon('settings')} <span>Settings</span></a>
+        ${(OF.session && OF.session.role === 'owner') ? `<a class="nav-link ${active === 'settings' ? 'active' : ''}" href="/admin/settings">${OF.icon('settings')} <span>Settings</span></a>` : ''}
         <div class="user">
           <div class="avatar">${OF.initials(u.displayName || u.username)}</div>
           <div class="meta">${OF.escape(u.displayName || u.username || 'Admin')}<br><small>${OF.escape(u.role || '')}</small></div>
@@ -171,6 +174,7 @@
       </aside>
       <main class="main">
         <div class="topbar">
+          <button class="menu-toggle" id="menuToggle" aria-label="Open menu">${OF.icon('menu', 20)}</button>
           <div><h1 id="pageTitle">…</h1><div class="sub" id="pageSub"></div></div>
           <div class="actions" id="pageActions"></div>
         </div>
@@ -198,6 +202,9 @@
     document.getElementById('logoutBtn').addEventListener('click', async () => {
       await api('/api/admin/auth/logout', { method: 'POST' }).catch(() => {});
       location.href = '/admin/login';
+    });
+    document.getElementById('menuToggle')?.addEventListener('click', () => {
+      document.getElementById('sidebar')?.classList.toggle('open');
     });
     const content = document.getElementById('content');
     try {

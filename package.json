@@ -18,10 +18,10 @@
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.2.17",
-    "cookie": "^0.6.0",
+    "cookie": "^0.7.2",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
-    "nodemailer": "^6.9.16",
+    "nodemailer": "^9.0.1",
     "otplib": "^12.0.1",
     "pg": "^8.13.1",
     "qrcode": "^1.5.4",

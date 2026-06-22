@@ -19,7 +19,7 @@ export function htmlEscape(s) {
 export function detailsTable(rows) {
   const trs = rows
     .filter(([, v]) => v !== undefined && v !== null && v !== '')
-    .map(([label, value]) => `<tr><td style="padding:6px 14px 6px 0;color:#64748b;white-space:nowrap;vertical-align:top">${htmlEscape(label)}</td><td style="padding:6px 0;color:#0f172a;font-weight:600">${value}</td></tr>`)
+    .map(([label, value]) => `<tr><td style="padding:6px 14px 6px 0;color:#64748b;white-space:nowrap;vertical-align:top">${htmlEscape(label)}</td><td style="padding:6px 0;color:#0f172a;font-weight:600">${htmlEscape(value)}</td></tr>`)
     .join('');
   return `<table style="border-collapse:collapse;margin:14px 0;font-size:15px">${trs}</table>`;
 }

@@ -109,4 +109,15 @@ export function requireAdmin() {
   };
 }
 
+/** Role gate. Use AFTER requireAdmin. e.g. router.use(requireRole('owner')). */
+export function requireRole(...roles) {
+  return (req, res, next) => {
+    if (!req.admin) return unauthorized(res, 'Please sign in.');
+    if (roles.length && !roles.includes(req.admin.role)) {
+      return res.status(403).json({ ok: false, error: 'This action requires owner permissions.' });
+    }
+    next();
+  };
+}
+
 export default { attemptLogin, createSession, getSessionContext, revokeSession, requireAdmin, sessionCookie, clearCookie, readCookieToken, newTotpSecret, totpKeyUri, verifyTotpCode };

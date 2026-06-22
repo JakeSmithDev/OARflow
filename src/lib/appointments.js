@@ -1,5 +1,5 @@
 // Shared helpers for services, customers, and appointment creation/booking.
-import { query, queryOne } from './db.js';
+import { query, queryOne, withTx, backendKind } from './db.js';
 import { randomToken } from './crypto.js';
 import { zonedWallTimeToUtc } from './dates.js';
 
@@ -74,6 +74,61 @@ export async function fetchDayConflicts(tenant, dateYmd) {
     [tenant.id, dateYmd],
   );
   return { appointments: appts.rows, blackouts: blackouts.rows, override };
+}
+
+/** Per-slot capacity for a date (override wins, else tenant default). */
+export function slotCapacity(tenant, override) {
+  if (override && Number.isInteger(override.capacity)) return override.capacity;
+  return tenant.settings.availability.capacityPerSlot || 1;
+}
+
+/** Count scheduled/completed appointments overlapping a window (optionally excluding one). */
+export async function overlapCount(tenantId, startISO, endISO, excludeId = null) {
+  const params = [tenantId, startISO, endISO];
+  let sql = `SELECT count(*)::int n FROM appointments
+              WHERE tenant_id=$1 AND status IN ('scheduled','completed')
+                AND scheduled_start < $3 AND scheduled_end > $2`;
+  if (excludeId) { params.push(excludeId); sql += ` AND id <> $${params.length}`; }
+  const { rows } = await query(sql, params);
+  return rows[0].n;
+}
+
+async function maybeLock(cx, key) {
+  // Postgres: serialize concurrent bookings for the same tenant/day. PGlite is
+  // already single-connection (serialized), so skip — and avoid aborting its tx.
+  try {
+    if ((await backendKind()) === 'postgres') {
+      await cx.query('SELECT pg_advisory_xact_lock(hashtext($1))', [key]);
+    }
+  } catch { /* best-effort */ }
+}
+
+const INSERT_SQL = `INSERT INTO appointments
+   (tenant_id, customer_id, service_type_id, subscription_id, status, booking_mode, source,
+    scheduled_start, scheduled_end, requested_slots, service_address, notes, internal_notes, price_cents, access_token)
+ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12,$13,$14,$15) RETURNING *`;
+function insertParams(tenantId, d) {
+  return [tenantId, d.customerId, d.serviceTypeId || null, d.subscriptionId || null,
+    d.status, d.bookingMode, d.source || 'online', d.scheduledStart || null, d.scheduledEnd || null,
+    JSON.stringify(d.requestedSlots || []), d.serviceAddress || null, d.notes || null,
+    d.internalNotes || null, d.priceCents || 0, d.accessToken || randomToken()];
+}
+
+/**
+ * Book an instant slot atomically: lock the tenant/day, re-check capacity inside
+ * the transaction, then insert. Throws an error with code 'SLOT_TAKEN' if full.
+ */
+export async function bookInstant(tenant, data, { dateYmd, capacity }) {
+  return withTx(async (cx) => {
+    await maybeLock(cx, `slot:${tenant.id}:${dateYmd}`);
+    const cnt = (await cx.query(
+      "SELECT count(*)::int n FROM appointments WHERE tenant_id=$1 AND status IN ('scheduled','completed') AND scheduled_start < $3 AND scheduled_end > $2",
+      [tenant.id, data.scheduledStart, data.scheduledEnd],
+    )).rows[0].n;
+    if (cnt >= capacity) { const e = new Error('SLOT_TAKEN'); e.code = 'SLOT_TAKEN'; throw e; }
+    const { rows } = await cx.query(INSERT_SQL, insertParams(tenant.id, { ...data, bookingMode: data.bookingMode || 'instant' }));
+    return rows[0];
+  });
 }
 
 /** Create an appointment row. `data` is already validated by the caller. */

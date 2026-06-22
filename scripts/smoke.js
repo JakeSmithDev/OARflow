@@ -159,6 +159,49 @@ async function main() {
     const okd = await ok.json(); assert.ok(okd.ok);
   });
 
+  // --- Regression checks for the code-review findings ---
+  await check('[fix] void invoice cannot be paid or revived', async () => {
+    const inv = (await call('/api/admin/invoices', { method: 'POST', body: { customerId: 1, lineItems: [{ label: 'X', unit_amount_cents: 5000 }] } })).data.invoice;
+    await call(`/api/admin/invoices/${inv.id}/void`, { method: 'POST' });
+    const pay = await call(`/api/admin/invoices/${inv.id}/payment`, { method: 'POST', body: { amountCents: 5000, method: 'cash' } });
+    assert.equal(pay.status, 400);
+    const det = await call('/api/admin/invoices/' + inv.id);
+    assert.equal(det.data.invoice.status, 'void');
+  });
+  await check('[fix] new invoice gets a due date from dueDays', async () => {
+    const inv = (await call('/api/admin/invoices', { method: 'POST', body: { customerId: 1, lineItems: [{ label: 'X', unit_amount_cents: 5000 }] } })).data.invoice;
+    assert.ok(inv.due_date, 'due_date populated from invoicing.dueDays');
+  });
+  await check('[fix] request-mode rejects impossible times', async () => {
+    const r = await call('/api/public/default/book', { auth: false, method: 'POST', body: { serviceId: svcRequest.id, requestedSlots: [{ start: '2020-01-01T09:00:00.000Z', end: '2020-01-01T09:45:00.000Z' }], customer: { name: 'X', email: 'x@example.com', address: '1 st' } } });
+    assert.equal(r.status, 400);
+  });
+  await check('[fix] blackout removes availability for a day', async () => {
+    const d = ymd(new Date(Date.now() + 18 * 86400000));
+    await call('/api/admin/settings/blackouts', { method: 'POST', body: { date: d, reason: 'Holiday' } });
+    const av = await call(`/api/public/default/availability?serviceId=${svcInstant.id}&date=${d}`, { auth: false });
+    assert.ok(av.data.slots.every((s) => !s.available), 'no slots bookable on a blackout day');
+  });
+  await check('[fix] capacity guard blocks overbooking', async () => {
+    await call('/api/admin/settings/settings', { method: 'PUT', body: { availability: { capacityPerSlot: 1 } } });
+    const d = ymd(new Date(Date.now() + 25 * 86400000));
+    const slot = (await call(`/api/public/default/availability?serviceId=${svcInstant.id}&date=${d}`, { auth: false })).data.slots.find((s) => s.available);
+    const b1 = await call('/api/public/default/book', { auth: false, method: 'POST', body: { serviceId: svcInstant.id, slot: { start: slot.start, end: slot.end }, customer: { name: 'Cap One', email: 'cap1@example.com', address: '1 st' } } });
+    assert.equal(b1.data.status, 'scheduled');
+    const b2 = await call('/api/public/default/book', { auth: false, method: 'POST', body: { serviceId: svcInstant.id, slot: { start: slot.start, end: slot.end }, customer: { name: 'Cap Two', email: 'cap2@example.com', address: '2 st' } } });
+    assert.equal(b2.status, 409);
+  });
+  await check('[fix] staff role blocked from settings, allowed for ops', async () => {
+    await call('/api/admin/auth/logout', { method: 'POST' });
+    cookie = '';
+    const login = await call('/api/admin/auth/login', { auth: false, method: 'POST', body: { username: 'tech1', password: 'temp12345' } });
+    assert.ok(login.data.ok, 'staff can log in');
+    const s = await call('/api/admin/settings');
+    assert.equal(s.status, 403, 'staff blocked from settings');
+    const appts = await call('/api/admin/appointments');
+    assert.equal(appts.status, 200, 'staff can still run the day');
+  });
+
   server.close();
   await closeDb();
   console.log(`\n${passed} passed, ${failures.length} failed.`);
