@@ -211,6 +211,17 @@ async function main() {
     assert.ok(text.split('\n')[0].includes('Month'), 'csv header present');
   });
 
+  // --- Drag-and-drop reschedule (date+time PATCH used by the calendar) ---
+  await check('reschedule appointment by date+time (DnD path)', async () => {
+    const appt = (await call('/api/admin/appointments')).data.appointments.find((a) => a.scheduled_start);
+    assert.ok(appt, 'need a scheduled appointment');
+    const newYmd = '2026-07-15';
+    const { data } = await call(`/api/admin/appointments/${appt.id}`, { method: 'PATCH', body: { date: newYmd, time: '09:00', force: true } });
+    assert.ok(data.ok, JSON.stringify(data));
+    assert.ok(String(data.appointment.scheduled_start).startsWith('2026-07-15'), `moved to ${data.appointment.scheduled_start}`);
+    assert.equal(data.appointment.status, 'scheduled');
+  });
+
   // --- Reviews / NPS (no rating gating) ---
   await check('set a public review platform URL', async () => {
     const { data } = await call('/api/admin/reviews/settings', { method: 'PUT', body: { platforms: { google: 'https://g.page/r/demo/review' } } });

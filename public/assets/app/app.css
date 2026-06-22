@@ -269,6 +269,11 @@ input[type=color] { padding: 4px; height: 42px; cursor: pointer; }
 .rep-bar { display:flex; flex-direction:column; align-items:center; justify-content:flex-end; gap:6px; min-width:34px; flex:1; }
 .rep-bar-fill { width:60%; min-width:18px; max-width:46px; background:linear-gradient(180deg,var(--brand),color-mix(in srgb,var(--brand) 60%,#86efac)); border-radius:6px 6px 0 0; transition:height .3s ease; }
 .rep-bar-lbl { font-size:11px; color:var(--muted); white-space:nowrap; }
+/* Drag-and-drop reschedule (week view) */
+.wc-job.movable { cursor: grab; }
+.wc-job.dragging { opacity:.45; cursor:grabbing; }
+.week-col.drop-target { outline:2px dashed var(--brand); outline-offset:-3px; background:var(--brand-tint); }
+.week-col.drop-target .wc-body { min-height:40px; }
 @media print {
   .sidebar, .topbar, .app-actions, #picker, #printBtn, #csvBtn { display:none !important; }
   .app-main, .content { margin:0 !important; padding:0 !important; }

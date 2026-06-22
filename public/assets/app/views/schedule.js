@@ -9,6 +9,7 @@ const OF = window.OF;
     const addYmd = (ymd,n) => ymdUTC(new Date(new Date(ymd+'T00:00:00Z').getTime()+n*86400000));
     const dowOf = (ymd) => new Date(ymd+'T00:00:00Z').getUTCDay();
     const tzYmd = (iso) => new Intl.DateTimeFormat('en-CA',{timeZone:TZ(),year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(iso));
+    const tzHm = (iso) => new Intl.DateTimeFormat('en-GB',{timeZone:TZ(),hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(iso));
     const labelYmd = (ymd,opts) => new Intl.DateTimeFormat('en-US',{timeZone:'UTC',...opts}).format(new Date(ymd+'T12:00:00Z'));
     const todayYmd = () => new Intl.DateTimeFormat('en-CA',{timeZone:TZ(),year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
 
@@ -43,7 +44,9 @@ const OF = window.OF;
       return `<span class="cap-pill" style="background:var(--ok-tint);color:#15803d">${jobs} job${jobs>1?'s':''}</span>`;
     }
 
+    let currentRoot;
     async function render(root) {
+      currentRoot = root;
       const r = rangeFor();
       let title = '';
       if (view==='day') title = labelYmd(cursor,{weekday:'long',month:'long',day:'numeric',year:'numeric'});
@@ -75,7 +78,7 @@ const OF = window.OF;
     }
     function addMonth(n){ const [y,m]=cursor.split('-').map(Number); const d=new Date(Date.UTC(y,m-1+n,1)); return ymdUTC(d); }
 
-    function jobRowSmall(a){ return `<div class="wc-job" style="border-left-color:${a.service_color||'var(--brand)'}" onclick="OF.go('/admin/appointments?id=${a.id}')"><b>${OF.time(a.scheduled_start)}</b> ${OF.escape(a.customer_name)}<div class="muted" style="font-size:11px">${OF.escape(a.service_name||'')}</div></div>`; }
+    function jobRowSmall(a){ const movable = a.status!=='completed' && a.status!=='canceled'; return `<div class="wc-job${movable?' movable':''}" ${movable?`draggable="true" data-id="${a.id}" data-time="${tzHm(a.scheduled_start)}"`:''} style="border-left-color:${a.service_color||'var(--brand)'}" onclick="OF.go('/admin/appointments?id=${a.id}')"><b>${OF.time(a.scheduled_start)}</b> ${OF.escape(a.customer_name)}<div class="muted" style="font-size:11px">${OF.escape(a.service_name||'')}</div></div>`; }
 
     function renderDay(body, appts, meta) {
       const max = loadOf(appts);
@@ -90,15 +93,41 @@ const OF = window.OF;
     }
 
     function renderWeek(body, cells, byDay, data) {
-      body.innerHTML = `<div class="week-grid">` + cells.map(d=>{
+      body.innerHTML = `<div class="tiny muted" style="margin:-2px 0 8px">Tip: drag a job to another day to reschedule.</div><div class="week-grid">` + cells.map(d=>{
         const appts=(byDay[d]||[]).sort((a,b)=>new Date(a.scheduled_start)-new Date(b.scheduled_start));
         const meta=dayMeta(d,data); const max=loadOf(appts); const isToday=d===todayYmd();
-        return `<div class="week-col ${meta.closed?'closed':''} ${isToday?'today':''}">
+        return `<div class="week-col ${meta.closed?'closed':''} ${isToday?'today':''}" data-ymd="${d}">
           <div class="wc-head" style="cursor:pointer" onclick="window.__schedGo('${d}')"><span>${labelYmd(d,{weekday:'short'})}</span><span>${labelYmd(d,{day:'numeric'})}</span></div>
           <div class="wc-body">${appts.map(jobRowSmall).join('')||'<span class="muted" style="font-size:11px;padding:4px">—</span>'}</div>
           <div class="wc-foot">${capPill(appts.length,max,meta.capacity,meta.closed)}<span class="muted">cap ${meta.capacity}</span></div>
         </div>`;
       }).join('') + `</div>`;
+      bindDragDrop(body);
+    }
+
+    // Drag a job onto another day to reschedule (keeps the original time of day).
+    async function moveAppt(id, ymd, time) {
+      const attempt = (force) => OF.patch(`/api/admin/appointments/${id}`, { date: ymd, time, force });
+      try { await attempt(false); OF.toast('Appointment moved ✓', 'ok'); render(currentRoot); }
+      catch (e) {
+        if (e.code === 'SCHEDULE_WARN' || e.code === 'SLOT_FULL') {
+          if (await OF.confirm({ title: 'Heads up', body: `<p class="muted">${OF.escape(e.message)}</p>`, confirmText: 'Move anyway' })) {
+            try { await attempt(true); OF.toast('Appointment moved ✓', 'ok'); render(currentRoot); } catch (e2) { OF.toast(e2.message, 'error'); }
+          }
+        } else OF.toast(e.message, 'error');
+      }
+    }
+    function bindDragDrop(body) {
+      let dragId = null; let dragTime = null;
+      body.querySelectorAll('.wc-job.movable').forEach((el) => {
+        el.addEventListener('dragstart', (e) => { dragId = el.dataset.id; dragTime = el.dataset.time; el.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', el.dataset.id); });
+        el.addEventListener('dragend', () => { el.classList.remove('dragging'); body.querySelectorAll('.drop-target').forEach((c) => c.classList.remove('drop-target')); });
+      });
+      body.querySelectorAll('.week-col').forEach((col) => {
+        col.addEventListener('dragover', (e) => { if (!dragId) return; e.preventDefault(); col.classList.add('drop-target'); });
+        col.addEventListener('dragleave', () => col.classList.remove('drop-target'));
+        col.addEventListener('drop', (e) => { e.preventDefault(); col.classList.remove('drop-target'); const id = dragId; const time = dragTime; const ymd = col.dataset.ymd; dragId = null; dragTime = null; if (id && ymd) moveAppt(id, ymd, time); });
+      });
     }
 
     function renderMonth(body, cells, byDay, data, ymPrefix) {
