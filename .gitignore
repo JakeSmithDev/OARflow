@@ -1,3 +1,23 @@
+# OS / editor
 .DS_Store
 .fuse_hidden*
 home-check.png
+
+# Reference material (fishing charter app — used only as a build reference)
+CBSFLiveTest copy/
+
+# Node
+node_modules/
+npm-debug.log*
+
+# Env & secrets
+.env
+.env.local
+.env.*.local
+
+# Local database / build artifacts
+*.log
+.pglite/
+data/pgdata/
+dist/
+/assets/

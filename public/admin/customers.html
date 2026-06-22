@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Customers · OARFlow</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/assets/app/app.css" />
+</head>
+<body>
+  <div id="app"></div>
+  <script src="/assets/app/admin.js"></script>
+  <script>
+    const state = { q: '' };
+    async function refresh() {
+      const d = await OF.get('/api/admin/customers?' + new URLSearchParams(state.q?{q:state.q}:{}));
+      const list = document.getElementById('list');
+      list.innerHTML = d.customers.length ? `<div class="table-wrap"><table class="tbl">
+        <thead><tr><th>Customer</th><th>Contact</th><th class="right">Visits</th><th class="right">Lifetime</th><th class="right">Balance</th></tr></thead>
+        <tbody>${d.customers.map(c=>`<tr class="clickable" data-id="${c.id}">
+          <td><div class="row" style="gap:10px"><span class="avatar-sm">${OF.initials(c.name)}</span><div><div class="cell-strong">${OF.escape(c.name)}</div><div class="tiny muted">${OF.escape([c.city,c.state].filter(Boolean).join(', '))}</div></div></div></td>
+          <td><div class="small">${OF.escape(c.email||'')}</div><div class="tiny muted">${OF.escape(c.phone||'')}</div></td>
+          <td class="right mono">${c.appt_count}</td>
+          <td class="right mono">${OF.money(c.ltv_cents)}</td>
+          <td class="right">${Number(c.balance_cents)>0?`<span class="badge warn no-dot">${OF.money(c.balance_cents)}</span>`:'<span class="muted">—</span>'}</td></tr>`).join('')}</tbody></table></div>`
+        : `<div class="empty"><div class="ic">${OF.icon('customers',22)}</div><p>No customers yet.</p></div>`;
+      list.querySelectorAll('tr[data-id]').forEach(r=>r.onclick=()=>openDrawer(r.dataset.id));
+    }
+
+    async function openDrawer(id) {
+      const d = await OF.get('/api/admin/customers/'+id);
+      const c = d.customer;
+      const dr = OF.drawer(`
+        <div class="modal-head"><h3>${OF.escape(c.name)}</h3><button class="x" data-close>&times;</button></div>
+        <div class="modal-body" style="overflow:auto">
+          <div class="grid cols-2" style="margin-bottom:16px">
+            <div class="stat"><div class="label">Lifetime value</div><div class="value" style="font-size:22px">${OF.money(d.ltvCents)}</div></div>
+            <div class="stat"><div class="label">Open balance</div><div class="value" style="font-size:22px">${OF.money(d.balanceCents)}</div></div>
+          </div>
+          <div class="row wrap" style="gap:8px;margin-bottom:16px">
+            <a class="btn btn-primary btn-sm" href="/admin/appointments?new=1&name=${encodeURIComponent(c.name)}">${OF.icon('plus',15)} Appointment</a>
+            <a class="btn btn-secondary btn-sm" href="/admin/invoices?new=1&customer=${c.id}">${OF.icon('invoices',15)} Invoice</a>
+            <a class="btn btn-secondary btn-sm" href="/admin/plans?enroll=${c.id}">${OF.icon('recurring',15)} Enroll plan</a>
+            <button class="btn btn-ghost btn-sm" id="editBtn">Edit</button>
+          </div>
+          <div id="editForm" class="hidden card card-pad" style="margin-bottom:16px">
+            <div class="field"><label>Name</label><input id="e_name" value="${OF.escape(c.name)}"></div>
+            <div class="grid cols-2"><div class="field"><label>Email</label><input id="e_email" value="${OF.escape(c.email||'')}"></div><div class="field"><label>Phone</label><input id="e_phone" value="${OF.escape(c.phone||'')}"></div></div>
+            <div class="field"><label>Address</label><input id="e_addr" value="${OF.escape(c.address||'')}"></div>
+            <div class="grid cols-3"><div class="field"><label>City</label><input id="e_city" value="${OF.escape(c.city||'')}"></div><div class="field"><label>State</label><input id="e_state" value="${OF.escape(c.state||'')}"></div><div class="field"><label>ZIP</label><input id="e_zip" value="${OF.escape(c.postal_code||'')}"></div></div>
+            <div class="field"><label>Notes</label><textarea id="e_notes">${OF.escape(c.notes||'')}</textarea></div>
+            <button class="btn btn-primary btn-sm" id="saveCust">Save</button>
+          </div>
+          <div class="card card-pad stack" style="gap:6px;margin-bottom:16px">
+            ${c.email?`<div class="row between"><span class="muted">Email</span><span>${OF.escape(c.email)}</span></div>`:''}
+            ${c.phone?`<div class="row between"><span class="muted">Phone</span><span>${OF.escape(c.phone)}</span></div>`:''}
+            ${c.address?`<div class="row between"><span class="muted">Address</span><span>${OF.escape([c.address,c.city,c.state].filter(Boolean).join(', '))}</span></div>`:''}
+            ${c.notes?`<div><span class="muted small">Notes</span><p style="margin:4px 0 0">${OF.escape(c.notes)}</p></div>`:''}
+          </div>
+          ${section('Appointments', d.appointments.map(a=>`<div class="row between" style="padding:7px 0;border-bottom:1px solid var(--line-2)"><a href="/admin/appointments?id=${a.id}">${a.service_name?OF.escape(a.service_name):'Appointment'}</a><span class="muted small">${a.scheduled_start?OF.date(a.scheduled_start):'—'}</span>${OF.statusBadge(a.status)}</div>`).join(''))}
+          ${section('Invoices', d.invoices.map(i=>`<div class="row between" style="padding:7px 0;border-bottom:1px solid var(--line-2)"><a href="/admin/invoices?id=${i.id}">${OF.escape(i.number)}</a>${OF.statusBadge(i.status)}<span class="mono">${OF.money(i.total_cents)}</span></div>`).join(''))}
+          ${d.subscriptions.length?section('Subscriptions', d.subscriptions.map(su=>`<div class="row between" style="padding:7px 0;border-bottom:1px solid var(--line-2)"><span>${OF.escape(su.plan_name||'Plan')}</span><span class="mono">${OF.money(su.price_cents)}/${su.interval}</span>${OF.statusBadge(su.status)}</div>`).join('')):''}
+        </div>`, { wide:true });
+      dr.q('#editBtn').onclick=()=>dr.q('#editForm').classList.toggle('hidden');
+      dr.q('#saveCust').onclick=async()=>{
+        await OF.patch('/api/admin/customers/'+id,{name:dr.q('#e_name').value,email:dr.q('#e_email').value,phone:dr.q('#e_phone').value,address:dr.q('#e_addr').value,city:dr.q('#e_city').value,state:dr.q('#e_state').value,postalCode:dr.q('#e_zip').value,notes:dr.q('#e_notes').value});
+        OF.toast('Saved','ok'); dr.close(); refresh();
+      };
+    }
+    function section(title, inner){ return `<div style="margin-bottom:16px"><div class="muted tiny" style="text-transform:uppercase;letter-spacing:.04em;font-weight:700;margin-bottom:6px">${title}</div>${inner||'<p class="muted small">None yet.</p>'}</div>`; }
+
+    function addCustomer() {
+      const m = OF.modal(`<div class="modal-head"><h3>Add customer</h3><button class="x" data-close>&times;</button></div>
+        <div class="modal-body">
+          <div class="field"><label>Name *</label><input id="c_name"></div>
+          <div class="grid cols-2"><div class="field"><label>Email</label><input id="c_email" type="email"></div><div class="field"><label>Phone</label><input id="c_phone" type="tel"></div></div>
+          <div class="field"><label>Address</label><input id="c_addr"></div>
+          <div class="grid cols-3"><div class="field"><label>City</label><input id="c_city"></div><div class="field"><label>State</label><input id="c_state"></div><div class="field"><label>ZIP</label><input id="c_zip"></div></div>
+        </div>
+        <div class="modal-foot"><button class="btn btn-secondary" data-close>Cancel</button><button class="btn btn-primary" id="c_save">Add</button></div>`);
+      m.q('#c_save').onclick=async()=>{ if(!m.q('#c_name').value.trim()) return OF.toast('Name required','error');
+        await OF.post('/api/admin/customers',{name:m.q('#c_name').value.trim(),email:m.q('#c_email').value.trim(),phone:m.q('#c_phone').value.trim(),address:m.q('#c_addr').value.trim(),city:m.q('#c_city').value.trim(),state:m.q('#c_state').value.trim(),postalCode:m.q('#c_zip').value.trim()});
+        m.close(); OF.toast('Customer added','ok'); refresh(); };
+    }
+
+    OF.page({ active:'customers', title:'Customers', subtitle:'Your customer book', render: async (root, ctx) => {
+      ctx.setActions(`<button class="btn btn-primary btn-sm" id="addBtn">${OF.icon('plus',15)} Add customer</button>`);
+      root.innerHTML = `<div class="row between" style="margin-bottom:16px"><div class="input-prefix" style="max-width:320px">${OF.icon('search',16).replace('<svg','<svg style="position:absolute;left:11px;top:50%;transform:translateY(-50%);color:var(--muted)"')}<input id="search" placeholder="Search customers…" style="padding-left:34px"></div></div><div id="list"><div class="loading-page"><span class="spinner"></span></div></div>`;
+      document.getElementById('addBtn').onclick=addCustomer;
+      document.getElementById('search').addEventListener('input', OF.debounce(e=>{ state.q=e.target.value.trim(); refresh(); },300));
+      await refresh();
+      if (OF.qs('id')) openDrawer(OF.qs('id'));
+    }});
+  </script>
+</body>
+</html>

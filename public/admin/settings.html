@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Settings · OARFlow</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/assets/app/app.css" />
+  <style>.daygrid{display:grid;grid-template-columns:90px 1fr 1fr 90px;gap:10px;align-items:center;margin-bottom:8px}</style>
+</head>
+<body>
+  <div id="app"></div>
+  <script src="/assets/app/admin.js"></script>
+  <script>
+    let S = null; let tab = OF.qs('tab') || 'business';
+    const DAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+    const dollars = c => ((c||0)/100).toFixed(2);
+    const toCents = v => Math.round((parseFloat(String(v).replace(/[^0-9.\-]/g,''))||0)*100);
+    const TABS = [['business','Business'],['booking','Booking & Availability'],['services','Services'],['invoicing','Invoicing'],['integrations','Integrations'],['email','Email templates'],['team','Team']];
+
+    function field(label, inner, hint){ return `<div class="field"><label>${label}</label>${inner}${hint?`<span class="hint">${hint}</span>`:''}</div>`; }
+    function card(title, inner, actions){ return `<div class="card" style="margin-bottom:18px"><div class="card-head"><h3>${title}</h3>${actions?`<div class="actions">${actions}</div>`:''}</div><div class="card-pad">${inner}</div></div>`; }
+
+    // ---- Business ----
+    function businessTab(root){
+      const p = S.profile, b = S.settings.branding;
+      root.innerHTML = card('Business profile', `
+        ${field('Business name', `<input id="p_name" value="${OF.escape(p.name)}">`)}
+        <div class="grid cols-2">${field('Contact email', `<input id="p_email" value="${OF.escape(p.contactEmail||'')}">`)}${field('Contact phone', `<input id="p_phone" value="${OF.escape(p.contactPhone||'')}">`)}</div>
+        ${field('Address', `<input id="p_addr" value="${OF.escape(p.address||'')}">`)}
+        <div class="grid cols-2">${field('Timezone', `<input id="p_tz" value="${OF.escape(p.timezone)}">`,'IANA name e.g. America/New_York')}${field('Currency', `<input id="p_cur" value="${OF.escape(p.currency)}">`)}</div>
+        <button class="btn btn-primary" id="saveProfile">Save profile</button>`)
+        + card('Branding', `
+        ${field('Display name (header & emails)', `<input id="b_logo" value="${OF.escape(b.logoText||'')}">`)}
+        ${field('Tagline', `<input id="b_tag" value="${OF.escape(b.tagline||'')}">`)}
+        <div class="grid cols-2">${field('Brand color', `<input id="b_color" type="color" value="${b.primaryColor||'#0e7c4b'}" style="height:42px;padding:4px">`)}${field('Support phone (public)', `<input id="b_phone" value="${OF.escape(b.supportPhone||'')}">`)}</div>
+        <button class="btn btn-primary" id="saveBrand">Save branding</button>`);
+      root.querySelector('#saveProfile').onclick=async()=>{await OF.patch('/api/admin/settings/profile',{name:root.querySelector('#p_name').value,contactEmail:root.querySelector('#p_email').value,contactPhone:root.querySelector('#p_phone').value,address:root.querySelector('#p_addr').value,timezone:root.querySelector('#p_tz').value,currency:root.querySelector('#p_cur').value});OF.toast('Saved','ok');};
+      root.querySelector('#saveBrand').onclick=async()=>{await OF.put('/api/admin/settings/settings',{branding:{logoText:root.querySelector('#b_logo').value,tagline:root.querySelector('#b_tag').value,primaryColor:root.querySelector('#b_color').value,supportPhone:root.querySelector('#b_phone').value}});OF.toast('Saved','ok');};
+    }
+
+    // ---- Booking & availability ----
+    function bookingTab(root){
+      const bk = S.settings.booking, av = S.settings.availability;
+      const hoursRows = DAYS.map((d,i)=>{ const w=(av.hours[i]||av.hours[String(i)]||[])[0]; const closed=!w;
+        return `<div class="daygrid"><span style="font-weight:600">${d}</span>
+          <input type="time" class="h_start" data-d="${i}" value="${w?w.start:'08:00'}" ${closed?'disabled':''}>
+          <input type="time" class="h_end" data-d="${i}" value="${w?w.end:'17:00'}" ${closed?'disabled':''}>
+          <label class="row" style="gap:6px"><input type="checkbox" class="h_closed" data-d="${i}" ${closed?'checked':''} style="width:auto"> Closed</label></div>`;}).join('');
+      root.innerHTML = card('Booking', `
+        <div class="grid cols-2">
+          ${field('Default booking mode', `<select id="bk_mode"><option value="instant" ${bk.defaultMode==='instant'?'selected':''}>Instant — book the slot</option><option value="request" ${bk.defaultMode==='request'?'selected':''}>Request — customer proposes times</option></select>`,'Per-service modes override this.')}
+          ${field('Proposed times to request', `<input id="bk_count" type="number" min="1" max="6" value="${bk.requestSlotCount}">`)}
+        </div>
+        <div class="grid cols-2">${field('Lead time (hours)', `<input id="bk_lead" type="number" min="0" value="${bk.leadTimeHours}">`,'Earliest a customer can book from now.')}${field('Book up to (days out)', `<input id="bk_max" type="number" min="1" value="${bk.maxDaysOut}">`)}</div>
+        <label class="row" style="gap:8px;margin:6px 0"><input type="checkbox" id="bk_addr" ${bk.collectAddress?'checked':''} style="width:auto"> Require a service address at booking</label>
+        ${field('Confirmation message', `<textarea id="bk_msg">${OF.escape(bk.confirmationMessage||'')}</textarea>`)}
+        <button class="btn btn-primary" id="saveBooking">Save booking settings</button>`)
+        + card('Availability', `
+        <div class="grid cols-2">${field('Slot length (minutes)', `<input id="av_slot" type="number" min="15" step="15" value="${av.slotMinutes}">`,'Used when a service has no duration.')}${field('Crews / capacity per slot', `<input id="av_cap" type="number" min="1" value="${av.capacityPerSlot}">`,'How many jobs can run at the same time.')}</div>
+        <div class="muted tiny" style="text-transform:uppercase;letter-spacing:.04em;font-weight:700;margin:10px 0 8px">Weekly hours</div>
+        ${hoursRows}
+        <button class="btn btn-primary" id="saveAvail" style="margin-top:8px">Save availability</button>`);
+      root.querySelectorAll('.h_closed').forEach(c=>c.onchange=e=>{const d=e.target.dataset.d;root.querySelector(`.h_start[data-d="${d}"]`).disabled=e.target.checked;root.querySelector(`.h_end[data-d="${d}"]`).disabled=e.target.checked;});
+      root.querySelector('#saveBooking').onclick=async()=>{await OF.put('/api/admin/settings/settings',{booking:{defaultMode:root.querySelector('#bk_mode').value,requestSlotCount:+root.querySelector('#bk_count').value,leadTimeHours:+root.querySelector('#bk_lead').value,maxDaysOut:+root.querySelector('#bk_max').value,collectAddress:root.querySelector('#bk_addr').checked,confirmationMessage:root.querySelector('#bk_msg').value}});OF.toast('Saved','ok');};
+      root.querySelector('#saveAvail').onclick=async()=>{const hours={};DAYS.forEach((_,i)=>{const closed=root.querySelector(`.h_closed[data-d="${i}"]`).checked;hours[i]=closed?[]:[{start:root.querySelector(`.h_start[data-d="${i}"]`).value,end:root.querySelector(`.h_end[data-d="${i}"]`).value}];});await OF.put('/api/admin/settings/settings',{availability:{slotMinutes:+root.querySelector('#av_slot').value,capacityPerSlot:+root.querySelector('#av_cap').value,hours}});OF.toast('Saved','ok');};
+    }
+
+    // ---- Services ----
+    async function servicesTab(root){
+      const { services } = await OF.get('/api/admin/settings/services');
+      root.innerHTML = card('Services', services.map(s=>`<div class="row between" style="padding:10px 0;border-bottom:1px solid var(--line-2)">
+        <div><span class="cell-strong">${OF.escape(s.name)}</span> ${s.is_active?'':'<span class="badge neutral no-dot">Inactive</span>'}<div class="tiny muted">${s.duration_minutes} min · ${OF.money(s.base_price_cents)} · ${s.booking_mode==='default'?'Default mode':s.booking_mode}</div></div>
+        <div class="row" style="gap:6px"><span style="width:18px;height:18px;border-radius:5px;background:${s.color}"></span><button class="btn btn-secondary btn-sm" data-svc="${s.id}">Edit</button></div></div>`).join('') || '<p class="muted small">No services.</p>',
+        `<button class="btn btn-primary btn-sm" id="addSvc">${OF.icon('plus',15)} Add service</button>`);
+      root.querySelector('#addSvc').onclick=()=>svcModal();
+      root.querySelectorAll('[data-svc]').forEach(b=>b.onclick=()=>svcModal(services.find(s=>s.id==b.dataset.svc)));
+    }
+    function svcModal(s){
+      const m=OF.modal(`<div class="modal-head"><h3>${s?'Edit service':'New service'}</h3><button class="x" data-close>&times;</button></div>
+        <div class="modal-body">${field('Name *',`<input id="s_name" value="${OF.escape(s?.name||'')}">`)}${field('Description',`<textarea id="s_desc">${OF.escape(s?.description||'')}</textarea>`)}
+        <div class="grid cols-2">${field('Duration (min)',`<input id="s_dur" type="number" value="${s?.duration_minutes||60}">`)}${field('Base price',`<div class="input-prefix"><span>$</span><input id="s_price" value="${s?dollars(s.base_price_cents):'0.00'}"></div>`)}</div>
+        <div class="grid cols-2">${field('Booking mode',`<select id="s_mode"><option value="default" ${!s||s.booking_mode==='default'?'selected':''}>Use default</option><option value="instant" ${s?.booking_mode==='instant'?'selected':''}>Instant</option><option value="request" ${s?.booking_mode==='request'?'selected':''}>Request times</option></select>`)}${field('Color',`<input id="s_color" type="color" value="${s?.color||'#2563eb'}" style="height:42px">`)}</div></div>
+        <div class="modal-foot">${s?`<button class="btn btn-danger-soft" id="s_del">${s.is_active?'Deactivate':'Reactivate'}</button>`:''}<button class="btn btn-secondary" data-close>Cancel</button><button class="btn btn-primary" id="s_save">Save</button></div>`);
+      m.q('#s_save').onclick=async()=>{const payload={name:m.q('#s_name').value,description:m.q('#s_desc').value,durationMinutes:+m.q('#s_dur').value,basePriceCents:toCents(m.q('#s_price').value),bookingMode:m.q('#s_mode').value,color:m.q('#s_color').value};if(!payload.name)return OF.toast('Name required','error');if(s)await OF.patch('/api/admin/settings/services/'+s.id,payload);else await OF.post('/api/admin/settings/services',payload);m.close();OF.toast('Saved','ok');servicesTab(document.getElementById('content'));};
+      m.q('#s_del')?.addEventListener('click',async()=>{await OF.patch('/api/admin/settings/services/'+s.id,{isActive:!s.is_active});m.close();OF.toast('Updated','ok');servicesTab(document.getElementById('content'));});
+    }
+
+    // ---- Invoicing ----
+    async function invoicingTab(root){
+      const inv = S.settings.invoicing; const { presets } = await OF.get('/api/admin/settings/presets');
+      root.innerHTML = card('Invoice defaults', `<div class="grid cols-2">${field('Tax rate (%)',`<input id="i_tax" type="number" step="0.01" value="${inv.taxRatePercent}">`)}${field('Due in (days)',`<input id="i_due" type="number" value="${inv.dueDays}">`)}</div>
+        ${field('Terms',`<input id="i_terms" value="${OF.escape(inv.terms||'')}">`)}${field('Footer note',`<input id="i_foot" value="${OF.escape(inv.footerNote||'')}">`)}
+        <button class="btn btn-primary" id="saveInv">Save invoice defaults</button>`)
+        + card('Line-item presets', presets.map(p=>`<div class="row between" style="padding:9px 0;border-bottom:1px solid var(--line-2)"><div><span class="cell-strong">${OF.escape(p.label)}</span> ${p.is_active?'':'<span class="badge neutral no-dot">off</span>'}<div class="tiny muted">${p.category||''} ${p.taxable?'· taxable':''}</div></div><div class="row" style="gap:8px"><span class="mono">${OF.money(p.default_amount_cents)}</span><button class="btn btn-secondary btn-sm" data-preset="${p.id}">Edit</button></div></div>`).join('')||'<p class="muted small">No presets.</p>',
+        `<button class="btn btn-primary btn-sm" id="addPreset">${OF.icon('plus',15)} Add preset</button>`);
+      root.querySelector('#saveInv').onclick=async()=>{await OF.put('/api/admin/settings/settings',{invoicing:{taxRatePercent:parseFloat(root.querySelector('#i_tax').value)||0,dueDays:+root.querySelector('#i_due').value,terms:root.querySelector('#i_terms').value,footerNote:root.querySelector('#i_foot').value}});OF.toast('Saved','ok');};
+      root.querySelector('#addPreset').onclick=()=>presetModal();
+      root.querySelectorAll('[data-preset]').forEach(b=>b.onclick=()=>presetModal(presets.find(p=>p.id==b.dataset.preset)));
+    }
+    function presetModal(p){
+      const m=OF.modal(`<div class="modal-head"><h3>${p?'Edit preset':'New preset'}</h3><button class="x" data-close>&times;</button></div>
+        <div class="modal-body">${field('Label *',`<input id="pr_label" value="${OF.escape(p?.label||'')}">`)}${field('Description',`<input id="pr_desc" value="${OF.escape(p?.description||'')}">`)}
+        <div class="grid cols-2">${field('Default amount',`<div class="input-prefix"><span>$</span><input id="pr_amt" value="${p?dollars(p.default_amount_cents):'0.00'}"></div>`)}${field('Category',`<input id="pr_cat" value="${OF.escape(p?.category||'')}">`)}</div>
+        <label class="row" style="gap:8px"><input type="checkbox" id="pr_tax" ${!p||p.taxable?'checked':''} style="width:auto"> Taxable</label></div>
+        <div class="modal-foot">${p?`<button class="btn btn-danger-soft" id="pr_del">Delete</button>`:''}<button class="btn btn-secondary" data-close>Cancel</button><button class="btn btn-primary" id="pr_save">Save</button></div>`);
+      m.q('#pr_save').onclick=async()=>{const payload={label:m.q('#pr_label').value,description:m.q('#pr_desc').value,defaultAmountCents:toCents(m.q('#pr_amt').value),category:m.q('#pr_cat').value,taxable:m.q('#pr_tax').checked};if(!payload.label)return OF.toast('Label required','error');if(p)await OF.patch('/api/admin/settings/presets/'+p.id,payload);else await OF.post('/api/admin/settings/presets',payload);m.close();OF.toast('Saved','ok');invoicingTab(document.getElementById('content'));};
+      m.q('#pr_del')?.addEventListener('click',async()=>{if(!(await OF.confirm({title:'Delete preset?',danger:true,confirmText:'Delete'})))return;await OF.del('/api/admin/settings/presets/'+p.id);m.close();OF.toast('Deleted','ok');invoicingTab(document.getElementById('content'));});
+    }
+
+    // ---- Integrations ----
+    function integrationsTab(root){
+      const ig = S.integrations;
+      root.innerHTML = card('Stripe payments', `<p class="muted small" style="margin-top:0">Accept card payments on invoices and bill recurring plans. ${ig.stripeEnabled?'<span class="badge ok no-dot">Connected</span>':'<span class="badge neutral no-dot">Not connected</span>'}</p>
+        ${field('Secret key',`<input id="st_secret" type="password" placeholder="${ig.stripeEnabled?'•••••••• (set)':'sk_live_…'}">`)}
+        ${field('Publishable key',`<input id="st_pub" value="${OF.escape(ig.stripePublishable||'')}" placeholder="pk_live_…">`)}
+        ${field('Webhook signing secret',`<input id="st_wh" type="password" placeholder="whsec_…">`,'Point a Stripe webhook at /api/stripe/webhook.')}
+        <button class="btn btn-primary" id="saveStripe">Save Stripe keys</button>`)
+        + card('Google Calendar', `<p class="muted small" style="margin-top:0">Sync confirmed appointments to a Google Calendar. ${ig.googleConnected?`<span class="badge ok no-dot">Connected${ig.googleEmail?' · '+OF.escape(ig.googleEmail):''}</span>`:'<span class="badge neutral no-dot">Not connected</span>'}</p>
+        ${ig.googleConnected
+          ? `${field('Calendar ID',`<input id="g_cal" value="${OF.escape(ig.googleCalendarId||'primary')}">`,'Use "primary" or a specific calendar ID.')}<div class="row" style="gap:8px"><button class="btn btn-secondary" id="saveCal">Save calendar</button><button class="btn btn-danger-soft" id="discG">Disconnect</button></div>`
+          : `<a class="btn btn-primary" href="/api/integrations/google/connect">${OF.icon('cal',15)} Connect Google Calendar</a>`}`)
+        + card('Email delivery', `<p class="muted small" style="margin-top:0">Provider in use: <b>${OF.escape(ig.emailProvider)}</b>${ig.emailProvider==='console'?' (dev — emails are logged, not sent)':''}. Set MAILGUN_* or SMTP_* env vars to send for real.</p>
+        ${field('From address',`<input id="em_from" value="${OF.escape(ig.emailFrom||'')}" placeholder="Pasternack Pest <office@…>">`)}
+        <button class="btn btn-primary" id="saveEmail">Save email settings</button>`);
+      root.querySelector('#saveStripe').onclick=async()=>{const body={};const s=root.querySelector('#st_secret').value.trim();const p=root.querySelector('#st_pub').value.trim();const w=root.querySelector('#st_wh').value.trim();if(s)body.secretKey=s;body.publishableKey=p;if(w)body.webhookSecret=w;const r=await OF.put('/api/admin/settings/integrations/stripe',body);OF.toast(r.stripeEnabled?'Stripe connected ✓':'Saved','ok');reload();};
+      root.querySelector('#saveCal')?.addEventListener('click',async()=>{await OF.put('/api/integrations/google/calendar',{calendarId:root.querySelector('#g_cal').value});OF.toast('Saved','ok');});
+      root.querySelector('#discG')?.addEventListener('click',async()=>{await OF.post('/api/integrations/google/disconnect');OF.toast('Disconnected','ok');reload();});
+      root.querySelector('#saveEmail').onclick=async()=>{await OF.put('/api/admin/settings/integrations/email',{from:root.querySelector('#em_from').value});OF.toast('Saved','ok');};
+    }
+
+    // ---- Email templates ----
+    async function emailTab(root){
+      const { templates } = await OF.get('/api/admin/settings/email-templates');
+      root.innerHTML = card('Email templates', templates.map(t=>`<div class="row between" style="padding:10px 0;border-bottom:1px solid var(--line-2)"><div><span class="cell-strong">${t.type.replace(/_/g,' ')}</span> ${t.customized?'<span class="badge info no-dot">Customized</span>':''}<div class="tiny muted">${OF.escape(t.subject)}</div></div><button class="btn btn-secondary btn-sm" data-tpl="${t.type}">Edit</button></div>`).join(''));
+      root.querySelectorAll('[data-tpl]').forEach(b=>b.onclick=()=>{const t=templates.find(x=>x.type==b.dataset.tpl);const m=OF.modal(`<div class="modal-head"><h3>${t.type.replace(/_/g,' ')}</h3><button class="x" data-close>&times;</button></div><div class="modal-body">${field('Subject',`<input id="t_sub" value="${OF.escape(t.subject)}">`)}${field('HTML body',`<textarea id="t_html" style="min-height:160px;font-family:monospace;font-size:13px">${OF.escape(t.html)}</textarea>`,'Use {{PLACEHOLDERS}} like {{CUSTOMER_NAME}}, {{COMPANY_NAME}}, {{PAY_URL}}.')}${field('Plain text',`<textarea id="t_text">${OF.escape(t.text)}</textarea>`)}</div><div class="modal-foot"><button class="btn btn-secondary" data-close>Cancel</button><button class="btn btn-primary" id="t_save">Save template</button></div>`,{wide:true});m.q('#t_save').onclick=async()=>{await OF.api('/api/admin/settings/email-templates/'+t.type,{method:'PUT',body:{subject:m.q('#t_sub').value,html:m.q('#t_html').value,text:m.q('#t_text').value}});m.close();OF.toast('Template saved','ok');emailTab(document.getElementById('content'));};});
+    }
+
+    // ---- Team ----
+    async function teamTab(root){
+      const { users } = await OF.get('/api/admin/settings/users');
+      root.innerHTML = card('Team members', users.map(u=>`<div class="row between" style="padding:10px 0;border-bottom:1px solid var(--line-2)">
+        <div class="row" style="gap:10px"><span class="avatar-sm">${OF.initials(u.display_name||u.username)}</span><div><span class="cell-strong">${OF.escape(u.display_name||u.username)}</span> ${u.is_active?'':'<span class="badge neutral no-dot">Inactive</span>'}${u.is_totp_enabled?'<span class="badge ok no-dot">2FA</span>':''}<div class="tiny muted">@${OF.escape(u.username)} · ${u.role}</div></div></div>
+        <div class="row" style="gap:6px">${u.id===OF.session.userId?`<button class="btn btn-secondary btn-sm" id="totpBtn">${u.is_totp_enabled?'Manage 2FA':'Enable 2FA'}</button>`:`<button class="btn btn-ghost btn-sm" data-toggle="${u.id}" data-active="${u.is_active}">${u.is_active?'Deactivate':'Activate'}</button>`}</div></div>`).join(''),
+        `<button class="btn btn-primary btn-sm" id="addUser">${OF.icon('plus',15)} Add member</button>`);
+      root.querySelector('#addUser').onclick=()=>{const m=OF.modal(`<div class="modal-head"><h3>Add team member</h3><button class="x" data-close>&times;</button></div><div class="modal-body">${field('Display name',`<input id="u_name">`)}${field('Username *',`<input id="u_user">`)}${field('Temporary password *',`<input id="u_pass" type="text">`)}${field('Role',`<select id="u_role"><option value="staff">Staff</option><option value="owner">Owner</option></select>`)}</div><div class="modal-foot"><button class="btn btn-secondary" data-close>Cancel</button><button class="btn btn-primary" id="u_save">Add</button></div>`);m.q('#u_save').onclick=async()=>{try{await OF.post('/api/admin/settings/users',{displayName:m.q('#u_name').value,username:m.q('#u_user').value.trim(),password:m.q('#u_pass').value,role:m.q('#u_role').value});m.close();OF.toast('Member added','ok');teamTab(document.getElementById('content'));}catch(e){OF.toast(e.message,'error');}};};
+      root.querySelectorAll('[data-toggle]').forEach(b=>b.onclick=async()=>{await OF.patch('/api/admin/settings/users/'+b.dataset.toggle,{isActive:b.dataset.active!=='true'});OF.toast('Updated','ok');teamTab(document.getElementById('content'));});
+      root.querySelector('#totpBtn')?.addEventListener('click',totpFlow);
+    }
+    async function totpFlow(){
+      const me = (await OF.get('/api/admin/settings/users')).users.find(u=>u.id===OF.session.userId);
+      if(me.is_totp_enabled){ if(await OF.confirm({title:'Disable 2FA?',danger:true,confirmText:'Disable'})){await OF.post('/api/admin/auth/totp/disable');OF.toast('2FA disabled','ok');teamTab(document.getElementById('content'));} return; }
+      const start = await OF.post('/api/admin/auth/totp/start');
+      const m=OF.modal(`<div class="modal-head"><h3>Enable two-factor auth</h3><button class="x" data-close>&times;</button></div><div class="modal-body center"><p class="muted small">Scan with Google Authenticator, 1Password, or Authy, then enter the 6-digit code.</p><img src="${start.qr}" style="width:180px;height:180px;margin:10px auto"><div class="tiny muted" style="word-break:break-all">${start.secret}</div>${field('Code',`<input id="code" inputmode="numeric" placeholder="123456" style="text-align:center;font-size:20px;letter-spacing:4px">`)}</div><div class="modal-foot"><button class="btn btn-secondary" data-close>Cancel</button><button class="btn btn-primary" id="verify">Verify & enable</button></div>`);
+      m.q('#verify').onclick=async()=>{try{await OF.post('/api/admin/auth/totp/enable',{code:m.q('#code').value});m.close();OF.toast('2FA enabled ✓','ok');teamTab(document.getElementById('content'));}catch(e){OF.toast(e.message,'error');}};
+    }
+
+    function renderTab(root){
+      const body = document.getElementById('tabbody');
+      ({business:businessTab,booking:bookingTab,services:servicesTab,invoicing:invoicingTab,integrations:integrationsTab,email:emailTab,team:teamTab})[tab](body);
+    }
+    async function reload(){ S = await OF.get('/api/admin/settings'); renderTab(); }
+
+    OF.page({ active:'settings', title:'Settings', subtitle:'Configure everything about your business', render: async (root) => {
+      S = await OF.get('/api/admin/settings');
+      root.innerHTML = `<div class="tabbar" id="tabbar">${TABS.map(([k,l])=>`<button data-tab="${k}" class="${tab===k?'active':''}">${l}</button>`).join('')}</div><div id="tabbody"></div>`;
+      root.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{tab=b.dataset.tab;root.querySelectorAll('[data-tab]').forEach(x=>x.classList.toggle('active',x===b));renderTab(root);});
+      renderTab(root);
+      if (OF.qs('google')==='connected') OF.toast('Google Calendar connected ✓','ok');
+    }});
+  </script>
+</body>
+</html>

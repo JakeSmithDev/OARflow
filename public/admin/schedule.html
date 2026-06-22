@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Schedule · OARFlow</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/assets/app/app.css" />
+  <style>
+    .daynav { display:flex; align-items:center; gap:10px; margin-bottom:18px; }
+    .daynav .arrow { width:38px;height:38px;border-radius:10px;border:1px solid var(--line);background:var(--surface);cursor:pointer;display:grid;place-items:center;font-size:18px; }
+    .agenda .slot-row { display:grid; grid-template-columns: 90px 1fr; gap:16px; padding:14px 0; border-bottom:1px solid var(--line-2); }
+    .agenda .time { color:var(--muted); font-weight:700; font-size:14px; }
+    .agenda .job { border-left:3px solid var(--brand); padding:10px 14px; border-radius:0 10px 10px 0; background:var(--surface-2); cursor:pointer; }
+    .agenda .job:hover { background:#eef2f7; }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  <script src="/assets/app/admin.js"></script>
+  <script>
+    function ymd(d){ return new Intl.DateTimeFormat('en-CA',{timeZone:OF.tenant.timezone,year:'numeric',month:'2-digit',day:'2-digit'}).format(d); }
+    let cur = new Date();
+
+    async function render(root) {
+      const date = ymd(cur);
+      const headLabel = new Intl.DateTimeFormat('en-US',{timeZone:OF.tenant.timezone,weekday:'long',month:'long',day:'numeric',year:'numeric'}).format(cur);
+      root.innerHTML = `<div class="daynav">
+        <button class="arrow" id="prev">‹</button>
+        <h2 style="min-width:320px">${headLabel}</h2>
+        <button class="arrow" id="next">›</button>
+        <button class="btn btn-secondary btn-sm" id="today">Today</button>
+        <input type="date" id="pick" value="${date}" style="max-width:170px;margin-left:auto">
+      </div><div class="card"><div id="agenda"><div class="loading-page"><span class="spinner"></span></div></div></div>`;
+      document.getElementById('prev').onclick=()=>{ cur=new Date(cur.getTime()-86400000); render(root); };
+      document.getElementById('next').onclick=()=>{ cur=new Date(cur.getTime()+86400000); render(root); };
+      document.getElementById('today').onclick=()=>{ cur=new Date(); render(root); };
+      document.getElementById('pick').onchange=(e)=>{ cur=new Date(e.target.value+'T12:00:00'); render(root); };
+
+      const d = await OF.get('/api/admin/appointments/calendar?date='+date);
+      const rows = d.appointments;
+      const agenda = document.getElementById('agenda');
+      if (!rows.length) { agenda.innerHTML = `<div class="empty"><div class="ic">${OF.icon('schedule',22)}</div><p>Nothing scheduled. Enjoy the quiet — or <a href="/admin/appointments?new=1">add a job</a>.</p></div>`; return; }
+      agenda.innerHTML = `<div class="card-pad agenda">` + rows.map(a=>`
+        <div class="slot-row">
+          <div class="time">${OF.time(a.scheduled_start)}</div>
+          <div class="job" onclick="location.href='/admin/appointments?id=${a.id}'">
+            <div class="row between"><span class="cell-strong">${OF.escape(a.customer_name)}</span>${OF.statusBadge(a.status)}</div>
+            <div class="small muted" style="margin-top:3px">${a.service_name?OF.escape(a.service_name):''}${a.service_address?` · ${OF.escape(a.service_address)}`:''}</div>
+          </div></div>`).join('') + `</div>`;
+    }
+
+    OF.page({ active:'schedule', title:'Schedule', subtitle:'Day agenda', render: async (root, ctx) => {
+      ctx.setActions(`<a class="btn btn-primary btn-sm" href="/admin/appointments?new=1">${OF.icon('plus',15)} New appointment</a>`);
+      await render(root);
+    }});
+  </script>
+</body>
+</html>
