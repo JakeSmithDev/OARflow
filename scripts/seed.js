@@ -46,12 +46,14 @@ async function ensureAdmin(tenantId) {
 async function seedServices(tenantId) {
   const { rows } = await query('SELECT count(*)::int AS n FROM service_types WHERE tenant_id = $1', [tenantId]);
   if (rows[0].n > 0) return;
+  // Most services inherit the tenant's default booking mode ('default'); Termite
+  // Inspection is pinned to 'request' to demonstrate per-service override.
   const services = [
-    ['General Pest Control', 'Interior + exterior treatment for ants, roaches, spiders, and common pests.', 60, 12900, 'instant', '#0e7c4b', 1],
-    ['Mosquito & Tick Treatment', 'Yard barrier treatment that knocks down mosquitoes and ticks for weeks.', 60, 8900, 'instant', '#0891b2', 2],
-    ['Rodent Control', 'Inspection, trapping, and exclusion to stop mice and rats.', 90, 24900, 'instant', '#b45309', 3],
+    ['General Pest Control', 'Interior + exterior treatment for ants, roaches, spiders, and common pests.', 60, 12900, 'default', '#0e7c4b', 1],
+    ['Mosquito & Tick Treatment', 'Yard barrier treatment that knocks down mosquitoes and ticks for weeks.', 60, 8900, 'default', '#0891b2', 2],
+    ['Rodent Control', 'Inspection, trapping, and exclusion to stop mice and rats.', 90, 24900, 'default', '#b45309', 3],
     ['Termite Inspection', 'Thorough inspection with a written report. Free, by appointment.', 45, 0, 'request', '#7c3aed', 4],
-    ['Bed Bug Treatment', 'Multi-room heat/chemical treatment. Scheduled after a quick assessment.', 180, 45000, 'request', '#be123c', 5],
+    ['Bed Bug Treatment', 'Multi-room heat/chemical treatment. Scheduled after a quick assessment.', 180, 45000, 'default', '#be123c', 5],
   ];
   for (const [name, desc, dur, price, mode, color, sort] of services) {
     await query(

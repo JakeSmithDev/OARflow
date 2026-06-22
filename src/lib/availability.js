@@ -41,19 +41,28 @@ export function computeDayAvailability({ tenant, service, dateYmd, appointments 
   const tz = tenant.timezone;
   const booking = tenant.settings.booking;
   const avail = tenant.settings.availability;
-  const duration = service?.duration_minutes || avail.slotMinutes || 60;
-  const step = avail.slotMinutes && avail.slotMinutes < duration ? avail.slotMinutes : duration;
   const capacity = (override && Number.isInteger(override.capacity)) ? override.capacity : (avail.capacityPerSlot || 1);
+  const isWindows = avail.granularity === 'windows';
 
-  const windows = effectiveHours(tenant, dateYmd, override);
-  const raw = buildDaySlots(windows, duration, step);
+  const openWindows = effectiveHours(tenant, dateYmd, override);
+  // raw = candidate options as { start:'HH:MM', end:'HH:MM', label? }
+  let raw;
+  if (isWindows) {
+    // Arrival windows are the operator-defined options; only on open days.
+    raw = openWindows.length ? (avail.windows || []).map((w) => ({ start: w.start, end: w.end, label: w.label })) : [];
+  } else {
+    const duration = service?.duration_minutes || avail.slotMinutes || 60;
+    const step = avail.slotMinutes && avail.slotMinutes < duration ? avail.slotMinutes : duration;
+    raw = buildDaySlots(openWindows, duration, step);
+  }
+
   const leadMs = (booking.leadTimeHours || 0) * 3600_000;
   const earliest = new Date(now.getTime() + leadMs);
-
   const apptRanges = appointments
     .filter((a) => a.scheduled_start && a.scheduled_end)
     .map((a) => [new Date(a.scheduled_start).getTime(), new Date(a.scheduled_end).getTime()]);
   const blackoutRanges = blackouts.map((b) => [new Date(b.starts_at).getTime(), new Date(b.ends_at).getTime()]);
+  const fmt = (d) => new Intl.DateTimeFormat('en-US', { timeZone: tz, hour: 'numeric', minute: '2-digit' }).format(d);
 
   return raw.map((s) => {
     const startUtc = zonedWallTimeToUtc(dateYmd, s.start, tz);
@@ -66,7 +75,9 @@ export function computeDayAvailability({ tenant, service, dateYmd, appointments 
     return {
       start: startUtc.toISOString(),
       end: endUtc.toISOString(),
-      label: new Intl.DateTimeFormat('en-US', { timeZone: tz, hour: 'numeric', minute: '2-digit' }).format(startUtc),
+      label: s.label || fmt(startUtc),
+      rangeLabel: `${fmt(startUtc)}–${fmt(endUtc)}`,
+      kind: isWindows ? 'window' : 'slot',
       available: !blocked && remaining > 0 && !tooSoon,
       remaining,
     };

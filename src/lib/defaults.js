@@ -27,6 +27,13 @@ export function defaultTenantSettings(overrides = {}) {
     availability: {
       slotMinutes: 120,
       capacityPerSlot: 2,           // how many crews can run concurrently
+      // 'slots' = precise start times; 'windows' = named arrival windows.
+      granularity: 'slots',
+      windows: [
+        { label: 'Morning', start: '08:00', end: '12:00' },
+        { label: 'Afternoon', start: '12:00', end: '16:00' },
+        { label: 'Evening', start: '16:00', end: '19:00' },
+      ],
       hours: {
         0: [],
         1: [{ start: '08:00', end: '17:00' }],

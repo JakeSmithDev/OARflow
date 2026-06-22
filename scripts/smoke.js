@@ -151,6 +151,26 @@ async function main() {
   await check('create an invoice preset', async () => { const { data } = await call('/api/admin/settings/presets', { method: 'POST', body: { label: 'Attic Treatment', defaultAmountCents: 30000 } }); assert.ok(data.preset.id); });
   await check('list + edit email template', async () => { const list = await call('/api/admin/settings/email-templates'); assert.ok(list.data.templates.length >= 7); const put = await call('/api/admin/settings/email-templates/follow_up', { method: 'PUT', body: { subject: 'Checking in!', html: '<p>Hi {{CUSTOMER_NAME}}</p>', text: 'Hi' } }); assert.ok(put.data.ok); });
   await check('add a team member', async () => { const { data } = await call('/api/admin/settings/users', { method: 'POST', body: { username: 'tech1', password: 'temp12345', displayName: 'Tech One', role: 'staff' } }); assert.ok(data.user.id); });
+  await check('[booking] global default applies after use-default-mode', async () => {
+    await call('/api/admin/settings/settings', { method: 'PUT', body: { booking: { defaultMode: 'request' } } });
+    await call('/api/admin/settings/services/use-default-mode', { method: 'POST' });
+    const boot = await call('/api/public/default/bootstrap', { auth: false });
+    const gp = boot.data.services.find((s) => /General Pest/.test(s.name));
+    assert.equal(gp.mode, 'request', 'default-mode service follows the global default');
+    await call('/api/admin/settings/settings', { method: 'PUT', body: { booking: { defaultMode: 'instant' } } }); // reset
+  });
+  await check('[booking] arrival windows: availability + booking', async () => {
+    await call('/api/admin/settings/settings', { method: 'PUT', body: { booking: { defaultMode: 'instant' }, availability: { granularity: 'windows', windows: [{ label: 'Morning', start: '08:00', end: '12:00' }, { label: 'Afternoon', start: '12:00', end: '16:00' }] } } });
+    const svc = (await call('/api/admin/appointments/meta/services')).data.services.find((s) => /General Pest/.test(s.name));
+    let date; let av;
+    for (const off of [3, 4, 5, 6, 7, 8]) { date = ymd(new Date(Date.now() + off * 86400000)); av = await call(`/api/public/default/availability?serviceId=${svc.id}&date=${date}`, { auth: false }); if (av.data.slots.length) break; }
+    assert.equal(av.data.granularity, 'windows');
+    const w = av.data.slots.find((s) => s.kind === 'window' && s.available);
+    assert.ok(w && w.rangeLabel && w.label, 'window option has a label + time range');
+    const r = await call('/api/public/default/book', { auth: false, method: 'POST', body: { serviceId: svc.id, slot: { start: w.start, end: w.end }, customer: { name: 'Window Booker', email: 'win@example.com', address: '1 st' } } });
+    assert.equal(r.data.status, 'scheduled', 'booked an arrival window');
+    await call('/api/admin/settings/settings', { method: 'PUT', body: { availability: { granularity: 'slots' } } }); // reset
+  });
   await check('save stripe keys (test placeholders)', async () => { const { data } = await call('/api/admin/settings/integrations/stripe', { method: 'PUT', body: { publishableKey: 'pk_test_x' } }); assert.ok(data.ok); });
   await check('[fix] stripe secret encrypted at rest + decrypts', async () => {
     await call('/api/admin/settings/integrations/stripe', { method: 'PUT', body: { secretKey: 'sk_test_supersecret', webhookSecret: 'whsec_topsecret' } });

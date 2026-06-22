@@ -32,6 +32,7 @@ const OF = window.OF;
     function bookingTab(root){
       const bk = S.settings.booking, av = S.settings.availability;
       const rem = (S.settings.notifications && S.settings.notifications.appointmentReminder) || { enabled:true, leadHours:24 };
+      const wins = JSON.parse(JSON.stringify(av.windows || []));
       const hoursRows = DAYS.map((d,i)=>{ const w=(av.hours[i]||av.hours[String(i)]||[])[0]; const closed=!w;
         return `<div class="daygrid"><span style="font-weight:600">${d}</span>
           <input type="time" class="h_start" data-d="${i}" value="${w?w.start:'08:00'}" ${closed?'disabled':''}>
@@ -45,21 +46,46 @@ const OF = window.OF;
         <div class="grid cols-2">${field('Lead time (hours)', `<input id="bk_lead" type="number" min="0" value="${bk.leadTimeHours}">`,'Earliest a customer can book from now.')}${field('Book up to (days out)', `<input id="bk_max" type="number" min="1" value="${bk.maxDaysOut}">`)}</div>
         <label class="row" style="gap:8px;margin:6px 0"><input type="checkbox" id="bk_addr" ${bk.collectAddress?'checked':''} style="width:auto"> Require a service address at booking</label>
         ${field('Confirmation message', `<textarea id="bk_msg">${OF.escape(bk.confirmationMessage||'')}</textarea>`)}
-        <button class="btn btn-primary" id="saveBooking">Save booking settings</button>`)
+        <button class="btn btn-primary" id="saveBooking">Save booking settings</button>
+        <p class="hint" style="margin-top:10px">Individual services can override this default. <button class="link-btn" type="button" id="applyDefaultMode">Make all services use this default →</button></p>`)
         + card('Appointment reminders', `
         <p class="muted small" style="margin-top:0">Automatically email customers a reminder before their visit. This is separate from invoicing — reminders never mention a balance.</p>
         <label class="row" style="gap:8px;margin-bottom:12px"><input type="checkbox" id="rem_on" ${rem.enabled?'checked':''} style="width:auto"> Send appointment reminder emails</label>
         ${field('Send how many hours before', `<input id="rem_lead" type="number" min="1" max="168" value="${rem.leadHours||24}">`,'e.g. 24 = the day before. Sent by the daily job.')}
         <button class="btn btn-primary" id="saveReminders">Save reminders</button>`)
         + card('Availability', `
-        <div class="grid cols-2">${field('Slot length (minutes)', `<input id="av_slot" type="number" min="15" step="15" value="${av.slotMinutes}">`,'Used when a service has no duration.')}${field('Crews / capacity per slot', `<input id="av_cap" type="number" min="1" value="${av.capacityPerSlot}">`,'How many jobs can run at the same time.')}</div>
+        ${field('How customers choose a time', `<select id="av_gran"><option value="slots" ${av.granularity!=='windows'?'selected':''}>Precise time slots (e.g. 10:00 AM)</option><option value="windows" ${av.granularity==='windows'?'selected':''}>Arrival windows (e.g. Morning 8–12)</option></select>`,'Applies to both instant and request bookings.')}
+        <div id="winEditor" style="${av.granularity==='windows'?'':'display:none'};margin-bottom:12px">
+          <div class="muted tiny" style="text-transform:uppercase;letter-spacing:.04em;font-weight:700;margin:4px 0 8px">Arrival windows</div>
+          <div id="winRows"></div>
+          <button class="btn btn-secondary btn-sm" type="button" id="addWin">${OF.icon('plus',14)} Add window</button>
+        </div>
+        <div class="grid cols-2">${field('Slot length (minutes)', `<input id="av_slot" type="number" min="15" step="15" value="${av.slotMinutes}">`,'Used for precise time slots when a service has no duration.')}${field('Crews / capacity', `<input id="av_cap" type="number" min="1" value="${av.capacityPerSlot}">`,'How many jobs can run in the same slot/window.')}</div>
         <div class="muted tiny" style="text-transform:uppercase;letter-spacing:.04em;font-weight:700;margin:10px 0 8px">Weekly hours</div>
         ${hoursRows}
         <button class="btn btn-primary" id="saveAvail" style="margin-top:8px">Save availability</button>`);
       root.querySelectorAll('.h_closed').forEach(c=>c.onchange=e=>{const d=e.target.dataset.d;root.querySelector(`.h_start[data-d="${d}"]`).disabled=e.target.checked;root.querySelector(`.h_end[data-d="${d}"]`).disabled=e.target.checked;});
       root.querySelector('#saveBooking').onclick=async()=>{await OF.put('/api/admin/settings/settings',{booking:{defaultMode:root.querySelector('#bk_mode').value,requestSlotCount:+root.querySelector('#bk_count').value,leadTimeHours:+root.querySelector('#bk_lead').value,maxDaysOut:+root.querySelector('#bk_max').value,collectAddress:root.querySelector('#bk_addr').checked,confirmationMessage:root.querySelector('#bk_msg').value}});OF.toast('Saved','ok');};
+      root.querySelector('#applyDefaultMode').onclick=async()=>{ if(!(await OF.confirm({title:'Use default for all services?',body:'<p class="muted">Every service will follow the default booking mode above. You can still override individual services afterward.</p>',confirmText:'Apply to all'}))) return; const r=await OF.post('/api/admin/settings/services/use-default-mode'); OF.toast(`Updated ${r.updated} service(s)`,'ok'); };
       root.querySelector('#saveReminders').onclick=async()=>{await OF.put('/api/admin/settings/settings',{notifications:{appointmentReminder:{enabled:root.querySelector('#rem_on').checked,leadHours:+root.querySelector('#rem_lead').value||24}}});OF.toast('Saved','ok');};
-      root.querySelector('#saveAvail').onclick=async()=>{const hours={};DAYS.forEach((_,i)=>{const closed=root.querySelector(`.h_closed[data-d="${i}"]`).checked;hours[i]=closed?[]:[{start:root.querySelector(`.h_start[data-d="${i}"]`).value,end:root.querySelector(`.h_end[data-d="${i}"]`).value}];});await OF.put('/api/admin/settings/settings',{availability:{slotMinutes:+root.querySelector('#av_slot').value,capacityPerSlot:+root.querySelector('#av_cap').value,hours}});OF.toast('Saved','ok');};
+      // Arrival-windows editor
+      function drawWins(){
+        const box=root.querySelector('#winRows'); if(!box) return;
+        box.innerHTML = wins.map((w,i)=>`<div class="row" style="gap:8px;margin-bottom:8px;align-items:center">
+          <input class="w_label" data-i="${i}" value="${OF.escape(w.label||'')}" placeholder="Label (e.g. Morning)" style="flex:1">
+          <input class="w_start" data-i="${i}" type="time" value="${w.start||'08:00'}" style="width:130px">
+          <span class="muted">to</span>
+          <input class="w_end" data-i="${i}" type="time" value="${w.end||'12:00'}" style="width:130px">
+          <button class="link-btn w_del" data-i="${i}" type="button" style="color:var(--danger)">Remove</button></div>`).join('') || '<p class="muted small">No windows yet — add one.</p>';
+        box.querySelectorAll('.w_label').forEach(el=>el.oninput=e=>wins[+e.target.dataset.i].label=e.target.value);
+        box.querySelectorAll('.w_start').forEach(el=>el.oninput=e=>wins[+e.target.dataset.i].start=e.target.value);
+        box.querySelectorAll('.w_end').forEach(el=>el.oninput=e=>wins[+e.target.dataset.i].end=e.target.value);
+        box.querySelectorAll('.w_del').forEach(el=>el.onclick=e=>{wins.splice(+e.target.dataset.i,1);drawWins();});
+      }
+      drawWins();
+      root.querySelector('#addWin').onclick=()=>{wins.push({label:'',start:'09:00',end:'12:00'});drawWins();};
+      root.querySelector('#av_gran').onchange=e=>{root.querySelector('#winEditor').style.display=e.target.value==='windows'?'':'none';};
+      root.querySelector('#saveAvail').onclick=async()=>{const hours={};DAYS.forEach((_,i)=>{const closed=root.querySelector(`.h_closed[data-d="${i}"]`).checked;hours[i]=closed?[]:[{start:root.querySelector(`.h_start[data-d="${i}"]`).value,end:root.querySelector(`.h_end[data-d="${i}"]`).value}];});const windows=wins.filter(w=>w.label&&w.start&&w.end);await OF.put('/api/admin/settings/settings',{availability:{slotMinutes:+root.querySelector('#av_slot').value,capacityPerSlot:+root.querySelector('#av_cap').value,granularity:root.querySelector('#av_gran').value,windows,hours}});OF.toast('Saved','ok');};
       root.insertAdjacentHTML('beforeend','<div id="exceptions"><div class="loading-page"><span class="spinner"></span></div></div>');
       loadExceptions(root);
     }

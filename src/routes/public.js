@@ -44,6 +44,7 @@ router.get('/:slug/bootstrap', asyncHandler(async (req, res) => {
     booking: {
       defaultMode: b.defaultMode, requestSlotCount: b.requestSlotCount, leadTimeHours: b.leadTimeHours,
       maxDaysOut: b.maxDaysOut, collectAddress: b.collectAddress, confirmationMessage: b.confirmationMessage,
+      granularity: tenant.settings.availability.granularity || 'slots',
     },
     services: services.map((s) => publicService(tenant, s)),
   });
@@ -74,7 +75,7 @@ router.get('/:slug/availability', asyncHandler(async (req, res) => {
 
   const { appointments, blackouts, override } = await fetchDayConflicts(tenant, date);
   const slots = computeDayAvailability({ tenant, service, dateYmd: date, appointments, blackouts, override });
-  res.json({ ok: true, slots, mode: effectiveBookingMode(tenant, service) });
+  res.json({ ok: true, slots, mode: effectiveBookingMode(tenant, service), granularity: tenant.settings.availability.granularity || 'slots' });
 }));
 
 // --- Create a booking -----------------------------------------------------

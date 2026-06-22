@@ -98,6 +98,11 @@ router.delete('/services/:id', asyncHandler(async (req, res) => {
   await query('UPDATE service_types SET is_active=FALSE WHERE id=$1 AND tenant_id=$2', [toInt(req.params.id), req.tenant.id]);
   res.json({ ok: true });
 }));
+// Make every service inherit the tenant's default booking mode (clears per-service overrides).
+router.post('/services/use-default-mode', asyncHandler(async (req, res) => {
+  const r = await query("UPDATE service_types SET booking_mode='default', updated_at=now() WHERE tenant_id=$1", [req.tenant.id]);
+  res.json({ ok: true, updated: r.rowCount });
+}));
 
 // --- Invoice line-item presets -------------------------------------------
 router.get('/presets', asyncHandler(async (req, res) => {
