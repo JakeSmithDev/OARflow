@@ -80,7 +80,18 @@ export const config = {
 
   // Secret required to invoke cron endpoints (X-Cron-Key header or ?key=).
   cronKey: process.env.CRON_KEY || 'dev-cron-key',
+
+  // Inngest (event-driven background jobs). When unset, OARFlow runs an
+  // in-process fallback executor so everything works keyless in dev/demo.
+  inngest: {
+    eventKey: process.env.INNGEST_EVENT_KEY || '',
+    signingKey: process.env.INNGEST_SIGNING_KEY || '',
+  },
 };
+
+export function inngestConfigured() {
+  return Boolean(config.inngest.eventKey && config.inngest.signingKey);
+}
 
 export function emailProviderName() {
   if (config.email.mailgun.apiKey && config.email.mailgun.domain) return 'mailgun';

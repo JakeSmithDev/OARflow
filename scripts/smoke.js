@@ -309,6 +309,24 @@ async function main() {
     assert.equal(appts.status, 200, 'staff can still run the day');
   });
 
+  await check('[substrate] emitEvent runs local handler + logs (keyless)', async () => {
+    const { emitEvent } = await import('../src/lib/events.js');
+    await import('../src/inngest/index.js');
+    const dbm = await import('../src/lib/db.js');
+    await emitEvent('appointment.completed', { tenantId: 1, appointmentId: 999, customerId: 1 });
+    const ev = await dbm.queryOne("SELECT count(*)::int n FROM event_log WHERE name='appointment.completed'");
+    assert.ok(ev.n >= 1, 'event logged');
+    const jr = await dbm.queryOne("SELECT count(*)::int n FROM job_runs WHERE workflow='appointment.completed'");
+    assert.ok(jr.n >= 1, 'local handler ran (job_run recorded)');
+  });
+  await check('[substrate] oncePerKey is idempotent', async () => {
+    const { oncePerKey } = await import('../src/lib/events.js');
+    let runs = 0;
+    const a = await oncePerKey(1, 'smoke-key-xyz', async () => { runs += 1; return 'ok'; });
+    const b = await oncePerKey(1, 'smoke-key-xyz', async () => { runs += 1; return 'ok'; });
+    assert.equal(a.ran, true); assert.equal(b.ran, false); assert.equal(runs, 1);
+  });
+
   server.close();
   await closeDb();
   console.log(`\n${passed} passed, ${failures.length} failed.`);

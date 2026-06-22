@@ -10,6 +10,7 @@ import { zonedWallTimeToUtc, ymdInTimeZone } from '../../lib/dates.js';
 import { syncAppointment, deleteAppointmentEvent } from '../../lib/google_calendar.js';
 import { scheduleForCompletion } from '../../lib/follow_ups.js';
 import { sendAppointmentReminder } from '../../lib/reminders.js';
+import { emitEvent } from '../../lib/events.js';
 import { sendTemplated, detailsTable } from '../../lib/email_templates.js';
 import { logAudit } from '../../lib/audit.js';
 import { formatDateLabel, formatTimeLabel } from '../../lib/dates.js';
@@ -212,7 +213,10 @@ router.patch('/:id', asyncHandler(async (req, res) => {
 
   if (canceling) { deleteAppointmentEvent(tenant, updated).catch(() => {}); if (b.notify && updated.customer_email) await sendTemplated(tenant, 'appointment_canceled', updated.customer_email, emailVars(tenant, updated), { type: 'appointment', id }).catch(() => {}); }
   else { syncAppointment(tenant, updated).catch(() => {}); }
-  if (completing) await scheduleForCompletion(tenant, updated).catch(() => {});
+  if (completing) {
+    await scheduleForCompletion(tenant, updated).catch(() => {});
+    emitEvent('appointment.completed', { tenantId: tenant.id, appointmentId: id, customerId: updated.customer_id }).catch(() => {});
+  }
   if ((b.date || b.start) && b.notify && updated.customer_email && !canceling) {
     await sendTemplated(tenant, 'appointment_rescheduled', updated.customer_email, emailVars(tenant, updated), { type: 'appointment', id }).catch(() => {});
   }

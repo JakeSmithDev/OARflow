@@ -8,7 +8,7 @@ import express from 'express';
 import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { config } from './config.js';
+import { config, inngestConfigured } from './config.js';
 import { serverError } from './lib/http.js';
 
 import stripeWebhookRouter from './routes/stripe_webhook.js';
@@ -16,7 +16,9 @@ import publicRouter from './routes/public.js';
 import payRouter from './routes/pay.js';
 import googleOAuthRouter from './routes/google_oauth.js';
 import cronRouter from './routes/cron.js';
+import inngestRouter from './routes/inngest.js';
 import adminApiRouter from './routes/admin/index.js';
+import './inngest/index.js'; // register background workflows (also used by the dev fallback)
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
@@ -47,6 +49,9 @@ export function createApp() {
   app.use('/api/pay', payRouter);
   app.use('/api/integrations/google', googleOAuthRouter);
   app.use('/api/cron', cronRouter);
+  // Only expose the Inngest serve endpoint when configured (prod). In dev the
+  // in-process fallback runs workflows, so the endpoint isn't needed.
+  if (inngestConfigured()) app.use('/api/inngest', inngestRouter);
 
   // --- Static assets + marketing site (served from /public) ---------------
   app.use(express.static(PUBLIC_DIR, { extensions: ['html'], maxAge: '1h' }));

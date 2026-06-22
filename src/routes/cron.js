@@ -6,11 +6,7 @@
 import express from 'express';
 import { asyncHandler } from '../lib/http.js';
 import { config } from '../config.js';
-import { query } from '../lib/db.js';
-import { getTenantById } from '../lib/tenants.js';
-import { generateDueCycles } from '../lib/recurring.js';
-import { processDueFollowUps } from '../lib/follow_ups.js';
-import { processDueReminders } from '../lib/reminders.js';
+import { runDailyMaintenance } from '../inngest/index.js';
 
 const router = express.Router();
 
@@ -22,22 +18,9 @@ function authorized(req) {
   return false;
 }
 
-async function runDaily() {
-  const { rows } = await query('SELECT id FROM tenants WHERE is_active = TRUE');
-  const summary = [];
-  for (const { id } of rows) {
-    const tenant = await getTenantById(id);
-    const cycles = await generateDueCycles(tenant).catch((e) => ({ error: e.message }));
-    const followups = await processDueFollowUps(tenant).catch((e) => ({ error: e.message }));
-    const reminders = await processDueReminders(tenant).catch((e) => ({ error: e.message }));
-    summary.push({ tenant: id, cycles, followups, reminders });
-  }
-  return summary;
-}
-
 const handler = asyncHandler(async (req, res) => {
   if (!authorized(req)) return res.status(401).json({ ok: false, error: 'Unauthorized cron request.' });
-  const summary = await runDaily();
+  const summary = await runDailyMaintenance();
   res.json({ ok: true, ranAt: new Date().toISOString(), summary });
 });
 
