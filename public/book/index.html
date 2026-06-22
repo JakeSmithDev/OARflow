@@ -5,14 +5,25 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Book an appointment</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Poppins:wght@600;700;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/assets/app/app.css" />
   <style>
-    body { background: linear-gradient(180deg, var(--brand-tint-2), var(--bg) 240px); }
-    .wrap { max-width: 760px; margin: 0 auto; padding: 28px 18px 80px; }
-    .bk-head { display:flex; align-items:center; gap:14px; margin-bottom: 22px; }
-    .bk-head .logo { width:46px;height:46px;border-radius:13px;background:linear-gradient(135deg,var(--brand),#34d399);display:grid;place-items:center;color:#fff;font-weight:800;font-size:22px; }
-    .bk-head h1 { font-size: 22px; } .bk-head p { margin:2px 0 0; color: var(--muted); font-size: 14px; }
+    :root { --navy:#0a2740; }
+    body { background: linear-gradient(180deg, var(--brand-tint-2), var(--bg) 280px); }
+    h1,h2,h3,.company { font-family:'Poppins',var(--font); letter-spacing:-0.01em; }
+    .wrap { max-width: 760px; margin: 0 auto; padding: 26px 18px 80px; }
+    /* Branded hero */
+    .bk-hero { background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-lg); box-shadow:var(--shadow); padding:22px 24px; margin-bottom:22px; position:relative; overflow:hidden; }
+    .bk-hero::after { content:""; position:absolute; right:-40px; top:-40px; width:180px; height:180px; border-radius:50%; background:color-mix(in srgb, var(--brand) 10%, transparent); }
+    .bk-brand { display:flex; align-items:center; gap:14px; position:relative; z-index:1; }
+    .bk-brand .logo { width:50px;height:50px;flex:none;border-radius:14px;background:linear-gradient(135deg,var(--brand),color-mix(in srgb,var(--brand) 55%,#86efac));display:grid;place-items:center;color:#fff; box-shadow: inset 0 0 0 1px rgba(255,255,255,.18); }
+    .bk-brand .company { font-size:22px; font-weight:800; color:var(--navy); line-height:1.1; }
+    .bk-brand .tagline { margin:3px 0 0; color:var(--muted); font-size:14px; }
+    .bk-values { display:flex; flex-wrap:wrap; gap:10px 22px; margin-top:16px; padding-top:16px; border-top:1px solid var(--line-2); position:relative; z-index:1; }
+    .bk-value { display:inline-flex; align-items:center; gap:8px; font-size:13px; font-weight:600; color:var(--ink-2); }
+    .bk-value svg { color:var(--brand); flex:none; }
+    .bk-head { display:none; }
+    .svc .sdot svg { width:24px; height:24px; }
     .steps { display:flex; gap:8px; margin-bottom: 20px; }
     .steps .s { flex:1; height:5px; border-radius:999px; background: var(--line); }
     .steps .s.done { background: var(--brand); }
@@ -42,10 +53,17 @@
 </head>
 <body>
   <div class="wrap">
-    <div class="bk-head">
-      <div class="logo" id="logo">·</div>
-      <div><h1 id="company">Book an appointment</h1><p id="tagline"></p></div>
-    </div>
+    <header class="bk-hero">
+      <div class="bk-brand">
+        <div class="logo" id="logo">·</div>
+        <div><div class="company" id="company">Book an appointment</div><p class="tagline" id="tagline"></p></div>
+      </div>
+      <div class="bk-values">
+        <span class="bk-value"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg> Pick a time that suits you</span>
+        <span class="bk-value"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14M22 4L12 14.01l-3-3"/></svg> Instant email confirmation</span>
+        <span class="bk-value"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z"/></svg> Manage it online anytime</span>
+      </div>
+    </header>
     <div class="steps" id="steps"></div>
     <div id="view"><div class="loading-page"><span class="spinner"></span></div></div>
   </div>
@@ -54,6 +72,14 @@
     const $ = (s, r=document) => r.querySelector(s);
     const slug = new URLSearchParams(location.search).get('t') || 'default';
     const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    function svcIcon(name){
+      const n=(name||'').toLowerCase(); let p='<path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z"/>';
+      if(/mosquito|tick/.test(n)) p='<path d="M12 3s6 6 6 11a6 6 0 0 1-12 0c0-5 6-11 6-11z"/>';
+      else if(/rodent|mouse|mice|rat/.test(n)) p='<circle cx="8" cy="9" r="3"/><circle cx="16" cy="9" r="3"/><path d="M5 19a7 7 0 0 1 14 0z"/>';
+      else if(/termite|inspect/.test(n)) p='<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>';
+      else if(/bug|ant|roach|spider|pest|bed/.test(n)) p='<path d="M12 8a4 4 0 0 1 4 4v3a4 4 0 0 1-8 0v-3a4 4 0 0 1 4-4z"/><path d="M12 8V5M8 12H4M20 12h-4M8 16l-3 2M16 16l3 2M8 8L6 6M16 8l2-2"/>';
+      return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
+    }
     let CFG = null, TZ = 'America/New_York', CUR = 'USD';
     const state = { step: 0, service: null, mode: null, date: null, slot: null, requested: [], details: {} };
 
@@ -89,7 +115,7 @@
       $('#view').innerHTML = `<h2 style="margin-bottom:14px">What can we help with?</h2>` +
         CFG.services.map(s => `
           <div class="svc" data-id="${s.id}">
-            <div class="sdot" style="background:${esc(s.color)}">${esc(s.name[0])}</div>
+            <div class="sdot" style="background:${esc(s.color)}">${svcIcon(s.name)}</div>
             <div class="meta"><h3>${esc(s.name)}</h3><p>${esc(s.description||'')}</p>
               <p class="tiny">${s.durationMinutes} min · ${s.mode==='request'?'Request times — we confirm':'Instant booking'}</p></div>
             <div class="price">${s.basePriceCents?money(s.basePriceCents):'Free'}<small>${s.basePriceCents?'starting':'estimate'}</small></div>

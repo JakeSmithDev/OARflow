@@ -5,12 +5,12 @@
 export function defaultTenantSettings(overrides = {}) {
   return {
     branding: {
-      primaryColor: '#0e7c4b',
-      accentColor: '#10b981',
+      primaryColor: '#1f8a3d',
+      accentColor: '#0a2740',
       logoText: 'Pasternack Pest Management',
-      tagline: 'Reliable pest control — scheduled in seconds.',
+      tagline: 'Reliable, friendly pest control — scheduled in seconds.',
       supportEmail: 'office@pasternackpest.com',
-      supportPhone: '(410) 555-0142',
+      supportPhone: '(410) 446-1169',
     },
     booking: {
       defaultMode: 'instant',       // 'instant' | 'request'

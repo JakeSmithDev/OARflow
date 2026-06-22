@@ -103,7 +103,21 @@ router.get('/calendar', asyncHandler(async (req, res) => {
        AND a.scheduled_start >= $2 AND a.scheduled_start < $3 ORDER BY a.scheduled_start`,
     [req.tenant.id, from, to],
   );
-  res.json({ ok: true, appointments: rows.rows });
+  // Capacity + exceptions so the schedule can flag over-capacity + closed days.
+  const overrides = await query(
+    'SELECT service_date, is_closed, capacity FROM schedule_overrides WHERE tenant_id=$1', [req.tenant.id],
+  );
+  const blackouts = await query(
+    'SELECT starts_at, ends_at FROM blackouts WHERE tenant_id=$1 AND starts_at < $3 AND ends_at > $2',
+    [req.tenant.id, from, to],
+  );
+  res.json({
+    ok: true,
+    appointments: rows.rows,
+    capacity: req.tenant.settings.availability.capacityPerSlot || 1,
+    overrides: overrides.rows,
+    blackouts: blackouts.rows,
+  });
 }));
 
 // --- Form metadata (active services) -------------------------------------
