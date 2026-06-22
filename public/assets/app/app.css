@@ -136,6 +136,7 @@ h1,h2,h3,h4 { margin: 0; font-weight: 700; letter-spacing: -0.01em; color: var(-
 .btn-danger:hover { background: #b91c1c; }
 .btn-danger-soft { background: var(--danger-tint); color: var(--danger); }
 .btn-sm { padding: 7px 12px; font-size: 13px; border-radius: 9px; }
+.btn-xs { padding: 4px 9px; font-size: 12px; border-radius: 8px; }
 .btn-lg { padding: 13px 22px; font-size: 15px; border-radius: 12px; }
 .btn-block { width: 100%; }
 .btn:disabled { opacity: .55; cursor: not-allowed; }

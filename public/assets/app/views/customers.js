@@ -50,7 +50,25 @@ const OF = window.OF;
           ${section('Appointments', d.appointments.map(a=>`<div class="row between" style="padding:7px 0;border-bottom:1px solid var(--line-2)"><a href="/admin/appointments?id=${a.id}">${a.service_name?OF.escape(a.service_name):'Appointment'}</a><span class="muted small">${a.scheduled_start?OF.date(a.scheduled_start):'—'}</span>${OF.statusBadge(a.status)}</div>`).join(''))}
           ${section('Invoices', d.invoices.map(i=>`<div class="row between" style="padding:7px 0;border-bottom:1px solid var(--line-2)"><a href="/admin/invoices?id=${i.id}">${OF.escape(i.number)}</a>${OF.statusBadge(i.status)}<span class="mono">${OF.money(i.total_cents)}</span></div>`).join(''))}
           ${d.subscriptions.length?section('Subscriptions', d.subscriptions.map(su=>`<div class="row between" style="padding:7px 0;border-bottom:1px solid var(--line-2)"><span>${OF.escape(su.plan_name||'Plan')}</span><span class="mono">${OF.money(su.price_cents)}/${su.interval}</span>${OF.statusBadge(su.status)}</div>`).join('')):''}
+          <div style="margin-bottom:16px"><div class="row between" style="margin-bottom:6px"><span class="muted tiny" style="text-transform:uppercase;letter-spacing:.04em;font-weight:700">Cards on file</span>${d.cards.available?`<div class="row" style="gap:6px"><button class="btn btn-ghost btn-xs" id="cardLinkBtn">Send link</button><button class="btn btn-secondary btn-xs" id="addCardBtn">${d.cards.mock?'Add test card':'Add card'}</button></div>`:''}</div>
+            <div id="cardsBox"></div>
+            ${d.cards.notConfigured?`<p class="tiny muted">Connect Stripe in Settings → Integrations to store cards on file.</p>`:''}
+            ${d.cards.mock?`<p class="tiny muted">Demo mode — saved cards are simulated until a live processor is connected.</p>`:''}</div>
         </div>`, { wide:true });
+      function cardsHtml(pms){ return pms.length?pms.map(pm=>`<div class="row between" style="padding:7px 0;border-bottom:1px solid var(--line-2)">
+        <span>${OF.icon('money',14)} ${OF.escape((pm.brand||'card'))} ••${OF.escape(pm.last4||'')} <span class="tiny muted">exp ${pm.exp_month}/${String(pm.exp_year).slice(-2)}</span>${pm.is_default?' <span class="badge ok no-dot">Default</span>':''}${pm.is_mock?' <span class="tiny muted">(test)</span>':''}</span>
+        <span class="row" style="gap:8px">${pm.is_default?'':`<button class="link-btn" data-default="${pm.id}">Make default</button>`}<button class="link-btn" data-remove="${pm.id}" style="color:var(--danger)">Remove</button></span></div>`).join(''):'<p class="muted small">No cards on file.</p>'; }
+      async function reloadCards(){ const r = await OF.get('/api/admin/customers/'+id+'/payment-methods'); const box=dr.q('#cardsBox'); if(box){ box.innerHTML=cardsHtml(r.paymentMethods); bindCards(); } }
+      function bindCards(){
+        dr.el.querySelectorAll('[data-default]').forEach(b=>b.onclick=async()=>{ await OF.post(`/api/admin/customers/${id}/payment-methods/${b.dataset.default}/default`); OF.toast('Default updated','ok'); reloadCards(); });
+        dr.el.querySelectorAll('[data-remove]').forEach(b=>b.onclick=async()=>{ if(!(await OF.confirm({title:'Remove this card?',confirmText:'Remove',danger:true})))return; await OF.del(`/api/admin/customers/${id}/payment-methods/${b.dataset.remove}`); OF.toast('Card removed','ok'); reloadCards(); });
+      }
+      dr.q('#cardsBox').innerHTML = cardsHtml(d.paymentMethods||[]); bindCards();
+      dr.q('#addCardBtn')?.addEventListener('click', async()=>{
+        if (d.cards.mock) { await OF.post(`/api/admin/customers/${id}/payment-methods`,{}); OF.toast('Test card added','ok'); reloadCards(); }
+        else { const r=await OF.post(`/api/admin/customers/${id}/card-link`); navigator.clipboard?.writeText(r.url); window.open(r.url,'_blank'); OF.toast('Secure card link opened & copied','ok'); }
+      });
+      dr.q('#cardLinkBtn')?.addEventListener('click', async()=>{ const r=await OF.post(`/api/admin/customers/${id}/card-link`); navigator.clipboard?.writeText(r.url); OF.toast('Card link copied — text or email it to the customer','ok'); });
       dr.q('#editBtn').onclick=()=>dr.q('#editForm').classList.toggle('hidden');
       dr.q('#saveCust').onclick=async()=>{
         await OF.patch('/api/admin/customers/'+id,{name:dr.q('#e_name').value,email:dr.q('#e_email').value,phone:dr.q('#e_phone').value,address:dr.q('#e_addr').value,city:dr.q('#e_city').value,state:dr.q('#e_state').value,postalCode:dr.q('#e_zip').value,notes:dr.q('#e_notes').value});

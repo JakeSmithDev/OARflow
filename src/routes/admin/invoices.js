@@ -9,6 +9,7 @@ import { sendTemplated, htmlEscape } from '../../lib/email_templates.js';
 import { ownsId } from '../../lib/ownership.js';
 import { emitEvent } from '../../lib/events.js';
 import { isConfigured as stripeConfigured } from '../../lib/stripe.js';
+import { listPaymentMethods, chargeInvoiceOnFile, cardsStatus } from '../../lib/payments.js';
 import { logAudit } from '../../lib/audit.js';
 import { formatCents } from '../../lib/money.js';
 import { config } from '../../config.js';
@@ -84,7 +85,21 @@ router.get('/:id', asyncHandler(async (req, res) => {
     'SELECT id, event_type, amount_cents, method, note, created_at, created_by FROM financial_events WHERE invoice_id=$1 ORDER BY created_at',
     [id],
   );
-  res.json({ ok: true, invoice: inv, events: events.rows, balanceCents: balanceCents(inv), payUrl: `${config.baseUrl}/pay?invoice=${inv.id}&token=${inv.access_token}`, stripeEnabled: stripeConfigured(req.tenant) });
+  const savedCards = await listPaymentMethods(req.tenant, inv.customer_id);
+  res.json({ ok: true, invoice: inv, events: events.rows, balanceCents: balanceCents(inv), payUrl: `${config.baseUrl}/pay?invoice=${inv.id}&token=${inv.access_token}`, stripeEnabled: stripeConfigured(req.tenant), savedCards, cards: cardsStatus(req.tenant) });
+}));
+
+// --- Charge a saved card on file -----------------------------------------
+router.post('/:id/charge-on-file', asyncHandler(async (req, res) => {
+  const id = toInt(req.params.id);
+  const inv = await queryOne('SELECT * FROM invoices WHERE tenant_id=$1 AND id=$2', [req.tenant.id, id]);
+  if (!inv) return notFound(res);
+  const b = req.body || {};
+  const r = await chargeInvoiceOnFile(req.tenant, inv, { paymentMethodId: toInt(b.paymentMethodId), amountCents: b.amountCents != null ? Math.round(Number(b.amountCents)) : undefined, createdBy: req.admin.username });
+  if (!r.ok) return badRequest(res, r.error || (r.notConfigured ? 'Card payments are not set up.' : 'The charge could not be completed.'));
+  await logAudit({ tenantId: req.tenant.id, adminUsername: req.admin.username, action: 'invoice_charge_on_file', entityType: 'invoice', entityId: id, details: { amount: r.amountCents, mock: r.mock } });
+  if (r.invoice?.status === 'paid') emitEvent('invoice.paid', { tenantId: req.tenant.id, invoiceId: id, customerId: r.invoice.customer_id }).catch(() => {});
+  res.json({ ok: true, invoice: r.invoice, mock: r.mock, amountCents: r.amountCents });
 }));
 
 // --- Create ---------------------------------------------------------------

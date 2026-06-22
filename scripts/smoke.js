@@ -145,6 +145,44 @@ async function main() {
     assert.equal(data.invoiceId, before);
   });
 
+  // --- Saved cards / charge-on-file (mock provider in dev) ---
+  let pmId;
+  await check('add a (mock) card on file + auto-default', async () => {
+    const { data } = await call('/api/admin/customers/1/payment-methods', { method: 'POST', body: { consentSource: 'in_person' } });
+    assert.ok(data.ok, JSON.stringify(data)); assert.ok(data.paymentMethod.is_default); assert.ok(data.paymentMethod.last4);
+    pmId = data.paymentMethod.id;
+  });
+  await check('card shows on customer detail with consent snapshot', async () => {
+    const { data } = await call('/api/admin/customers/1');
+    assert.ok(data.paymentMethods.length >= 1); assert.equal(data.cards.available, true); assert.equal(data.cards.mock, true);
+    assert.equal(data.paymentMethods.find((p) => p.id === pmId).consent_source, 'in_person');
+  });
+  let cofInv;
+  await check('charge invoice to card on file marks it paid', async () => {
+    cofInv = (await call('/api/admin/invoices', { method: 'POST', body: { customerId: 1, lineItems: [{ label: 'Quarterly Service', unit_amount_cents: 8900 }] } })).data.invoice;
+    await call(`/api/admin/invoices/${cofInv.id}/send`, { method: 'POST' });
+    const { data } = await call(`/api/admin/invoices/${cofInv.id}/charge-on-file`, { method: 'POST', body: { paymentMethodId: pmId } });
+    assert.ok(data.ok, JSON.stringify(data)); assert.equal(data.invoice.status, 'paid'); assert.equal(data.mock, true);
+  });
+  await check('cannot charge an already-paid invoice', async () => {
+    const { status } = await call(`/api/admin/invoices/${cofInv.id}/charge-on-file`, { method: 'POST', body: { paymentMethodId: pmId } });
+    assert.equal(status, 400);
+  });
+  await check('hosted save-card link is token-guarded + stores a card', async () => {
+    const { data: link } = await call('/api/admin/customers/2/card-link', { method: 'POST' });
+    const token = new URL(link.url).searchParams.get('token'); assert.ok(token);
+    const bad = await call('/api/save-card/2?token=nope', { auth: false }); assert.equal(bad.status, 404);
+    const good = await call('/api/save-card/2?token=' + token, { auth: false }); assert.equal(good.data.ok, true);
+    const saved = await call('/api/save-card/2', { method: 'POST', auth: false, body: { token, last4: '1111', brand: 'visa', expMonth: 4, expYear: 2031 } });
+    assert.ok(saved.data.ok); assert.equal(saved.data.last4, '1111');
+  });
+  await check('remove a card on file', async () => {
+    const { status } = await call(`/api/admin/customers/1/payment-methods/${pmId}`, { method: 'DELETE' });
+    assert.equal(status, 200);
+    const { data } = await call('/api/admin/customers/1');
+    assert.ok(!data.paymentMethods.some((p) => p.id === pmId));
+  });
+
   // --- Recurring plans + subscriptions ---
   await check('plans overview returns MRR + plans', async () => { const { data } = await call('/api/admin/plans'); assert.ok(data.plans.length >= 4); assert.ok(data.metrics.mrrCents > 0); });
   let newPlanId;

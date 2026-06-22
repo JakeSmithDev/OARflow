@@ -10,6 +10,7 @@ import { config } from '../config.js';
 import { getTenantById } from '../lib/tenants.js';
 import { constructEvent, stripeSecret } from '../lib/stripe.js';
 import { recordPayment } from '../lib/invoices.js';
+import { attachFromSetupIntent } from '../lib/payments.js';
 import { queryOne } from '../lib/db.js';
 import { activateSubscriptionFromCheckout, handleStripeInvoicePaid, syncStripeSubscriptionStatus } from '../lib/recurring.js';
 
@@ -71,6 +72,31 @@ router.post('/', async (req, res) => {
       case 'invoice.paid':
         await handleStripeInvoicePaid(event);
         break;
+      case 'setup_intent.succeeded': {
+        // A customer added a card via the hosted save-card page.
+        const si = event.data.object;
+        const evTenantId = toIntSafe(si.metadata?.tenant_id);
+        const custId = toIntSafe(si.metadata?.customer_id);
+        if (evTenantId && custId) {
+          const t = await getTenantById(evTenantId);
+          const cust = t && await queryOne('SELECT * FROM customers WHERE tenant_id=$1 AND id=$2', [evTenantId, custId]);
+          if (t && cust) await attachFromSetupIntent(t, cust, si.id, { source: 'online', name: cust.name }).catch(() => {});
+        }
+        break;
+      }
+      case 'payment_intent.succeeded': {
+        // Off-session card-on-file charge. Idempotent: externalRef = PaymentIntent id
+        // (the synchronous charge path records with the same ref, so no double count).
+        const pi = event.data.object;
+        const meta = pi.metadata || {};
+        const evTenantId = toIntSafe(meta.tenant_id);
+        const invoiceId = toIntSafe(meta.invoice_id);
+        if (meta.kind === 'card_on_file' && evTenantId && invoiceId) {
+          const t = await getTenantById(evTenantId);
+          if (t) await recordPayment(t, invoiceId, { amountCents: pi.amount_received ?? pi.amount, method: 'card_on_file', stripeRef: pi.id, externalRef: pi.id, note: 'Card on file' });
+        }
+        break;
+      }
       case 'customer.subscription.updated':
       case 'customer.subscription.deleted':
         await syncStripeSubscriptionStatus(event);

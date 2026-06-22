@@ -51,6 +51,7 @@ const OF = window.OF;
           <div class="row wrap" style="gap:8px;margin-bottom:14px">
             ${i.status!=='void'&&i.status!=='paid'?`<button class="btn btn-primary btn-sm" id="sendBtn">${OF.icon('send',15)} ${i.sent_at?'Resend':'Send'} invoice</button>`:''}
             ${d.balanceCents>0&&i.status!=='void'?`<button class="btn btn-secondary btn-sm" id="payBtn">${OF.icon('money',15)} Record payment</button>`:''}
+            ${d.balanceCents>0&&i.status!=='void'&&(d.savedCards||[]).length?`<button class="btn btn-secondary btn-sm" id="chargeBtn">${OF.icon('money',15)} Charge card on file</button>`:''}
             ${editable?`<button class="btn btn-ghost btn-sm" id="editBtn">Edit</button>`:''}
             <button class="btn btn-ghost btn-sm" id="copyBtn">Copy pay link</button>
             ${i.status!=='paid'&&i.status!=='void'?`<button class="btn btn-danger-soft btn-sm" id="voidBtn">Void</button>`:''}
@@ -69,6 +70,12 @@ const OF = window.OF;
       const reload = () => { dr.close(); refresh(); };
       dr.q('#sendBtn')?.addEventListener('click', async()=>{ try{ const r=await OF.post(`/api/admin/invoices/${id}/send`); OF.toast(r.emailed?'Invoice sent ✓':'Marked sent (email not configured)','ok'); reload(); }catch(e){OF.toast(e.message,'error');}});
       dr.q('#payBtn')?.addEventListener('click', ()=>dr.q('#payForm').classList.toggle('hidden'));
+      dr.q('#chargeBtn')?.addEventListener('click', async()=>{
+        const def = (d.savedCards||[]).find(c=>c.is_default) || d.savedCards[0];
+        if (!(await OF.confirm({ title:`Charge ${OF.money(d.balanceCents)}?`, body:`This will charge ${def.brand||'card'} ••${def.last4||''} on file${d.cards&&d.cards.mock?' (simulated in demo mode)':''}.`, confirmText:'Charge card' }))) return;
+        try { const r = await OF.post(`/api/admin/invoices/${id}/charge-on-file`, { paymentMethodId: def.id }); OF.toast(r.mock?'Charged (simulated) ✓':'Card charged ✓','ok'); reload(); }
+        catch(e){ OF.toast(e.message,'error'); }
+      });
       dr.q('#p_save')?.addEventListener('click', async()=>{ await OF.post(`/api/admin/invoices/${id}/payment`,{amountCents:strToCents(dr.q('#p_amt').value),method:dr.q('#p_method').value,sendReceipt:dr.q('#p_receipt').checked}); OF.toast('Payment recorded','ok'); reload(); });
       dr.q('#editBtn')?.addEventListener('click', ()=>{ dr.close(); builder({ editId:id, invoice:i }); });
       dr.q('#voidBtn')?.addEventListener('click', async()=>{ if(!(await OF.confirm({title:'Void invoice?',confirmText:'Void',danger:true}))) return; await OF.post(`/api/admin/invoices/${id}/void`); OF.toast('Voided','ok'); reload(); });
