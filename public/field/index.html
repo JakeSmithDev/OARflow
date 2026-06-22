@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>OARFlow Field</title>
+  <meta name="theme-color" content="#1f8a3d" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="icon.svg" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Poppins:wght@600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/assets/app/app.css" />
+  <style>
+    body { background: var(--bg); }
+    h1,h2,h3 { font-family:'Poppins',var(--font); letter-spacing:-0.01em; }
+    .fld-top { position:sticky; top:0; z-index:5; background:linear-gradient(135deg,var(--brand),color-mix(in srgb,var(--brand) 62%,#0a2740)); color:#fff; padding:max(14px,env(safe-area-inset-top)) 16px 14px; }
+    .fld-top h1 { font-size:18px; margin:0; color:#fff; }
+    .fld-top .sub { opacity:.85; font-size:13px; margin-top:2px; }
+    .wrap { max-width:640px; margin:0 auto; padding:14px 14px 90px; }
+    .jobcard { background:var(--card); border:1px solid var(--line); border-left:4px solid var(--brand); border-radius:14px; padding:14px; margin-bottom:12px; cursor:pointer; }
+    .jobcard .t { font-weight:800; font-size:15px; }
+    .jobcard .when { font-weight:700; color:var(--brand-700); }
+    .big-btn { display:flex; align-items:center; justify-content:center; gap:8px; width:100%; padding:15px; border-radius:13px; font-weight:700; font-size:16px; border:none; cursor:pointer; margin-top:10px; }
+    .b-primary { background:var(--brand); color:#fff; } .b-ok { background:#16a34a; color:#fff; } .b-soft { background:var(--surface-2); color:var(--ink); } .b-warn { background:var(--warn-tint); color:var(--warn); }
+    .seg { display:flex; gap:8px; flex-wrap:wrap; }
+    .seg a { flex:1; text-align:center; padding:12px; border-radius:12px; background:var(--surface-2); color:var(--ink); text-decoration:none; font-weight:700; }
+    .sig { border:1px dashed var(--line); border-radius:12px; touch-action:none; width:100%; height:180px; background:#fff; }
+    .thumbs { display:grid; grid-template-columns:repeat(auto-fill,minmax(78px,1fr)); gap:8px; margin-top:10px; }
+    .thumbs img { width:100%; aspect-ratio:1; object-fit:cover; border-radius:10px; border:1px solid var(--line); }
+    .back { background:none;border:none;color:#fff;font-weight:700;cursor:pointer;padding:0;margin-bottom:8px;opacity:.9; }
+  </style>
+</head>
+<body>
+  <div class="fld-top"><button class="back" id="back" style="display:none">‹ Today</button><h1 id="title">OARFlow Field</h1><div class="sub" id="sub"></div></div>
+  <div class="wrap"><div id="view"><div class="loading-page"><span class="spinner"></span></div></div></div>
+  <script>
+    const esc=(s)=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const token=new URLSearchParams(location.search).get('token');
+    const tfmt=(iso)=>iso?new Date(iso).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}):'—';
+    let DATA=null;
+    const api=(p,opts={})=>fetch('/api/field'+p,{...opts,headers:{'Content-Type':'application/json',...(opts.headers||{})}}).then(r=>r.json());
+
+    async function loadDay(){
+      document.getElementById('back').style.display='none';
+      if(!token){ document.getElementById('view').innerHTML='<div class="card card-pad">Open the link your office sent you to see your jobs.</div>'; return; }
+      let d; try{ d=await api(`/me?token=${encodeURIComponent(token)}`); }catch{ d={ok:false}; }
+      if(!d.ok){ document.getElementById('view').innerHTML=`<div class="card card-pad">${esc(d.error||'This link is no longer valid.')}</div>`; return; }
+      DATA=d;
+      const b=d.tenant.branding||{}; if(b.primaryColor) document.documentElement.style.setProperty('--brand',b.primaryColor);
+      document.getElementById('title').textContent=`Hi, ${d.technician.name.split(' ')[0]}`;
+      document.getElementById('sub').textContent=new Date(d.date+'T12:00:00').toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'})+` · ${d.jobs.length} job${d.jobs.length===1?'':'s'}`;
+      document.getElementById('view').innerHTML = d.jobs.length? d.jobs.map(j=>`<div class="jobcard" data-id="${j.id}" style="border-left-color:${j.service_color||'var(--brand)'}">
+        <div class="row between"><span class="when">${tfmt(j.scheduled_start)}</span><span class="badge no-dot">${esc(j.status)}</span></div>
+        <div class="t">${esc(j.customer_name)}</div>
+        <div class="muted small">${esc(j.service_name||'Service')}${j.service_address?' · '+esc(j.service_address):''}</div></div>`).join('')
+        : '<div class="card card-pad center muted">No jobs scheduled today. Enjoy the quiet! 🌿</div>';
+      document.querySelectorAll('.jobcard').forEach(c=>c.onclick=()=>openJob(c.dataset.id));
+    }
+
+    async function openJob(id){
+      document.getElementById('view').innerHTML='<div class="loading-page"><span class="spinner"></span></div>';
+      document.getElementById('back').style.display='inline';
+      const d=await api(`/jobs/${id}?token=${encodeURIComponent(token)}`);
+      if(!d.ok){ document.getElementById('view').innerHTML=`<div class="card card-pad">${esc(d.error||'Not found')}</div>`; return; }
+      const j=d.job;
+      const maps=j.service_address?`https://maps.google.com/?q=${encodeURIComponent(j.service_address)}`:null;
+      const photos=(d.files||[]).filter(f=>f.contentType&&f.contentType.startsWith('image/')&&f.kind!=='signature');
+      document.getElementById('view').innerHTML=`
+        <div class="card card-pad" style="margin-bottom:12px">
+          <h3 style="margin-bottom:4px">${esc(j.customer_name)}</h3>
+          <div class="muted small">${esc(j.service_name||'Service')} · ${tfmt(j.scheduled_start)}</div>
+          ${j.service_address?`<div style="margin-top:8px">${esc(j.service_address)}</div>`:''}
+          <div class="seg" style="margin-top:12px">
+            ${j.customer_phone?`<a href="tel:${esc(j.customer_phone)}">📞 Call</a>`:''}
+            ${maps?`<a href="${esc(maps)}" target="_blank" rel="noopener">🧭 Directions</a>`:''}
+          </div>
+          ${j.notes?`<div style="margin-top:12px"><div class="muted small">Customer notes</div><p style="margin:3px 0 0">${esc(j.notes)}</p></div>`:''}
+          ${j.internal_notes?`<div style="margin-top:10px"><div class="muted small">Office notes</div><p style="margin:3px 0 0">${esc(j.internal_notes)}</p></div>`:''}
+        </div>
+        <button class="big-btn b-soft" id="omw">🚚 Text customer "On my way"</button>
+        <button class="big-btn b-ok" id="done">✓ Mark job complete</button>
+        <button class="big-btn b-warn" id="noshow">Customer wasn't home</button>
+        <div class="card card-pad" style="margin-top:14px">
+          <div class="row between"><strong>Photos</strong><label class="btn btn-secondary btn-sm" style="cursor:pointer">Add<input type="file" id="ph" accept="image/*" capture="environment" multiple hidden></label></div>
+          <div class="thumbs" id="thumbs">${photos.map(p=>`<a href="${p.url}" target="_blank" rel="noopener"><img src="${p.url}"></a>`).join('')||'<span class="muted small">No photos yet.</span>'}</div>
+        </div>
+        <div class="card card-pad" style="margin-top:14px">
+          <strong>Customer signature</strong>
+          <canvas class="sig" id="sig" style="margin-top:8px"></canvas>
+          <div class="field" style="margin-top:8px"><input id="signName" placeholder="Signed by (name)"></div>
+          <div class="seg"><a id="clearSig" style="cursor:pointer">Clear</a><button class="btn btn-primary btn-sm" id="saveSig" style="flex:1">Save signature</button></div>
+        </div>`;
+      document.getElementById('omw').onclick=async(e)=>{ e.target.disabled=true; const eta=prompt('ETA to share? (optional)')||''; const r=await api(`/jobs/${id}/on-my-way`,{method:'POST',body:JSON.stringify({token,eta})}); e.target.textContent=r.texted?'✓ Sent':'Sent (SMS off)'; setTimeout(()=>{e.target.disabled=false;e.target.textContent='🚚 Text customer "On my way"';},2500); };
+      document.getElementById('done').onclick=async(e)=>{ if(!confirm('Mark this job complete?'))return; e.target.disabled=true; await api(`/jobs/${id}/status`,{method:'POST',body:JSON.stringify({token,status:'completed'})}); loadDay(); };
+      document.getElementById('noshow').onclick=async(e)=>{ if(!confirm('Mark as customer not home?'))return; await api(`/jobs/${id}/status`,{method:'POST',body:JSON.stringify({token,status:'no_show'})}); loadDay(); };
+      document.getElementById('ph').onchange=async(e)=>{ for(const file of [...e.target.files]){ const dataBase64=await new Promise(r=>{const fr=new FileReader();fr.onload=()=>r(fr.result);fr.readAsDataURL(file);}); const res=await api(`/jobs/${id}/photos`,{method:'POST',body:JSON.stringify({token,filename:file.name,contentType:file.type,dataBase64})}); if(res.ok){ const t=document.getElementById('thumbs'); if(t.querySelector('.muted'))t.innerHTML=''; t.insertAdjacentHTML('afterbegin',`<a href="${res.file.url}" target="_blank" rel="noopener"><img src="${res.file.url}"></a>`); } } e.target.value=''; };
+      setupSig(id);
+    }
+
+    function setupSig(id){
+      const cv=document.getElementById('sig'); const ctx=cv.getContext('2d');
+      const ratio=window.devicePixelRatio||1; const rect=cv.getBoundingClientRect();
+      cv.width=rect.width*ratio; cv.height=rect.height*ratio; ctx.scale(ratio,ratio); ctx.lineWidth=2.4; ctx.lineCap='round'; ctx.strokeStyle='#0a2740';
+      let drawing=false,last=null,dirty=false;
+      const pos=(e)=>{ const r=cv.getBoundingClientRect(); const t=e.touches?e.touches[0]:e; return {x:t.clientX-r.left,y:t.clientY-r.top}; };
+      const start=(e)=>{ drawing=true; last=pos(e); e.preventDefault(); };
+      const move=(e)=>{ if(!drawing)return; const p=pos(e); ctx.beginPath(); ctx.moveTo(last.x,last.y); ctx.lineTo(p.x,p.y); ctx.stroke(); last=p; dirty=true; e.preventDefault(); };
+      const end=()=>{ drawing=false; };
+      cv.addEventListener('mousedown',start); cv.addEventListener('mousemove',move); window.addEventListener('mouseup',end);
+      cv.addEventListener('touchstart',start,{passive:false}); cv.addEventListener('touchmove',move,{passive:false}); cv.addEventListener('touchend',end);
+      document.getElementById('clearSig').onclick=()=>{ ctx.clearRect(0,0,cv.width,cv.height); dirty=false; };
+      document.getElementById('saveSig').onclick=async()=>{ if(!dirty)return alert('Please capture a signature first.'); const dataBase64=cv.toDataURL('image/png'); const r=await api(`/jobs/${id}/signature`,{method:'POST',body:JSON.stringify({token,name:document.getElementById('signName').value,dataBase64})}); if(r.ok) alert('Signature saved ✓'); };
+    }
+
+    document.getElementById('back').onclick=loadDay;
+    loadDay();
+    if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(()=>{});
+  </script>
+</body>
+</html>

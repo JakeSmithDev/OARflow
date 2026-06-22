@@ -330,6 +330,35 @@ async function main() {
     assert.equal(trns, ends);
   });
 
+  // --- Technician field PWA (per-tech field_token auth) ---
+  let fieldToken;
+  await check('mint technician field token', async () => {
+    const { data } = await call(`/api/admin/technicians/${techId}/field-link`, { method: 'POST' });
+    fieldToken = new URL(data.url).searchParams.get('token'); assert.ok(fieldToken);
+  });
+  await check("field /me lists the tech's jobs for a day", async () => {
+    const { data } = await call(`/api/field/me?token=${fieldToken}&date=2026-07-15`, { auth: false });
+    assert.ok(data.ok); assert.equal(data.technician.name, 'Marco Diaz');
+    assert.ok(data.jobs.some((j) => j.id === assignApptId), 'assigned job appears on that day');
+  });
+  await check('field rejects a bad token', async () => { assert.equal((await call('/api/field/me?token=nope', { auth: false })).status, 404); });
+  await check('field tech uploads a photo + captures signature', async () => {
+    const up = await call(`/api/field/jobs/${assignApptId}/photos`, { method: 'POST', auth: false, body: { token: fieldToken, filename: 'site.png', contentType: 'image/png', dataBase64: PNG1x1 } });
+    assert.ok(up.data.ok, JSON.stringify(up.data));
+    const sig = await call(`/api/field/jobs/${assignApptId}/signature`, { method: 'POST', auth: false, body: { token: fieldToken, name: 'Dana W.', dataBase64: 'data:image/png;base64,' + PNG1x1 } });
+    assert.ok(sig.data.ok);
+  });
+  await check('field tech cannot touch an unassigned job', async () => {
+    const other = (await call('/api/admin/appointments')).data.appointments.find((a) => a.id !== assignApptId);
+    if (!other) return; // skip if only one appointment seeded
+    const r = await call(`/api/field/jobs/${other.id}/status`, { method: 'POST', auth: false, body: { token: fieldToken, status: 'completed' } });
+    assert.equal(r.status, 404);
+  });
+  await check('field tech marks the job complete', async () => {
+    const { data } = await call(`/api/field/jobs/${assignApptId}/status`, { method: 'POST', auth: false, body: { token: fieldToken, status: 'completed' } });
+    assert.ok(data.ok); assert.equal(data.status, 'completed');
+  });
+
   // --- Reviews / NPS (no rating gating) ---
   await check('set a public review platform URL', async () => {
     const { data } = await call('/api/admin/reviews/settings', { method: 'PUT', body: { platforms: { google: 'https://g.page/r/demo/review' } } });

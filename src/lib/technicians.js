@@ -87,6 +87,29 @@ export async function technicianByFieldToken(token) {
   return queryOne('SELECT * FROM technicians WHERE field_token=$1 AND is_active=TRUE', [token]);
 }
 
+export async function isAssigned(tenant, technicianId, appointmentId) {
+  const r = await queryOne('SELECT 1 FROM appointment_assignments WHERE tenant_id=$1 AND technician_id=$2 AND appointment_id=$3', [tenant.id, technicianId, appointmentId]);
+  return Boolean(r);
+}
+
+/** A technician's jobs in a date range (their route), with customer + crew. */
+export async function technicianJobs(tenant, technicianId, { from, to }) {
+  const r = await query(
+    `SELECT a.id, a.status, a.scheduled_start, a.scheduled_end, a.service_address, a.notes, a.internal_notes,
+            c.name AS customer_name, c.phone AS customer_phone, c.email AS customer_email,
+            s.name AS service_name, s.color AS service_color, aa.is_lead
+       FROM appointment_assignments aa
+       JOIN appointments a ON a.id=aa.appointment_id
+       JOIN customers c ON c.id=a.customer_id
+       LEFT JOIN service_types s ON s.id=a.service_type_id
+      WHERE aa.tenant_id=$1 AND aa.technician_id=$2
+        AND a.scheduled_start >= $3 AND a.scheduled_start < $4
+      ORDER BY a.scheduled_start`,
+    [tenant.id, technicianId, from, to],
+  );
+  return r.rows;
+}
+
 export default {
   listTechnicians, createTechnician, updateTechnician, setAssignments, getAssignments,
   assignmentsForAppointments, ensureFieldToken, technicianByFieldToken,
