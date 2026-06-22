@@ -42,7 +42,9 @@ export function createApp() {
   // Stripe webhook needs the raw body for signature verification — mount BEFORE JSON parser.
   app.use('/api/stripe/webhook', express.raw({ type: '*/*' }), stripeWebhookRouter);
 
-  app.use(express.json({ limit: '1mb' }));
+  // 25 MB to accommodate base64 photo/file uploads (job photos, e-signatures,
+  // field PWA). JSON-only; all routes are auth-guarded.
+  app.use(express.json({ limit: '25mb' }));
   app.use(express.urlencoded({ extended: true }));
 
   app.use('/api', (req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });

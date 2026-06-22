@@ -269,6 +269,13 @@ input[type=color] { padding: 4px; height: 42px; cursor: pointer; }
 .rep-bar { display:flex; flex-direction:column; align-items:center; justify-content:flex-end; gap:6px; min-width:34px; flex:1; }
 .rep-bar-fill { width:60%; min-width:18px; max-width:46px; background:linear-gradient(180deg,var(--brand),color-mix(in srgb,var(--brand) 60%,#86efac)); border-radius:6px 6px 0 0; transition:height .3s ease; }
 .rep-bar-lbl { font-size:11px; color:var(--muted); white-space:nowrap; }
+/* Job photos / files grid */
+.filegrid { display:grid; grid-template-columns:repeat(auto-fill,minmax(86px,1fr)); gap:8px; }
+.filecard { position:relative; border-radius:10px; overflow:hidden; border:1px solid var(--line); aspect-ratio:1; background:var(--surface-2); }
+.filecard img { width:100%; height:100%; object-fit:cover; display:block; }
+.filecard.doc .doclink { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:6px; height:100%; padding:8px; text-align:center; color:var(--ink-2); text-decoration:none; }
+.filecard.doc span { font-size:10px; line-height:1.2; word-break:break-word; max-height:30px; overflow:hidden; }
+.filedel { position:absolute; top:3px; right:3px; width:20px; height:20px; border-radius:50%; border:none; background:rgba(15,23,42,.66); color:#fff; cursor:pointer; font-size:12px; line-height:1; display:grid; place-items:center; }
 /* Drag-and-drop reschedule (week view) */
 .wc-job.movable { cursor: grab; }
 .wc-job.dragging { opacity:.45; cursor:grabbing; }

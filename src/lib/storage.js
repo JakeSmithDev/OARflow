@@ -50,6 +50,18 @@ export async function saveFile(tenant, { buffer, filename, contentType, ownerTyp
 export async function getFile(tenantId, id) {
   return queryOne('SELECT * FROM files WHERE tenant_id=$1 AND id=$2', [tenantId, id]);
 }
+
+/** List files for an owner (e.g. an appointment) with browser-fetchable URLs. */
+export async function listFiles(tenant, ownerType, ownerId) {
+  const r = await query(
+    'SELECT * FROM files WHERE tenant_id=$1 AND owner_type=$2 AND owner_id=$3 ORDER BY id DESC',
+    [tenant.id, ownerType, ownerId],
+  );
+  return Promise.all(r.rows.map(async (f) => ({
+    id: f.id, kind: f.kind, filename: f.filename, contentType: f.content_type, sizeBytes: Number(f.size_bytes || 0),
+    createdAt: f.created_at, createdBy: f.created_by, meta: f.meta, url: await signedUrl(f),
+  })));
+}
 export async function getFileByToken(id, token) {
   const f = await queryOne('SELECT * FROM files WHERE id=$1', [id]);
   return f && f.access_token === token ? f : null;
@@ -82,4 +94,4 @@ export async function deleteFile(file) {
   await query('DELETE FROM files WHERE id=$1', [file.id]);
 }
 
-export default { saveFile, getFile, getFileByToken, signedUrl, readLocal, deleteFile, storageDriver };
+export default { saveFile, getFile, getFileByToken, listFiles, signedUrl, readLocal, deleteFile, storageDriver };

@@ -244,6 +244,33 @@ async function main() {
     assert.ok(data.url.includes('/field?token='));
   });
 
+  // --- Job photos / files (base64 upload, reused storage layer) ---
+  // 1x1 transparent PNG
+  const PNG1x1 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+  let jobFileId;
+  await check('upload a job photo (base64)', async () => {
+    const { data } = await call(`/api/admin/appointments/${assignApptId}/files`, { method: 'POST', body: { filename: 'before.png', contentType: 'image/png', dataBase64: PNG1x1 } });
+    assert.ok(data.ok, JSON.stringify(data)); jobFileId = data.file.id; assert.equal(data.file.kind, 'photo'); assert.ok(data.file.url.includes('/api/files/'));
+  });
+  await check('job files appear on appointment detail', async () => {
+    const { data } = await call('/api/admin/appointments/' + assignApptId);
+    assert.ok(data.files.some((f) => f.id === jobFileId));
+  });
+  await check('uploaded file is fetchable via its token URL', async () => {
+    const url = (await call('/api/admin/appointments/' + assignApptId)).data.files.find((f) => f.id === jobFileId).url;
+    const res = await fetch(base + url.replace(/^https?:\/\/[^/]+/, ''));
+    assert.equal(res.status, 200); assert.equal(res.headers.get('content-type'), 'image/png');
+  });
+  await check('reject an unsupported file type', async () => {
+    const { status } = await call(`/api/admin/appointments/${assignApptId}/files`, { method: 'POST', body: { filename: 'x.exe', contentType: 'application/x-msdownload', dataBase64: PNG1x1 } });
+    assert.equal(status, 400);
+  });
+  await check('delete a job file', async () => {
+    assert.equal((await call(`/api/admin/appointments/${assignApptId}/files/${jobFileId}`, { method: 'DELETE' })).status, 200);
+    const { data } = await call('/api/admin/appointments/' + assignApptId);
+    assert.ok(!data.files.some((f) => f.id === jobFileId));
+  });
+
   // --- Drag-and-drop reschedule (date+time PATCH used by the calendar) ---
   await check('reschedule appointment by date+time (DnD path)', async () => {
     const appt = (await call('/api/admin/appointments')).data.appointments.find((a) => a.scheduled_start);

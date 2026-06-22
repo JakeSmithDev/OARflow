@@ -46,10 +46,16 @@ const OF = window.OF;
       document.querySelectorAll('#list tr[data-id]').forEach(r=>r.onclick=()=>openDrawer(r.dataset.id));
     }
 
+    function filesHtml(files){ return (files&&files.length)?`<div class="filegrid">${files.map(f=>f.contentType&&f.contentType.startsWith('image/')
+        ? `<div class="filecard" data-fid="${f.id}"><a href="${f.url}" target="_blank" rel="noopener"><img src="${f.url}" loading="lazy" alt="${OF.escape(f.filename)}"></a><button class="filedel" data-del="${f.id}" title="Delete">✕</button></div>`
+        : `<div class="filecard doc" data-fid="${f.id}"><a href="${f.url}" target="_blank" rel="noopener" class="doclink">${OF.icon('invoices',20)}<span>${OF.escape(f.filename)}</span></a><button class="filedel" data-del="${f.id}" title="Delete">✕</button></div>`).join('')}</div>`
+      : '<p class="muted small">No photos or files yet.</p>'; }
+
     async function openDrawer(id) {
-      const { appointment: a, invoices, technicians } = await OF.get('/api/admin/appointments/'+id);
+      const { appointment: a, invoices, technicians, files } = await OF.get('/api/admin/appointments/'+id);
       const isReq = a.status==='requested';
       const crew = technicians || [];
+      let jobFiles = files || [];
       const slots = (a.requested_slots||[]);
       const dr = OF.drawer(`
         <div class="modal-head"><h3>${OF.escape(a.customer_name)}</h3><button class="x" data-close>&times;</button></div>
@@ -68,6 +74,8 @@ const OF = window.OF;
             <button class="btn btn-primary btn-block" id="confirmBtn" style="margin-top:10px">Confirm appointment</button></div>`:''}
           ${a.status!=='canceled'?`<div class="card card-pad" style="margin-bottom:16px"><div class="row between" style="margin-bottom:8px"><h4 style="margin:0">Assigned crew</h4><button class="btn btn-ghost btn-xs" id="assignBtn">Assign</button></div>
             <div id="crewBox" class="row wrap" style="gap:6px">${crew.length?crew.map(techChip).join(''):'<span class="muted small">No one assigned yet.</span>'}</div></div>`:''}
+          <div class="card card-pad" style="margin-bottom:16px"><div class="row between" style="margin-bottom:8px"><h4 style="margin:0">Photos &amp; files</h4><label class="btn btn-ghost btn-xs" style="cursor:pointer">Upload<input type="file" id="fileInput" accept="image/*,application/pdf" multiple hidden></label></div>
+            <div id="filesBox">${filesHtml(jobFiles)}</div></div>
           <div class="field"><label>Internal notes</label><textarea id="internalNotes">${OF.escape(a.internal_notes||'')}</textarea></div>
           <button class="btn btn-secondary btn-sm" id="saveNotes">Save notes</button>
           <hr class="divider">
@@ -90,6 +98,18 @@ const OF = window.OF;
 
       const reload = () => { dr.close(); refresh(); };
       dr.q('#assignBtn')?.addEventListener('click', ()=>assignModal(id, crew, (updated)=>{ dr.q('#crewBox').innerHTML = updated.length?updated.map(techChip).join(''):'<span class="muted small">No one assigned yet.</span>'; }));
+      function bindFiles(){ dr.el.querySelectorAll('[data-del]').forEach(b=>b.onclick=async()=>{ if(!(await OF.confirm({title:'Delete this file?',confirmText:'Delete',danger:true})))return; await OF.del(`/api/admin/appointments/${id}/files/${b.dataset.del}`); jobFiles=jobFiles.filter(f=>String(f.id)!==b.dataset.del); dr.q('#filesBox').innerHTML=filesHtml(jobFiles); }); }
+      bindFiles();
+      dr.q('#fileInput')?.addEventListener('change', async (e)=>{
+        const list=[...e.target.files]; if(!list.length) return;
+        OF.toast(`Uploading ${list.length} file${list.length>1?'s':''}…`);
+        for (const file of list){
+          const dataBase64 = await new Promise((res2,rej)=>{ const fr=new FileReader(); fr.onload=()=>res2(fr.result); fr.onerror=rej; fr.readAsDataURL(file); });
+          try { const r=await OF.post(`/api/admin/appointments/${id}/files`,{ filename:file.name, contentType:file.type, dataBase64 }); jobFiles.unshift(r.file); }
+          catch(err){ OF.toast(err.message,'error'); }
+        }
+        dr.q('#filesBox').innerHTML=filesHtml(jobFiles); bindFiles(); OF.toast('Uploaded ✓','ok'); e.target.value='';
+      });
       dr.q('#saveNotes')?.addEventListener('click', async()=>{ await OF.patch('/api/admin/appointments/'+id,{internalNotes:dr.q('#internalNotes').value}); OF.toast('Notes saved','ok'); });
       dr.q('#confirmBtn')?.addEventListener('click', async()=>{ const sel=dr.el.querySelector('input[name=slot]:checked'); if(!sel) return OF.toast('Pick a time first','error'); if(await doForce(force=>OF.post(`/api/admin/appointments/${id}/confirm`,{slotIndex:+sel.value,notify:true,force}))){ OF.toast('Confirmed & customer notified','ok'); reload(); } });
       dr.q('#rescheduleBtn')?.addEventListener('click', async()=>{ const date=dr.q('#rDate').value,time=dr.q('#rTime').value; if(!date||!time) return OF.toast('Pick date & time','error'); if(await doForce(force=>OF.patch('/api/admin/appointments/'+id,{date,time,notify:true,force}))){ OF.toast('Rescheduled','ok'); reload(); } });

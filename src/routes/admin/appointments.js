@@ -14,6 +14,8 @@ import { emitEvent } from '../../lib/events.js';
 import { sendTemplated, detailsTable } from '../../lib/email_templates.js';
 import { requirePermission } from '../../lib/permissions.js';
 import { setAssignments, getAssignments, assignmentsForAppointments } from '../../lib/technicians.js';
+import { saveFile, listFiles, getFile, deleteFile, signedUrl } from '../../lib/storage.js';
+import { decodeUpload } from '../../lib/uploads.js';
 import { logAudit } from '../../lib/audit.js';
 import { formatDateLabel, formatTimeLabel } from '../../lib/dates.js';
 import { config } from '../../config.js';
@@ -150,7 +152,38 @@ router.get('/:id', asyncHandler(async (req, res) => {
     [req.tenant.id, a.id],
   );
   const technicians = await getAssignments(req.tenant, a.id);
-  res.json({ ok: true, appointment: a, invoices: invoices.rows, technicians });
+  const files = await listFiles(req.tenant, 'appointment', a.id);
+  res.json({ ok: true, appointment: a, invoices: invoices.rows, technicians, files });
+}));
+
+// --- Job photos / files ---------------------------------------------------
+router.get('/:id/files', asyncHandler(async (req, res) => {
+  if (!(await ownsId(req.tenant.id, 'appointments', toInt(req.params.id)))) return notFound(res);
+  res.json({ ok: true, files: await listFiles(req.tenant, 'appointment', toInt(req.params.id)) });
+}));
+
+router.post('/:id/files', asyncHandler(async (req, res) => {
+  const id = toInt(req.params.id);
+  const appt = await queryOne('SELECT id, customer_id FROM appointments WHERE id=$1 AND tenant_id=$2', [id, req.tenant.id]);
+  if (!appt) return notFound(res);
+  const dec = decodeUpload(req.body || {});
+  if (dec.error) return badRequest(res, dec.error);
+  const kind = (req.body.kind === 'document' || dec.contentType === 'application/pdf') ? 'document' : 'photo';
+  const file = await saveFile(req.tenant, {
+    buffer: dec.buffer, filename: dec.filename, contentType: dec.contentType,
+    ownerType: 'appointment', ownerId: id, kind, createdBy: req.admin.username,
+    meta: { label: req.body.label || '', customerId: appt.customer_id, source: req.body.source || 'staff' },
+  });
+  await logAudit({ tenantId: req.tenant.id, adminUsername: req.admin.username, action: 'job_file_upload', entityType: 'appointment', entityId: id, details: { fileId: file.id, kind } });
+  res.json({ ok: true, file: { id: file.id, kind: file.kind, filename: file.filename, contentType: file.content_type, url: await signedUrl(file) } });
+}));
+
+router.delete('/:id/files/:fileId', asyncHandler(async (req, res) => {
+  const f = await getFile(req.tenant.id, toInt(req.params.fileId));
+  if (!f || String(f.owner_type) !== 'appointment' || String(f.owner_id) !== String(toInt(req.params.id))) return notFound(res);
+  await deleteFile(f);
+  await logAudit({ tenantId: req.tenant.id, adminUsername: req.admin.username, action: 'job_file_delete', entityType: 'appointment', entityId: toInt(req.params.id), details: { fileId: f.id } });
+  res.json({ ok: true });
 }));
 
 // --- Assign technicians (dispatch) ---------------------------------------
