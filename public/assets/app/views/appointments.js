@@ -1,16 +1,6 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Appointments · OARFlow</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/assets/app/app.css" />
-</head>
-<body>
-  <div id="app"></div>
-  <script src="/assets/app/admin.js"></script>
-  <script>
+// Auto-generated SPA view module. Registers itself via OF.page() on import.
+const OF = window.OF;
+
     let SERVICES = [];
     const state = { status: 'all', q: '' };
 
@@ -135,6 +125,4 @@
       const id = OF.qs('id'); if (id) openDrawer(id);
       if (OF.qs('new')) newAppointment();
     }});
-  </script>
-</body>
-</html>
+  

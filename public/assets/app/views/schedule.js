@@ -1,48 +1,6 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Schedule · OARFlow</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/assets/app/app.css" />
-  <style>
-    .sched-toolbar { display:flex; align-items:center; gap:10px; margin-bottom:16px; flex-wrap:wrap; }
-    .sched-toolbar .arrow { width:36px;height:36px;border-radius:9px;border:1px solid var(--line);background:var(--surface);cursor:pointer;display:grid;place-items:center;font-size:17px; }
-    .sched-title { font-size:18px; font-weight:700; min-width:200px; }
-    /* Agenda (day) */
-    .agenda .slot-row { display:grid; grid-template-columns: 86px 1fr; gap:14px; padding:13px 0; border-bottom:1px solid var(--line-2); }
-    .agenda .time { color:var(--muted); font-weight:700; font-size:14px; }
-    .agenda .job { border-left:3px solid var(--brand); padding:9px 13px; border-radius:0 10px 10px 0; background:var(--surface-2); cursor:pointer; }
-    .agenda .job:hover { background:#eef2f7; }
-    /* Week */
-    .week-grid { display:grid; grid-template-columns:repeat(7,1fr); gap:10px; }
-    .week-col { border:1px solid var(--line); border-radius:12px; background:var(--surface); min-height:150px; display:flex; flex-direction:column; overflow:hidden; }
-    .week-col.closed { background:repeating-linear-gradient(45deg,var(--surface-2),var(--surface-2) 8px,#f1f3f7 8px,#f1f3f7 16px); }
-    .week-col.today .wc-head { background:var(--brand); color:#fff; }
-    .wc-head { padding:8px 10px; border-bottom:1px solid var(--line-2); font-size:12px; font-weight:700; display:flex; justify-content:space-between; align-items:center; }
-    .wc-body { padding:6px; display:flex; flex-direction:column; gap:5px; flex:1; }
-    .wc-job { font-size:12px; padding:5px 7px; border-radius:7px; background:var(--surface-2); border-left:3px solid var(--brand); cursor:pointer; line-height:1.25; }
-    .wc-job:hover { background:#eef2f7; }
-    .wc-foot { padding:6px 10px; border-top:1px solid var(--line-2); font-size:11px; font-weight:600; display:flex; justify-content:space-between; align-items:center; }
-    /* Month */
-    .month-grid { display:grid; grid-template-columns:repeat(7,1fr); gap:6px; }
-    .month-dow { text-align:center; font-size:11px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; padding-bottom:4px; }
-    .m-cell { border:1px solid var(--line); border-radius:10px; background:var(--surface); min-height:92px; padding:7px 8px; cursor:pointer; display:flex; flex-direction:column; gap:4px; }
-    .m-cell:hover { border-color:var(--brand); }
-    .m-cell.out { background:var(--surface-2); opacity:.55; }
-    .m-cell.closed { background:repeating-linear-gradient(45deg,var(--surface-2),var(--surface-2) 7px,#eef0f4 7px,#eef0f4 14px); }
-    .m-cell.today .m-num { background:var(--brand); color:#fff; }
-    .m-num { font-size:13px; font-weight:700; width:24px;height:24px;border-radius:50%;display:grid;place-items:center; }
-    .m-dots { display:flex; gap:3px; flex-wrap:wrap; }
-    .m-dot { width:7px;height:7px;border-radius:50%; }
-    .cap-pill { font-size:11px; padding:1px 7px; border-radius:999px; font-weight:700; }
-  </style>
-</head>
-<body>
-  <div id="app"></div>
-  <script src="/assets/app/admin.js"></script>
-  <script>
+// Auto-generated SPA view module. Registers itself via OF.page() on import.
+const OF = window.OF;
+
     const TZ = () => OF.tenant.timezone;
     let view = OF.qs('view') || 'week';
     let cursor = OF.qs('date') || new Intl.DateTimeFormat('en-CA',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
@@ -117,7 +75,7 @@
     }
     function addMonth(n){ const [y,m]=cursor.split('-').map(Number); const d=new Date(Date.UTC(y,m-1+n,1)); return ymdUTC(d); }
 
-    function jobRowSmall(a){ return `<div class="wc-job" style="border-left-color:${a.service_color||'var(--brand)'}" onclick="location.href='/admin/appointments?id=${a.id}'"><b>${OF.time(a.scheduled_start)}</b> ${OF.escape(a.customer_name)}<div class="muted" style="font-size:11px">${OF.escape(a.service_name||'')}</div></div>`; }
+    function jobRowSmall(a){ return `<div class="wc-job" style="border-left-color:${a.service_color||'var(--brand)'}" onclick="OF.go('/admin/appointments?id=${a.id}')"><b>${OF.time(a.scheduled_start)}</b> ${OF.escape(a.customer_name)}<div class="muted" style="font-size:11px">${OF.escape(a.service_name||'')}</div></div>`; }
 
     function renderDay(body, appts, meta) {
       const max = loadOf(appts);
@@ -125,7 +83,7 @@
       if (!appts.length) { body.innerHTML = `<div class="card">${head}<div class="empty"><div class="ic">${OF.icon('schedule',22)}</div><p>${meta.closed?'This day is marked closed.':'Nothing scheduled.'} <a href="/admin/appointments?new=1">Add a job</a>.</p></div></div>`; return; }
       body.innerHTML = `<div class="card">${head}<div class="card-pad agenda">` + appts.sort((a,b)=>new Date(a.scheduled_start)-new Date(b.scheduled_start)).map(a=>`
         <div class="slot-row"><div class="time">${OF.time(a.scheduled_start)}</div>
-        <div class="job" style="border-left-color:${a.service_color||'var(--brand)'}" onclick="location.href='/admin/appointments?id=${a.id}'">
+        <div class="job" style="border-left-color:${a.service_color||'var(--brand)'}" onclick="OF.go('/admin/appointments?id=${a.id}')">
           <div class="row between"><span class="cell-strong">${OF.escape(a.customer_name)}</span>${OF.statusBadge(a.status)}</div>
           <div class="small muted" style="margin-top:3px">${a.service_name?OF.escape(a.service_name):''}${a.service_address?` · ${OF.escape(a.service_address)}`:''}</div>
         </div></div>`).join('') + `</div></div>`;
@@ -136,7 +94,7 @@
         const appts=(byDay[d]||[]).sort((a,b)=>new Date(a.scheduled_start)-new Date(b.scheduled_start));
         const meta=dayMeta(d,data); const max=loadOf(appts); const isToday=d===todayYmd();
         return `<div class="week-col ${meta.closed?'closed':''} ${isToday?'today':''}">
-          <div class="wc-head" style="cursor:pointer" onclick="(()=>{view='day';cursor='${d}';render(document.getElementById('content'));})()"><span>${labelYmd(d,{weekday:'short'})}</span><span>${labelYmd(d,{day:'numeric'})}</span></div>
+          <div class="wc-head" style="cursor:pointer" onclick="window.__schedGo('${d}')"><span>${labelYmd(d,{weekday:'short'})}</span><span>${labelYmd(d,{day:'numeric'})}</span></div>
           <div class="wc-body">${appts.map(jobRowSmall).join('')||'<span class="muted" style="font-size:11px;padding:4px">—</span>'}</div>
           <div class="wc-foot">${capPill(appts.length,max,meta.capacity,meta.closed)}<span class="muted">cap ${meta.capacity}</span></div>
         </div>`;
@@ -149,7 +107,7 @@
         <div class="month-grid">` + cells.map(d=>{
         const appts=byDay[d]||[]; const meta=dayMeta(d,data); const out=!d.startsWith(ymPrefix); const isToday=d===todayYmd(); const max=loadOf(appts);
         const dots = appts.slice(0,5).map(a=>`<span class="m-dot" style="background:${a.service_color||'var(--brand)'}"></span>`).join('');
-        return `<div class="m-cell ${out?'out':''} ${meta.closed?'closed':''} ${isToday?'today':''}" onclick="(()=>{view='day';cursor='${d}';render(document.getElementById('content'));})()">
+        return `<div class="m-cell ${out?'out':''} ${meta.closed?'closed':''} ${isToday?'today':''}" onclick="window.__schedGo('${d}')">
           <div class="row between"><span class="m-num">${labelYmd(d,{day:'numeric'})}</span>${appts.length?(max>meta.capacity?`<span class="cap-pill" style="background:var(--danger-tint);color:var(--danger)">${appts.length}</span>`:`<span class="cap-pill" style="background:var(--brand-tint);color:var(--brand-700)">${appts.length}</span>`):''}</div>
           <div class="m-dots">${dots}</div>
         </div>`;
@@ -161,6 +119,5 @@
       window.render = render; // allow inline onclick handlers to re-render
       await render(root);
     }});
-  </script>
-</body>
-</html>
+  
+    window.__schedGo = (d) => { view = 'day'; cursor = d; render(document.getElementById('content')); };

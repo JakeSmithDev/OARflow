@@ -1,16 +1,6 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Customers · OARFlow</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/assets/app/app.css" />
-</head>
-<body>
-  <div id="app"></div>
-  <script src="/assets/app/admin.js"></script>
-  <script>
+// Auto-generated SPA view module. Registers itself via OF.page() on import.
+const OF = window.OF;
+
     const state = { q: '' };
     async function refresh() {
       const d = await OF.get('/api/admin/customers?' + new URLSearchParams(state.q?{q:state.q}:{}));
@@ -91,6 +81,4 @@
       await refresh();
       if (OF.qs('id')) openDrawer(OF.qs('id'));
     }});
-  </script>
-</body>
-</html>
+  

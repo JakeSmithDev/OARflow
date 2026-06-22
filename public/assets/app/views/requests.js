@@ -1,16 +1,6 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Requests · OARFlow</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/assets/app/app.css" />
-</head>
-<body>
-  <div id="app"></div>
-  <script src="/assets/app/admin.js"></script>
-  <script>
+// Auto-generated SPA view module. Registers itself via OF.page() on import.
+const OF = window.OF;
+
     async function load(root) {
       const d = await OF.get('/api/admin/appointments?status=requested&limit=100');
       const rows = d.appointments;
@@ -63,6 +53,4 @@
 
     OF.page({ active:'requests', title:'Requests', subtitle:'Booking requests awaiting your confirmation',
       render: async (root) => { await load(root); } });
-  </script>
-</body>
-</html>
+  

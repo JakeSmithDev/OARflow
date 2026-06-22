@@ -11,11 +11,16 @@ to repackage it for additional companies.
   data layer (`src/lib/db.js`) exposes one surface (`query`, `queryOne`,
   `withTx`, `exec`) over both. PGlite operations are serialized through a mutex
   because it is a single in-process connection.
-- **Frontend:** Static HTML "shells" under `public/` that call JSON APIs under
-  `/api`. A small client runtime (`public/assets/app/admin.js`, the `OF` global)
-  provides the API client, auth guard, app shell/nav, and UI primitives
-  (toasts, modals, drawers, formatting). The design system is a single
-  token-driven stylesheet (`public/assets/app/app.css`).
+- **Frontend:** No build step. The **admin suite is a client-routed SPA** — one
+  persistent shell (`public/admin/index.html`) plus lazy-loaded view modules
+  (`public/assets/app/views/*.js`). The runtime (`public/assets/app/admin.js`,
+  the `OF` global) provides the API client, auth guard, a History-API router
+  (`OF.mountSPA`/`OF.go`) that swaps only `#content` (no document reloads),
+  per-tab shell caching, and UI primitives (toasts, modals, drawers). Views
+  register via `OF.page({active,title,render})` on import. The public booking
+  (`/book`) and pay (`/pay`) pages are standalone HTML that call the same JSON
+  APIs. The design system is one token-driven stylesheet (`app.css`). The server
+  serves the SPA shell for every `/admin/*` route except `/admin/login`.
 - **Payments:** Stripe (Checkout for one-off invoice balances, Subscriptions for
   recurring plans). Fully optional.
 - **Calendar:** Google Calendar via OAuth2 + REST. Fully optional.

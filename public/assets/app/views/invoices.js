@@ -1,24 +1,6 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Invoices · OARFlow</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/assets/app/app.css" />
-  <style>
-    .li-row { display:grid; grid-template-columns: 1fr 60px 110px 40px 32px; gap:8px; align-items:center; margin-bottom:8px; }
-    .li-row input { padding:8px 10px; } .li-row .tx { display:grid; place-items:center; }
-    .preset-pill { border:1px dashed var(--line); background:var(--surface-2); border-radius:999px; padding:6px 12px; font-size:13px; font-weight:600; cursor:pointer; color:var(--ink-2); }
-    .preset-pill:hover { border-color:var(--brand); color:var(--brand); }
-    .totline { display:flex; justify-content:space-between; padding:4px 0; }
-    .totline.grand { border-top:1px solid var(--line); margin-top:6px; padding-top:10px; font-weight:800; font-size:17px; }
-  </style>
-</head>
-<body>
-  <div id="app"></div>
-  <script src="/assets/app/admin.js"></script>
-  <script>
+// Auto-generated SPA view module. Registers itself via OF.page() on import.
+const OF = window.OF;
+
     let META = { presets: [], defaults: {}, stripeEnabled: false };
     const state = { status: 'all', q: '' };
     const centsToStr = (c) => ((c||0)/100).toFixed(2);
@@ -186,6 +168,4 @@
         builder({ customerId: cid?+cid:null, customerName: cname, appointmentId: OF.qs('appointment')?+OF.qs('appointment'):null });
       }
     }});
-  </script>
-</body>
-</html>
+  

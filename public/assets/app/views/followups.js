@@ -1,16 +1,6 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Follow-ups · OARFlow</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/assets/app/app.css" />
-</head>
-<body>
-  <div id="app"></div>
-  <script src="/assets/app/admin.js"></script>
-  <script>
+// Auto-generated SPA view module. Registers itself via OF.page() on import.
+const OF = window.OF;
+
     let DATA = null; let tab = 'queue'; let qStatus = 'pending';
 
     async function load() { DATA = await OF.get('/api/admin/follow-ups?status='+qStatus); }
@@ -84,6 +74,4 @@
         m.q('#save').onclick=async()=>{if(!m.q('#t').value.trim()||!m.q('#dd').value)return OF.toast('Title and due date required','error');await OF.post('/api/admin/follow-ups',{title:m.q('#t').value.trim(),customerId:cid,dueDate:m.q('#dd').value,channel:m.q('#ch').value,note:m.q('#note').value.trim()});m.close();OF.toast('Follow-up created','ok');await load();renderTabs(document.getElementById('content'));};
       };
     }});
-  </script>
-</body>
-</html>
+  

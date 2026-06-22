@@ -1,18 +1,6 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Recurring · OARFlow</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/assets/app/app.css" />
-  <style>.plan-card{border:1px solid var(--line);border-radius:var(--radius);padding:18px;background:var(--surface);box-shadow:var(--shadow-sm)}
-  .plan-card .price{font-size:24px;font-weight:800}.plan-card .per{color:var(--muted);font-weight:600;font-size:13px}</style>
-</head>
-<body>
-  <div id="app"></div>
-  <script src="/assets/app/admin.js"></script>
-  <script>
+// Auto-generated SPA view module. Registers itself via OF.page() on import.
+const OF = window.OF;
+
     let DATA = null;
     const INTERVALS = [['monthly','Monthly'],['quarterly','Quarterly'],['semiannual','Every 6 months'],['annual','Annual'],['custom','Custom (months)']];
     const intervalLabel = (i,c)=>({monthly:'mo',quarterly:'quarter',semiannual:'6 mo',annual:'yr',custom:`${c} mo`}[i]||i);
@@ -109,6 +97,4 @@
       const enroll=OF.qs('enroll');
       if(enroll){ try{ const c=await OF.get('/api/admin/customers/'+enroll); enrollModal(null,+enroll,c.customer.name); }catch{} }
     }});
-  </script>
-</body>
-</html>
+  

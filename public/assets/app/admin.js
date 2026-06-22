@@ -151,7 +151,7 @@
     const navHtml = NAV.map(([section, items]) => `
       <div class="nav-section">${section}</div>
       ${items.map(([icon, label, href, countKey]) => `
-        <a class="nav-link ${active === icon ? 'active' : ''}" href="${href}">
+        <a class="nav-link ${active === icon ? 'active' : ''}" href="${href}" data-view="${icon}">
           ${OF.icon(icon)} <span>${label}</span>
           ${countKey ? `<span class="badge-count" data-count="${countKey}"${counts[countKey] ? '' : ' hidden'}>${counts[countKey] || ''}</span>` : ''}
         </a>`).join('')}
@@ -159,13 +159,13 @@
     const u = OF.session || {};
     return `
       <aside class="sidebar" id="sidebar">
-        <div class="brand">
+        <a class="brand" href="/admin/" data-view="dashboard" style="text-decoration:none">
           <div class="logo">${OF.escape((brand.logoText || t.name || 'O')[0])}</div>
           <div class="name">${OF.escape(brand.logoText || t.name || 'OARFlow')}<small>OARFlow</small></div>
-        </div>
+        </a>
         ${navHtml}
         <div class="spacer"></div>
-        ${(OF.session && OF.session.role === 'owner') ? `<a class="nav-link ${active === 'settings' ? 'active' : ''}" href="/admin/settings">${OF.icon('settings')} <span>Settings</span></a>` : ''}
+        ${(OF.session && OF.session.role === 'owner') ? `<a class="nav-link ${active === 'settings' ? 'active' : ''}" href="/admin/settings" data-view="settings">${OF.icon('settings')} <span>Settings</span></a>` : ''}
         <div class="user">
           <div class="avatar">${OF.initials(u.displayName || u.username)}</div>
           <div class="meta">${OF.escape(u.displayName || u.username || 'Admin')}<br><small>${OF.escape(u.role || '')}</small></div>
@@ -182,8 +182,7 @@
       </main>`;
   }
 
-  // Session/tenant/counts are cached per-tab so the shell paints instantly on
-  // every navigation (no blank flash) — the sidebar feels static.
+  // Session/tenant/counts are cached per-tab so the shell paints instantly.
   const CACHE_KEY = 'oarflow_admin_cache';
   function readCache() { try { return JSON.parse(sessionStorage.getItem(CACHE_KEY) || 'null'); } catch { return null; } }
   function writeCache(o) { try { sessionStorage.setItem(CACHE_KEY, JSON.stringify(o)); } catch { /* */ } }
@@ -195,60 +194,112 @@
       if (n) { el.textContent = n; el.hidden = false; } else { el.hidden = true; }
     });
   }
-
-  function bindShell(cfg) {
-    document.getElementById('pageTitle').textContent = cfg.title || '';
-    document.getElementById('pageSub').textContent = cfg.subtitle || '';
+  function setActiveNav(view) {
+    document.querySelectorAll('.nav-link[data-view]').forEach((a) => a.classList.toggle('active', a.dataset.view === view));
+  }
+  function bindShell() {
     const lo = document.getElementById('logoutBtn');
     if (lo && !lo._bound) { lo._bound = 1; lo.addEventListener('click', async () => { OF.clearCache(); await api('/api/admin/auth/logout', { method: 'POST' }).catch(() => {}); location.href = '/admin/login'; }); }
     const mt = document.getElementById('menuToggle');
     if (mt && !mt._bound) { mt._bound = 1; mt.addEventListener('click', () => document.getElementById('sidebar')?.classList.toggle('open')); }
   }
 
-  /** Boot an admin page: paint the cached shell instantly, validate in the
-   *  background, then call cfg.render(contentEl, ctx). */
-  OF.page = async function (cfg) {
+  // --- Client-side router (true SPA — no document reloads) -----------------
+  OF._views = {};
+  // View modules call OF.page({active,title,subtitle,render}) at import time to
+  // register themselves; the router renders the registered view into #content.
+  OF.page = (cfg) => { OF._views[cfg.active] = cfg; };
+
+  const ROUTES = [
+    { path: '/admin/', file: 'dashboard', view: 'dashboard' },
+    { path: '/admin/schedule', file: 'schedule', view: 'schedule' },
+    { path: '/admin/requests', file: 'requests', view: 'requests' },
+    { path: '/admin/appointments', file: 'appointments', view: 'appointments' },
+    { path: '/admin/customers', file: 'customers', view: 'customers' },
+    { path: '/admin/invoices', file: 'invoices', view: 'invoices' },
+    { path: '/admin/plans', file: 'plans', view: 'recurring' },
+    { path: '/admin/follow-ups', file: 'followups', view: 'followups' },
+    { path: '/admin/settings', file: 'settings', view: 'settings' },
+  ];
+  function matchRoute(pathname) {
+    const p = pathname.replace(/\/+$/, '');
+    if (p === '' || p === '/admin') return ROUTES[0];
+    return ROUTES.find((r) => r.path.replace(/\/$/, '') === p) || ROUTES[0];
+  }
+
+  /** Navigate within the SPA (pushState + render). External paths fall back to a full load. */
+  OF.go = (href) => {
+    const url = new URL(href, location.origin);
+    if (url.origin !== location.origin || !url.pathname.startsWith('/admin') || url.pathname.startsWith('/admin/login')) { location.href = href; return; }
+    const target = url.pathname + url.search;
+    if (target !== location.pathname + location.search) history.pushState({}, '', target);
+    renderRoute();
+  };
+
+  let routeSeq = 0;
+  async function renderRoute() {
+    const route = matchRoute(location.pathname);
+    setActiveNav(route.view);
+    const content = document.getElementById('content');
+    if (!content) return;
+    document.getElementById('pageActions').innerHTML = '';
+    content.innerHTML = '<div class="loading-page"><span class="spinner"></span></div>';
+    const seq = ++routeSeq;
+    if (!OF._views[route.view]) {
+      try { await import(`/assets/app/views/${route.file}.js`); }
+      catch (e) { content.innerHTML = `<div class="empty"><div class="ic">${OF.icon('bell', 22)}</div><p>Couldn't load this page.</p></div>`; return; }
+    }
+    if (seq !== routeSeq) return; // superseded by a newer navigation
+    const cfg = OF._views[route.view];
+    if (!cfg) { content.innerHTML = '<div class="empty"><p>View not found.</p></div>'; return; }
+    document.getElementById('pageTitle').textContent = cfg.title || '';
+    document.getElementById('pageSub').textContent = cfg.subtitle || '';
+    document.title = (cfg.title ? cfg.title + ' · ' : '') + (OF.tenant?.name || 'OARFlow');
+    window.scrollTo(0, 0);
+    document.getElementById('sidebar')?.classList.remove('open');
+    try {
+      await cfg.render(content, { session: OF.session, tenant: OF.tenant, setActions: OF.setActions });
+    } catch (err) {
+      content.innerHTML = `<div class="empty"><div class="ic">${OF.icon('bell', 22)}</div><p>${OF.escape(err.message)}</p></div>`;
+    }
+  }
+
+  function onDocClick(e) {
+    if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    const a = e.target.closest && e.target.closest('a[href]');
+    if (!a || a.target === '_blank' || a.hasAttribute('download')) return;
+    const url = new URL(a.getAttribute('href'), location.origin);
+    if (url.origin !== location.origin || !url.pathname.startsWith('/admin') || url.pathname.startsWith('/admin/login')) return;
+    e.preventDefault();
+    OF.go(url.pathname + url.search);
+  }
+
+  OF.setActions = (html) => { const a = document.getElementById('pageActions'); if (a) a.innerHTML = html; };
+
+  /** Boot the admin SPA: render the persistent shell once, validate session,
+   *  wire routing, then render the current route. */
+  OF.mountSPA = async function () {
     const root = document.getElementById('app') || document.body;
     root.className = 'app';
-    document.title = (cfg.title ? cfg.title + ' · ' : '') + 'OARFlow';
-
     const cached = readCache();
-    let painted = false;
+    const active = matchRoute(location.pathname).view;
     if (cached && cached.tenant) {
       OF.session = cached.session; OF.tenant = cached.tenant;
-      root.innerHTML = renderShell(cfg.active, cached.counts || {});
-      bindShell(cfg);
-      document.title = (cfg.title ? cfg.title + ' · ' : '') + (OF.tenant.name || 'OARFlow');
-      painted = true;
+      root.innerHTML = renderShell(active, cached.counts || {});
+      bindShell();
     }
-
     let s;
     try { s = await api('/api/admin/auth/session'); }
     catch { OF.clearCache(); location.href = '/admin/login?next=' + encodeURIComponent(location.pathname + location.search); return; }
     OF.session = s.user; OF.tenant = s.tenant;
     const counts = (cached && cached.counts) || {};
     writeCache({ session: s.user, tenant: s.tenant, counts });
-
-    if (!painted) {
-      root.innerHTML = renderShell(cfg.active, counts);
-      bindShell(cfg);
-      document.title = (cfg.title ? cfg.title + ' · ' : '') + (OF.tenant.name || 'OARFlow');
-    }
-
-    // Refresh nav counts in the background (updates badges + cache for next nav).
-    api('/api/admin/dashboard/counts').then((r) => {
-      const fresh = r.counts || {}; applyCounts(fresh); writeCache({ session: OF.session, tenant: OF.tenant, counts: fresh });
-    }).catch(() => {});
-
-    const content = document.getElementById('content');
-    try {
-      await cfg.render(content, { session: OF.session, tenant: OF.tenant, setActions: (html) => { document.getElementById('pageActions').innerHTML = html; } });
-    } catch (err) {
-      content.innerHTML = `<div class="empty"><div class="ic">${OF.icon('bell', 22)}</div><p>${OF.escape(err.message)}</p></div>`;
-    }
+    if (!(cached && cached.tenant)) { root.innerHTML = renderShell(active, counts); bindShell(); }
+    api('/api/admin/dashboard/counts').then((r) => { const c = r.counts || {}; applyCounts(c); writeCache({ session: OF.session, tenant: OF.tenant, counts: c }); }).catch(() => {});
+    document.addEventListener('click', onDocClick);
+    window.addEventListener('popstate', renderRoute);
+    await renderRoute();
   };
-
-  OF.setActions = (html) => { const a = document.getElementById('pageActions'); if (a) a.innerHTML = html; };
 
   window.OF = OF;
 })();
