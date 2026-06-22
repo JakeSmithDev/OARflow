@@ -31,6 +31,42 @@ export async function enrollSubscription(tenant, { customerId, planId, startDate
   return row;
 }
 
+/** A Stripe renewal invoice was paid → record the revenue locally (idempotent). */
+export async function handleStripeInvoicePaid(event) {
+  const inv = event.data.object;
+  const subId = inv.subscription;
+  if (!subId || inv.billing_reason === 'subscription_create') return; // initial handled at checkout
+  const sub = await queryOne('SELECT * FROM subscriptions WHERE stripe_subscription_id=$1', [subId]);
+  if (!sub) return;
+  const dup = await queryOne('SELECT id FROM financial_events WHERE tenant_id=$1 AND external_ref=$2', [sub.tenant_id, event.id]);
+  if (dup) return;
+  const tenant = await getTenantById(sub.tenant_id);
+  const plan = await queryOne('SELECT name FROM recurring_plans WHERE id=$1', [sub.plan_id]);
+  const amount = inv.amount_paid || sub.price_cents;
+  const created = await createInvoice(tenant, {
+    customerId: sub.customer_id, subscriptionId: sub.id,
+    lineItems: [{ label: `${plan?.name || 'Recurring plan'} (renewal)`, quantity: 1, unit_amount_cents: amount, taxable: false }],
+    taxRatePercent: 0,
+  }, 'stripe');
+  const { recordPayment } = await import('./invoices.js');
+  await recordPayment(tenant, created.id, { amountCents: created.total_cents, method: 'stripe', externalRef: event.id, note: 'Stripe subscription renewal' });
+}
+
+/** Keep local subscription status in sync with Stripe (cancel / pause / resume). */
+export async function syncStripeSubscriptionStatus(event) {
+  const s = event.data.object;
+  const subId = s.id;
+  const row = await queryOne('SELECT id FROM subscriptions WHERE stripe_subscription_id=$1', [subId]);
+  if (!row) return;
+  let status = 'active';
+  if (event.type === 'customer.subscription.deleted' || s.status === 'canceled') status = 'canceled';
+  else if (['unpaid', 'past_due', 'paused'].includes(s.status)) status = 'paused';
+  await query(
+    'UPDATE subscriptions SET status=$2, canceled_at=CASE WHEN $2=\'canceled\' THEN now() ELSE canceled_at END, updated_at=now() WHERE id=$1',
+    [row.id, status],
+  );
+}
+
 /** Stripe subscription checkout completed → record/activate the subscription. */
 export async function activateSubscriptionFromCheckout(event) {
   const session = event.data.object;

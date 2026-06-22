@@ -6,6 +6,7 @@ import { query, queryOne } from '../../lib/db.js';
 import { enrollSubscription, generateDueCycles, monthsForInterval } from '../../lib/recurring.js';
 import { createSubscriptionCheckout, isConfigured as stripeConfigured } from '../../lib/stripe.js';
 import { logAudit } from '../../lib/audit.js';
+import { ownsId } from '../../lib/ownership.js';
 import { config } from '../../config.js';
 
 const router = express.Router();
@@ -70,6 +71,8 @@ router.post('/subscriptions', asyncHandler(async (req, res) => {
   const b = req.body || {};
   const customerId = toInt(b.customerId); const planId = toInt(b.planId);
   if (!customerId || !planId) return badRequest(res, 'Customer and plan are required.');
+  if (!(await ownsId(req.tenant.id, 'customers', customerId))) return badRequest(res, 'Unknown customer.');
+  if (!(await ownsId(req.tenant.id, 'recurring_plans', planId))) return badRequest(res, 'Unknown plan.');
 
   if (b.useStripe) {
     if (!stripeConfigured(req.tenant)) return badRequest(res, 'Stripe is not connected.');

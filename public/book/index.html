@@ -17,7 +17,8 @@
     .bk-hero::after { content:""; position:absolute; right:-40px; top:-40px; width:180px; height:180px; border-radius:50%; background:color-mix(in srgb, var(--brand) 10%, transparent); }
     .bk-brand { display:flex; align-items:center; gap:14px; position:relative; z-index:1; }
     .bk-brand .logo { width:50px;height:50px;flex:none;border-radius:14px;background:linear-gradient(135deg,var(--brand),color-mix(in srgb,var(--brand) 55%,#86efac));display:grid;place-items:center;color:#fff; box-shadow: inset 0 0 0 1px rgba(255,255,255,.18); }
-    .bk-brand .company { font-size:22px; font-weight:800; color:var(--navy); line-height:1.1; }
+    .bk-brand > div { min-width:0; }
+    .bk-brand .company { font-size:22px; font-weight:800; color:var(--navy); line-height:1.15; overflow-wrap:anywhere; }
     .bk-brand .tagline { margin:3px 0 0; color:var(--muted); font-size:14px; }
     .bk-values { display:flex; flex-wrap:wrap; gap:10px 22px; margin-top:16px; padding-top:16px; border-top:1px solid var(--line-2); position:relative; z-index:1; }
     .bk-value { display:inline-flex; align-items:center; gap:8px; font-size:13px; font-weight:600; color:var(--ink-2); }
@@ -33,7 +34,7 @@
     .svc .meta { flex:1; min-width:0; } .svc .meta h3 { font-size:16px; } .svc .meta p { margin:3px 0 0; color:var(--muted); font-size:13px; overflow-wrap:anywhere; }
     .svc .price { text-align:right; font-weight:800; font-size:16px; flex:none; } .svc .price small { display:block; color:var(--muted); font-weight:600; font-size:11px; }
     .navbtns { flex-wrap:wrap; }
-    @media (max-width:560px){ .wrap{padding:20px 14px 70px;} .svc{padding:13px 14px;} }
+    @media (max-width:560px){ .wrap{padding:20px 14px 70px;} .svc{padding:13px 14px;} .bk-hero{padding:18px 16px;} .bk-brand .company{font-size:19px;} .svc .price{font-size:15px;} }
     .datestrip { display:flex; gap:8px; overflow-x:auto; padding: 4px 2px 10px; }
     .daybtn { flex:none; width:64px; padding:10px 0; border:1px solid var(--line); border-radius:12px; background:var(--surface); text-align:center; cursor:pointer; transition:.1s; }
     .daybtn:hover { border-color: var(--brand); } .daybtn.active { background:var(--brand); color:#fff; border-color:var(--brand); }

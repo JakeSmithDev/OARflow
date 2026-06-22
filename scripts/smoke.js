@@ -191,6 +191,36 @@ async function main() {
     const b2 = await call('/api/public/default/book', { auth: false, method: 'POST', body: { serviceId: svcInstant.id, slot: { start: slot.start, end: slot.end }, customer: { name: 'Cap Two', email: 'cap2@example.com', address: '2 st' } } });
     assert.equal(b2.status, 409);
   });
+  const db = await import('../src/lib/db.js');
+  await check('[fix] cross-tenant: foreign customer rejected on invoice create', async () => {
+    const t2 = await db.queryOne("INSERT INTO tenants (slug,name) VALUES ('rival','Rival Co') RETURNING id");
+    const c2 = await db.queryOne('INSERT INTO customers (tenant_id,name) VALUES ($1,\'Rival Cust\') RETURNING id', [t2.id]);
+    globalThis.__t2 = { tenant: t2.id, cust: c2.id };
+    const r = await call('/api/admin/invoices', { method: 'POST', body: { customerId: c2.id, lineItems: [{ label: 'X', unit_amount_cents: 1000 }] } });
+    assert.equal(r.status, 400);
+  });
+  await check('[fix] cross-tenant: cannot pay another tenant\'s invoice', async () => {
+    const inv2 = await db.queryOne("INSERT INTO invoices (tenant_id,customer_id,number,status,total_cents,access_token) VALUES ($1,$2,'INV-R1','sent',5000,'tok') RETURNING id", [globalThis.__t2.tenant, globalThis.__t2.cust]);
+    const r = await call(`/api/admin/invoices/${inv2.id}/payment`, { method: 'POST', body: { amountCents: 5000, method: 'cash' } });
+    assert.equal(r.status, 404);
+    const still = await db.queryOne('SELECT status, amount_paid_cents FROM invoices WHERE id=$1', [inv2.id]);
+    assert.equal(still.status, 'sent'); assert.equal(Number(still.amount_paid_cents), 0);
+  });
+  await check('[fix] overpayment is rejected', async () => {
+    const inv = (await call('/api/admin/invoices', { method: 'POST', body: { customerId: 1, lineItems: [{ label: 'X', unit_amount_cents: 5000, taxable: false }] } })).data.invoice;
+    const r = await call(`/api/admin/invoices/${inv.id}/payment`, { method: 'POST', body: { amountCents: 999999, method: 'cash' } });
+    assert.equal(r.status, 400);
+  });
+  await check('[fix] closed-day scheduling blocked unless forced', async () => {
+    const d = ymd(new Date(Date.now() + 40 * 86400000));
+    await call('/api/admin/settings/blackouts', { method: 'POST', body: { date: d, reason: 'Closed' } });
+    const svc = (await call('/api/admin/appointments/meta/services')).data.services[0];
+    const blocked = await call('/api/admin/appointments', { method: 'POST', body: { customer: { name: 'Closed Test', email: 'ct@example.com' }, serviceId: svc.id, date: d, time: '10:00' } });
+    assert.equal(blocked.status, 409); assert.equal(blocked.data.code, 'SCHEDULE_WARN');
+    const forced = await call('/api/admin/appointments', { method: 'POST', body: { customer: { name: 'Closed Test', email: 'ct@example.com' }, serviceId: svc.id, date: d, time: '10:00', force: true } });
+    assert.equal(forced.status, 200);
+  });
+
   await check('[fix] staff role blocked from settings, allowed for ops', async () => {
     await call('/api/admin/auth/logout', { method: 'POST' });
     cookie = '';

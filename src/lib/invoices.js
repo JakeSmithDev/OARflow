@@ -81,26 +81,27 @@ export async function updateInvoice(tenant, id, data) {
 /** Record a payment/refund in the ledger and recompute the invoice's paid + status. */
 export async function recordPayment(tenant, invoiceId, { amountCents, eventType = 'payment', method, note, stripeRef, externalRef, createdBy }) {
   return withTx(async (cx) => {
-    // Idempotency: skip if this external ref was already recorded.
+    // The invoice MUST belong to this tenant. Every query below is tenant-scoped
+    // so a payment (incl. a webhook with attacker-controlled metadata) can never
+    // read or mutate another tenant's invoice.
+    const invRow0 = await cx.query('SELECT * FROM invoices WHERE id=$1 AND tenant_id=$2', [invoiceId, tenant.id]);
+    if (!invRow0.rows.length) return { invoice: null, notFound: true };
+
     if (externalRef) {
       const dup = await cx.query('SELECT id FROM financial_events WHERE tenant_id=$1 AND external_ref=$2', [tenant.id, externalRef]);
-      if (dup.rows.length) {
-        const inv = await cx.query('SELECT * FROM invoices WHERE id=$1', [invoiceId]);
-        return { invoice: inv.rows[0], duplicate: true };
-      }
+      if (dup.rows.length) return { invoice: invRow0.rows[0], duplicate: true };
     }
     await cx.query(
       `INSERT INTO financial_events (tenant_id, invoice_id, customer_id, event_type, amount_cents, method, note, stripe_ref, external_ref, created_by)
-       SELECT $1,$2,i.customer_id,$3,$4,$5,$6,$7,$8,$9 FROM invoices i WHERE i.id=$2`,
+       SELECT $1,$2,i.customer_id,$3,$4,$5,$6,$7,$8,$9 FROM invoices i WHERE i.id=$2 AND i.tenant_id=$1`,
       [tenant.id, invoiceId, eventType, Math.round(amountCents), method || null, note || null, stripeRef || null, externalRef || null, createdBy || null],
     );
     const sum = await cx.query(
-      "SELECT COALESCE(SUM(amount_cents),0)::bigint paid FROM financial_events WHERE invoice_id=$1 AND event_type IN ('payment','refund','adjustment')",
-      [invoiceId],
+      "SELECT COALESCE(SUM(amount_cents),0)::bigint paid FROM financial_events WHERE tenant_id=$1 AND invoice_id=$2 AND event_type IN ('payment','refund','adjustment')",
+      [tenant.id, invoiceId],
     );
     const paid = Number(sum.rows[0].paid);
-    const invRow = await cx.query('SELECT * FROM invoices WHERE id=$1', [invoiceId]);
-    const inv = invRow.rows[0];
+    const inv = invRow0.rows[0];
     // A void invoice stays void no matter what lands in the ledger — never revive it.
     let status = inv.status;
     if (inv.status !== 'void') {
@@ -111,8 +112,8 @@ export async function recordPayment(tenant, invoiceId, { amountCents, eventType 
     }
     const updated = await cx.query(
       `UPDATE invoices SET amount_paid_cents=$2, status=$3, paid_at=CASE WHEN $3='paid' AND paid_at IS NULL THEN now() ELSE paid_at END, updated_at=now()
-       WHERE id=$1 RETURNING *`,
-      [invoiceId, paid, status],
+       WHERE id=$1 AND tenant_id=$4 RETURNING *`,
+      [invoiceId, paid, status, tenant.id],
     );
     return { invoice: updated.rows[0], duplicate: false };
   });

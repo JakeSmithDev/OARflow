@@ -68,6 +68,9 @@ export async function createSubscriptionCheckout(tenant, { plan, customerEmail, 
     success_url: successUrl,
     cancel_url: cancelUrl,
     metadata: metadata || {},
+    // Propagate tenant/customer/plan onto the subscription so renewal invoices
+    // and lifecycle events can be attributed without a DB lookup.
+    subscription_data: { metadata: metadata || {} },
   });
   return { id: session.id, url: session.url };
 }

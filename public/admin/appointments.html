@@ -20,8 +20,8 @@
     async function doForce(fn) {
       try { await fn(false); return true; }
       catch (e) {
-        if (e.code === 'SLOT_FULL') {
-          if (await OF.confirm({ title: 'Time slot is full', body: `<p class="muted">${OF.escape(e.message)}</p>`, confirmText: 'Book anyway' })) { try { await fn(true); return true; } catch (e2) { OF.toast(e2.message, 'error'); return false; } }
+        if (e.code === 'SCHEDULE_WARN' || e.code === 'SLOT_FULL') {
+          if (await OF.confirm({ title: 'Heads up', body: `<p class="muted">${OF.escape(e.message)}</p>`, confirmText: 'Book anyway' })) { try { await fn(true); return true; } catch (e2) { OF.toast(e2.message, 'error'); return false; } }
           return false;
         }
         OF.toast(e.message, 'error'); return false;

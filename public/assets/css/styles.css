@@ -170,6 +170,16 @@ h3 { font-size: 1.3rem; }
   .nav-toggle { display: none; }
 }
 
+/* Small phones: keep headings + CTAs from being clipped by overflow-x:hidden */
+@media (max-width: 560px){
+  h1, h2 { overflow-wrap: break-word; word-break: break-word; }
+  .hero h1 { font-size: clamp(1.7rem, 7.5vw, 2.2rem); }
+  .hero-grid { padding: 34px 0; gap: 28px; }
+  .btn-lg { padding: 14px 20px; font-size: 1rem; }
+  .btn-row .btn { flex: 1 1 auto; justify-content: center; }
+  .container { padding-inline: 18px; }
+}
+
 /* ------------------------------ Hero ------------------------------- */
 .hero {
   position: relative; overflow: hidden;

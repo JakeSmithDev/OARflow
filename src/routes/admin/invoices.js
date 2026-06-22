@@ -6,6 +6,7 @@ import { asyncHandler, badRequest, notFound, toInt } from '../../lib/http.js';
 import { query, queryOne } from '../../lib/db.js';
 import { createInvoice, updateInvoice, recordPayment, balanceCents } from '../../lib/invoices.js';
 import { sendTemplated, htmlEscape } from '../../lib/email_templates.js';
+import { ownsId } from '../../lib/ownership.js';
 import { isConfigured as stripeConfigured } from '../../lib/stripe.js';
 import { logAudit } from '../../lib/audit.js';
 import { formatCents } from '../../lib/money.js';
@@ -91,8 +92,13 @@ router.post('/', asyncHandler(async (req, res) => {
   const customerId = toInt(b.customerId);
   if (!customerId) return badRequest(res, 'A customer is required.');
   if (!Array.isArray(b.lineItems) || !b.lineItems.length) return badRequest(res, 'Add at least one line item.');
+  const appointmentId = toInt(b.appointmentId);
+  const subscriptionId = toInt(b.subscriptionId);
+  if (!(await ownsId(req.tenant.id, 'customers', customerId))) return badRequest(res, 'Unknown customer.');
+  if (!(await ownsId(req.tenant.id, 'appointments', appointmentId))) return badRequest(res, 'Unknown appointment.');
+  if (!(await ownsId(req.tenant.id, 'subscriptions', subscriptionId))) return badRequest(res, 'Unknown subscription.');
   const inv = await createInvoice(req.tenant, {
-    customerId, appointmentId: toInt(b.appointmentId), subscriptionId: toInt(b.subscriptionId),
+    customerId, appointmentId, subscriptionId,
     lineItems: b.lineItems, taxRatePercent: b.taxRatePercent, discountCents: b.discountCents,
     notes: b.notes, terms: b.terms, dueDate: b.dueDate,
   }, req.admin.username);
@@ -138,10 +144,15 @@ router.post('/:id/payment', asyncHandler(async (req, res) => {
   const b = req.body || {};
   const amount = Math.round(Number(b.amountCents) || 0);
   if (!amount) return badRequest(res, 'Enter a payment amount.');
-  const current = await queryOne('SELECT status FROM invoices WHERE tenant_id=$1 AND id=$2', [req.tenant.id, id]);
+  const current = await queryOne('SELECT status, total_cents, amount_paid_cents FROM invoices WHERE tenant_id=$1 AND id=$2', [req.tenant.id, id]);
   if (!current) return notFound(res);
   if (current.status === 'void') return badRequest(res, 'This invoice is void and cannot take payments.');
   if (current.status === 'paid' && amount > 0) return badRequest(res, 'This invoice is already paid in full.');
+  const balance = current.total_cents - current.amount_paid_cents;
+  // Don't let a payment exceed the balance (no silent overpayment), and don't
+  // let a refund exceed what's been collected.
+  if (amount > 0 && amount > balance) return badRequest(res, `Payment exceeds the balance due (${formatCents(balance, req.tenant.currency)}). Enter ${formatCents(balance, req.tenant.currency)} or less.`);
+  if (amount < 0 && (current.amount_paid_cents + amount) < 0) return badRequest(res, `Refund exceeds the amount collected (${formatCents(current.amount_paid_cents, req.tenant.currency)}).`);
   const { invoice } = await recordPayment(req.tenant, id, {
     amountCents: amount, eventType: amount < 0 ? 'refund' : 'payment',
     method: b.method || 'cash', note: b.note, createdBy: req.admin.username,

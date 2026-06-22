@@ -7,6 +7,7 @@ import { updateTenantSettings } from '../../lib/tenants.js';
 import { processDueFollowUps } from '../../lib/follow_ups.js';
 import { zonedWallTimeToUtc } from '../../lib/dates.js';
 import { randomToken } from '../../lib/crypto.js';
+import { ownsId } from '../../lib/ownership.js';
 
 const router = express.Router();
 router.use(requireAdmin());
@@ -30,13 +31,16 @@ router.get('/', asyncHandler(async (req, res) => {
 router.post('/', asyncHandler(async (req, res) => {
   const b = req.body || {};
   if (!b.title) return badRequest(res, 'Title is required.');
+  const customerId = toInt(b.customerId); const appointmentId = toInt(b.appointmentId);
+  if (!(await ownsId(req.tenant.id, 'customers', customerId))) return badRequest(res, 'Unknown customer.');
+  if (!(await ownsId(req.tenant.id, 'appointments', appointmentId))) return badRequest(res, 'Unknown appointment.');
   let dueAt = b.dueAt;
   if (b.dueDate) dueAt = zonedWallTimeToUtc(b.dueDate, b.dueTime || '09:00', req.tenant.timezone).toISOString();
   if (!dueAt) return badRequest(res, 'A due date is required.');
   const row = await queryOne(
     `INSERT INTO follow_ups (tenant_id, customer_id, appointment_id, type, title, channel, template_type, due_at, note, created_by)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
-    [req.tenant.id, toInt(b.customerId) || null, toInt(b.appointmentId) || null, b.channel === 'email' ? 'email' : 'task',
+    [req.tenant.id, customerId || null, appointmentId || null, b.channel === 'email' ? 'email' : 'task',
      b.title, b.channel || 'task', b.templateType || null, dueAt, b.note || null, req.admin.username],
   );
   res.json({ ok: true, followUp: row });
