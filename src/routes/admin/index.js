@@ -13,6 +13,7 @@ import messagingRouter from './messaging.js';
 import reportsRouter from './reports.js';
 import reviewsRouter from './reviews.js';
 import techniciansRouter from './technicians.js';
+import accountingRouter from './accounting.js';
 
 const router = express.Router();
 
@@ -29,5 +30,6 @@ router.use('/messaging', messagingRouter);
 router.use('/reports', reportsRouter);
 router.use('/reviews', reviewsRouter);
 router.use('/technicians', techniciansRouter);
+router.use('/accounting', accountingRouter);
 
 export default router;

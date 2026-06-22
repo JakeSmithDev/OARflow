@@ -95,6 +95,9 @@ export function defaultTenantSettings(overrides = {}) {
         provider: 'none', enabled: false, accountSid: '', authToken: '', fromNumber: '',
         aiProvider: 'none', forwardTo: '', greeting: '', transcripts: true,
       },
+      // CSV/IIF export now; a live API sync (e.g. QuickBooks Online) can be added
+      // later behind the same accounting provider interface.
+      accounting: { provider: 'export', realmId: '', accessToken: '', refreshToken: '', expiryDate: 0 },
     },
     ...overrides,
   };

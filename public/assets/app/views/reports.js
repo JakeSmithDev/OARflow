@@ -34,6 +34,26 @@ const OF = window.OF;
         <div class="table-wrap"><table class="tbl"><thead><tr>${head}</tr></thead><tbody>${body || `<tr><td colspan="${rep.columns.length}" class="muted center" style="padding:20px">No data for this range.</td></tr>`}</tbody>${foot}</table></div>`;
     }
 
+    async function loadAccounting() {
+      const qs = new URLSearchParams({ from: state.from, to: state.to });
+      let d; try { d = await OF.get(`/api/admin/accounting?${qs}`); } catch { return; }
+      const s = d.summary;
+      document.getElementById('accounting').innerHTML = `<div class="card card-pad">
+        <div class="row between" style="margin-bottom:10px"><strong>Accounting export</strong><span class="tiny muted">${d.provider.supportsSync ? 'Live sync connected' : 'CSV / QuickBooks (IIF) export'}</span></div>
+        <div class="row wrap" style="gap:18px;margin-bottom:12px">
+          <div><div class="tiny muted">Invoices</div><div class="mono">${s.counts.invoices} · ${money(s.totals.invoicedCents)}</div></div>
+          <div><div class="tiny muted">Payments</div><div class="mono">${s.counts.payments} · ${money(s.totals.collectedCents)}</div></div>
+          <div><div class="tiny muted">Refunds</div><div class="mono">${s.counts.refunds} · ${money(s.totals.refundedCents)}</div></div>
+        </div>
+        <div class="row wrap" style="gap:8px">
+          <button class="btn btn-secondary btn-sm" id="acctCsv">Export CSV</button>
+          <button class="btn btn-secondary btn-sm" id="acctIif">Export for QuickBooks (.iif)</button>
+        </div>
+        <p class="tiny muted" style="margin-top:10px">Each row ties back to an OARFlow record; exports are date-filtered by the range above. A live QuickBooks Online sync can be added later without changing this workflow.</p></div>`;
+      document.getElementById('acctCsv').onclick = () => window.open(`/api/admin/accounting/export.csv?from=${state.from}&to=${state.to}`, '_blank');
+      document.getElementById('acctIif').onclick = () => window.open(`/api/admin/accounting/export.iif?from=${state.from}&to=${state.to}`, '_blank');
+    }
+
     async function loadKpis() {
       const qs = new URLSearchParams({ from: state.from, to: state.to });
       const d = await OF.get(`/api/admin/reports?${qs}`);
@@ -59,9 +79,10 @@ const OF = window.OF;
         </div></div>
         <div id="kpis"></div>
         <div class="row wrap" id="picker" style="gap:8px;margin-bottom:16px"></div>
-        <div id="report"><div class="loading-page"><span class="spinner"></span></div></div>`;
+        <div id="report"><div class="loading-page"><span class="spinner"></span></div></div>
+        <div id="accounting" style="margin-top:18px"></div>`;
 
-      const apply = async () => { state.from = document.getElementById('from').value; state.to = document.getElementById('to').value; await loadKpis(); await run(); };
+      const apply = async () => { state.from = document.getElementById('from').value; state.to = document.getElementById('to').value; await loadKpis(); await run(); await loadAccounting(); };
       document.getElementById('applyBtn').onclick = apply;
       document.querySelectorAll('[data-range]').forEach((b) => b.onclick = () => {
         const now = new Date(); let from = new Date();

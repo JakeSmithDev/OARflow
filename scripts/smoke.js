@@ -282,6 +282,29 @@ async function main() {
     assert.equal(data.appointment.status, 'scheduled');
   });
 
+  // --- Accounting export (CSV + QuickBooks IIF) ---
+  await check('accounting summary reflects invoices + payments', async () => {
+    const { data } = await call('/api/admin/accounting?from=2026-01-01&to=2026-12-31');
+    assert.ok(data.summary.counts.invoices >= 1); assert.ok(data.summary.totals.collectedCents >= 0);
+    assert.equal(data.provider.supportsSync, false);
+  });
+  await check('accounting CSV export has header + ties rows to OARFlow refs', async () => {
+    const res = await fetch(base + '/api/admin/accounting/export.csv?from=2026-01-01&to=2026-12-31', { headers: { Cookie: cookie } });
+    assert.equal(res.headers.get('content-type').split(';')[0], 'text/csv');
+    const text = await res.text();
+    assert.ok(text.split('\n')[0].includes('OARFlow Ref'));
+    assert.ok(/\binv:\d+\b/.test(text), 'invoice ref present');
+  });
+  await check('QuickBooks IIF export is balanced double-entry', async () => {
+    const res = await fetch(base + '/api/admin/accounting/export.iif?from=2026-01-01&to=2026-12-31', { headers: { Cookie: cookie } });
+    const text = await res.text();
+    assert.ok(text.startsWith('!TRNS\t'), 'IIF header');
+    assert.ok(text.includes('ENDTRNS'));
+    // every TRNS has a matching ENDTRNS
+    const trns = (text.match(/^TRNS\t/gm) || []).length; const ends = (text.match(/^ENDTRNS$/gm) || []).length;
+    assert.equal(trns, ends);
+  });
+
   // --- Reviews / NPS (no rating gating) ---
   await check('set a public review platform URL', async () => {
     const { data } = await call('/api/admin/reviews/settings', { method: 'PUT', body: { platforms: { google: 'https://g.page/r/demo/review' } } });
