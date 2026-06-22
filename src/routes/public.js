@@ -16,6 +16,7 @@ import { syncAppointment } from '../lib/google_calendar.js';
 import { config } from '../config.js';
 import { formatDateLabel, formatTimeLabel, ymdInTimeZone } from '../lib/dates.js';
 import { emitEvent } from '../lib/events.js';
+import { setConsent, normalizeE164 } from '../lib/sms.js';
 
 const router = express.Router();
 
@@ -98,6 +99,14 @@ router.post('/:slug/book', asyncHandler(async (req, res) => {
   const mode = effectiveBookingMode(tenant, service);
   const company = tenant.settings.branding.logoText || tenant.name;
   const customerId = await findOrCreateCustomer(tenant.id, customer);
+  // Capture transactional SMS consent provenance when a phone is provided.
+  if (customer.phone) {
+    await setConsent(tenant.id, {
+      customerId, phone: normalizeE164(customer.phone), status: 'opted_in', purpose: 'transactional',
+      source: 'booking_form', consentText: 'Booked online and agreed to receive transactional service texts.',
+      ip: getClientIp(req), ua: req.headers['user-agent'],
+    }).catch(() => {});
+  }
 
   if (mode === 'instant') {
     const slot = body.slot || {};

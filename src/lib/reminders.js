@@ -53,13 +53,18 @@ export async function processDueReminders(tenant, { now = new Date() } = {}) {
      ORDER BY a.scheduled_start LIMIT 500`,
     [tenant.id, now.toISOString(), windowEnd.toISOString()],
   );
-  let sent = 0;
+  const smsOn = tenant.settings.notifications?.sms?.reminderEnabled;
+  let sent = 0; let smsSent = 0;
   for (const a of rows) {
+    // SMS reminder (idempotent) when enabled; independent of email.
+    if (smsOn) {
+      try { const { sendAppointmentSms } = await import('./notify_sms.js'); const sr = await sendAppointmentSms(tenant, a.id, 'reminder'); if (sr.ok) smsSent += 1; } catch { /* */ }
+    }
     if (!a.customer_email) { await query('UPDATE appointments SET reminder_sent_at = now() WHERE id=$1', [a.id]); continue; }
     const r = await sendTemplated(tenant, 'appointment_reminder', a.customer_email, reminderVars(tenant, a), { type: 'appointment', id: a.id });
     if (r.ok) { await query('UPDATE appointments SET reminder_sent_at = now() WHERE id=$1', [a.id]); sent += 1; }
   }
-  return { sent, considered: rows.length };
+  return { sent, smsSent, considered: rows.length };
 }
 
 export default { sendAppointmentReminder, processDueReminders };

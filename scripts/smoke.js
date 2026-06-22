@@ -309,6 +309,27 @@ async function main() {
     assert.equal(appts.status, 200, 'staff can still run the day');
   });
 
+  await check('[p1a] appointment confirmation SMS + idempotent', async () => {
+    const { sendAppointmentSms } = await import('../src/lib/notify_sms.js');
+    const { getTenantById } = await import('../src/lib/tenants.js');
+    const dbm = await import('../src/lib/db.js');
+    const tenant = await getTenantById(1);
+    const r1 = await sendAppointmentSms(tenant, 1, 'confirmation');
+    assert.ok(r1.ok && r1.status === 'sent');
+    const r2 = await sendAppointmentSms(tenant, 1, 'confirmation');
+    assert.equal(r2.status, 'duplicate', 'confirmation SMS not double-sent');
+    const n = await dbm.queryOne("SELECT count(*)::int n FROM sms_messages WHERE appointment_id=1 AND purpose='transactional'");
+    assert.equal(n.n, 1);
+  });
+  await check('[p1a] booking captured SMS consent (opted_in)', async () => {
+    const dbm = await import('../src/lib/db.js');
+    const c = await dbm.queryOne("SELECT status FROM customer_contact_consents WHERE tenant_id=1 AND address='+14105550000' AND source='booking_form' ORDER BY captured_at DESC LIMIT 1");
+    assert.ok(c && c.status === 'opted_in');
+  });
+  await check('[p1a] on-my-way text endpoint', async () => {
+    const r = await call('/api/admin/appointments/1/on-my-way', { method: 'POST', body: { eta: 'in 20 minutes' } });
+    assert.ok(r.data.ok);
+  });
   await check('[substrate] emitEvent runs local handler + logs (keyless)', async () => {
     const { emitEvent } = await import('../src/lib/events.js');
     await import('../src/inngest/index.js');

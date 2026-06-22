@@ -176,6 +176,7 @@ router.post('/', asyncHandler(async (req, res) => {
     await sendTemplated(tenant, 'booking_confirmation', full.customer_email, emailVars(tenant, full), { type: 'appointment', id: appt.id }).catch(() => {});
   }
   await logAudit({ tenantId: tenant.id, adminUsername: req.admin.username, action: 'appointment_create', entityType: 'appointment', entityId: appt.id });
+  if (b.notify) emitEvent('appointment.scheduled', { tenantId: tenant.id, appointmentId: appt.id, customerId, source: 'admin' }).catch(() => {});
   res.json({ ok: true, appointment: full });
 }));
 
@@ -232,6 +233,16 @@ router.post('/:id/send-reminder', asyncHandler(async (req, res) => {
   res.json({ ok: true });
 }));
 
+// --- "On My Way" text (manual) -------------------------------------------
+router.post('/:id/on-my-way', asyncHandler(async (req, res) => {
+  const { sendAppointmentSms } = await import('../../lib/notify_sms.js');
+  const eta = (req.body || {}).eta;
+  const r = await sendAppointmentSms(req.tenant, toInt(req.params.id), 'onMyWay', { ETA: eta ? `We expect to arrive ${eta}.` : '' });
+  if (!r.ok) return badRequest(res, r.error || 'Could not send text.');
+  await logAudit({ tenantId: req.tenant.id, adminUsername: req.admin.username, action: 'appointment_omw', entityType: 'appointment', entityId: toInt(req.params.id) });
+  res.json({ ok: true, status: r.status });
+}));
+
 // --- Confirm a requested booking -----------------------------------------
 router.post('/:id/confirm', asyncHandler(async (req, res) => {
   const tenant = req.tenant;
@@ -260,6 +271,7 @@ router.post('/:id/confirm', asyncHandler(async (req, res) => {
     await sendTemplated(tenant, 'request_confirmed', updated.customer_email, emailVars(tenant, updated), { type: 'appointment', id }).catch(() => {});
   }
   await logAudit({ tenantId: tenant.id, adminUsername: req.admin.username, action: 'appointment_confirm', entityType: 'appointment', entityId: id });
+  emitEvent('appointment.scheduled', { tenantId: tenant.id, appointmentId: id, customerId: updated.customer_id, source: 'admin' }).catch(() => {});
   res.json({ ok: true, appointment: updated });
 }));
 

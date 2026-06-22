@@ -53,6 +53,16 @@ export function defaultTenantSettings(overrides = {}) {
     notifications: {
       // Upcoming-appointment reminder emails (NOT balance/invoice reminders).
       appointmentReminder: { enabled: true, leadHours: 24 },
+      // Transactional SMS (sent only when SMS is connected + the customer consents).
+      sms: {
+        confirmationEnabled: true,
+        reminderEnabled: true,
+        templates: {
+          confirmation: 'Hi {{CUSTOMER_NAME}}, your {{SERVICE_NAME}} with {{COMPANY_NAME}} is set for {{APPOINTMENT_DATE}} at {{APPOINTMENT_TIME}}. Reply STOP to opt out.',
+          reminder: 'Reminder: {{SERVICE_NAME}} with {{COMPANY_NAME}} {{APPOINTMENT_DATE}} at {{APPOINTMENT_TIME}}. See you soon! Reply STOP to opt out.',
+          onMyWay: 'Hi {{CUSTOMER_NAME}}, your {{COMPANY_NAME}} technician is on the way for your {{SERVICE_NAME}}. {{ETA}}',
+        },
+      },
     },
     followups: {
       rules: [

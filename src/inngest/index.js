@@ -39,6 +39,20 @@ defineWorkflow({
   fn: async ({ event }) => { await recordJobRun(event.data.tenantId, 'appointment.completed', { appointmentId: event.data.appointmentId }); },
 });
 
+// Send an SMS appointment confirmation when one is scheduled (idempotent).
+defineWorkflow({
+  id: 'sms-appointment-confirmation',
+  trigger: { event: 'appointment.scheduled' },
+  fn: async ({ event, step }) => {
+    const { getTenantById } = await import('../lib/tenants.js');
+    const { sendAppointmentSms } = await import('../lib/notify_sms.js');
+    const t = await getTenantById(event.data.tenantId);
+    if (t?.settings?.notifications?.sms?.confirmationEnabled) {
+      await step.run('send', () => sendAppointmentSms(t, event.data.appointmentId, 'confirmation'));
+    }
+  },
+});
+
 // Async SMS send with retries. Callers emitEvent('notification.sms', { tenantId, ... }).
 defineWorkflow({
   id: 'send-sms',
