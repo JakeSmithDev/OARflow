@@ -12,6 +12,8 @@ import { scheduleForCompletion } from '../../lib/follow_ups.js';
 import { sendAppointmentReminder } from '../../lib/reminders.js';
 import { emitEvent } from '../../lib/events.js';
 import { sendTemplated, detailsTable } from '../../lib/email_templates.js';
+import { requirePermission } from '../../lib/permissions.js';
+import { setAssignments, getAssignments, assignmentsForAppointments } from '../../lib/technicians.js';
 import { logAudit } from '../../lib/audit.js';
 import { formatDateLabel, formatTimeLabel } from '../../lib/dates.js';
 import { config } from '../../config.js';
@@ -119,6 +121,8 @@ router.get('/calendar', asyncHandler(async (req, res) => {
     'SELECT starts_at, ends_at FROM blackouts WHERE tenant_id=$1 AND starts_at < $3 AND ends_at > $2',
     [req.tenant.id, from, to],
   );
+  const assignMap = await assignmentsForAppointments(req.tenant, rows.rows.map((a) => a.id));
+  for (const a of rows.rows) a.technicians = assignMap[a.id] || [];
   res.json({
     ok: true,
     appointments: rows.rows,
@@ -145,7 +149,19 @@ router.get('/:id', asyncHandler(async (req, res) => {
     'SELECT id, number, status, total_cents, amount_paid_cents, created_at FROM invoices WHERE tenant_id=$1 AND appointment_id=$2 ORDER BY id DESC',
     [req.tenant.id, a.id],
   );
-  res.json({ ok: true, appointment: a, invoices: invoices.rows });
+  const technicians = await getAssignments(req.tenant, a.id);
+  res.json({ ok: true, appointment: a, invoices: invoices.rows, technicians });
+}));
+
+// --- Assign technicians (dispatch) ---------------------------------------
+router.post('/:id/assign', requirePermission('dispatch.manage'), asyncHandler(async (req, res) => {
+  const id = toInt(req.params.id);
+  const b = req.body || {};
+  const r = await setAssignments(req.tenant, id, b.technicianIds || [], b.leadId);
+  if (r.notFound) return notFound(res);
+  if (!r.ok) return badRequest(res, r.error);
+  await logAudit({ tenantId: req.tenant.id, adminUsername: req.admin.username, action: 'appointment_assign', entityType: 'appointment', entityId: id, details: { technicianIds: b.technicianIds, lead: r.lead } });
+  res.json({ ok: true, technicians: await getAssignments(req.tenant, id) });
 }));
 
 // --- Create (manual / admin) ---------------------------------------------

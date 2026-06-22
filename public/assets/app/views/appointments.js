@@ -2,9 +2,12 @@
 const OF = window.OF;
 
     let SERVICES = [];
+    let TECHS = null;
     const state = { status: 'all', q: '' };
 
     async function loadServices() { if (!SERVICES.length) SERVICES = (await OF.get('/api/admin/appointments/meta/services')).services; return SERVICES; }
+    async function loadTechs() { if (!TECHS) TECHS = (await OF.get('/api/admin/technicians')).technicians; return TECHS; }
+    function techChip(t) { return `<span class="badge no-dot" style="background:${t.color}1a;color:${t.color}">${t.is_lead ? '★ ' : ''}${OF.escape(t.name)}</span>`; }
 
     // Run an action; if the slot is at capacity, ask to override and retry with force.
     async function doForce(fn) {
@@ -44,8 +47,9 @@ const OF = window.OF;
     }
 
     async function openDrawer(id) {
-      const { appointment: a, invoices } = await OF.get('/api/admin/appointments/'+id);
+      const { appointment: a, invoices, technicians } = await OF.get('/api/admin/appointments/'+id);
       const isReq = a.status==='requested';
+      const crew = technicians || [];
       const slots = (a.requested_slots||[]);
       const dr = OF.drawer(`
         <div class="modal-head"><h3>${OF.escape(a.customer_name)}</h3><button class="x" data-close>&times;</button></div>
@@ -62,6 +66,8 @@ const OF = window.OF;
           ${isReq?`<div class="card card-pad" style="margin-bottom:16px"><h4 style="margin-bottom:10px">Confirm a time</h4>
             ${slots.length?slots.map((s,i)=>`<label class="row" style="gap:10px;padding:8px 0;cursor:pointer"><input type="radio" name="slot" value="${i}" style="width:auto"><b>${OF.dateTime(s.start)}</b></label>`).join(''):'<p class="muted small">No proposed times.</p>'}
             <button class="btn btn-primary btn-block" id="confirmBtn" style="margin-top:10px">Confirm appointment</button></div>`:''}
+          ${a.status!=='canceled'?`<div class="card card-pad" style="margin-bottom:16px"><div class="row between" style="margin-bottom:8px"><h4 style="margin:0">Assigned crew</h4><button class="btn btn-ghost btn-xs" id="assignBtn">Assign</button></div>
+            <div id="crewBox" class="row wrap" style="gap:6px">${crew.length?crew.map(techChip).join(''):'<span class="muted small">No one assigned yet.</span>'}</div></div>`:''}
           <div class="field"><label>Internal notes</label><textarea id="internalNotes">${OF.escape(a.internal_notes||'')}</textarea></div>
           <button class="btn btn-secondary btn-sm" id="saveNotes">Save notes</button>
           <hr class="divider">
@@ -83,6 +89,7 @@ const OF = window.OF;
         </div>`, { wide:true });
 
       const reload = () => { dr.close(); refresh(); };
+      dr.q('#assignBtn')?.addEventListener('click', ()=>assignModal(id, crew, (updated)=>{ dr.q('#crewBox').innerHTML = updated.length?updated.map(techChip).join(''):'<span class="muted small">No one assigned yet.</span>'; }));
       dr.q('#saveNotes')?.addEventListener('click', async()=>{ await OF.patch('/api/admin/appointments/'+id,{internalNotes:dr.q('#internalNotes').value}); OF.toast('Notes saved','ok'); });
       dr.q('#confirmBtn')?.addEventListener('click', async()=>{ const sel=dr.el.querySelector('input[name=slot]:checked'); if(!sel) return OF.toast('Pick a time first','error'); if(await doForce(force=>OF.post(`/api/admin/appointments/${id}/confirm`,{slotIndex:+sel.value,notify:true,force}))){ OF.toast('Confirmed & customer notified','ok'); reload(); } });
       dr.q('#rescheduleBtn')?.addEventListener('click', async()=>{ const date=dr.q('#rDate').value,time=dr.q('#rTime').value; if(!date||!time) return OF.toast('Pick date & time','error'); if(await doForce(force=>OF.patch('/api/admin/appointments/'+id,{date,time,notify:true,force}))){ OF.toast('Rescheduled','ok'); reload(); } });
@@ -94,6 +101,31 @@ const OF = window.OF;
         else { await OF.patch('/api/admin/appointments/'+id,{status:act}); OF.toast(act==='completed'?'Marked completed':'Updated','ok'); }
         reload();
       }));
+    }
+
+    async function assignModal(apptId, current, onSaved) {
+      await loadTechs();
+      const sel = new Set(current.map(t => t.id));
+      let lead = (current.find(t => t.is_lead) || {}).id || null;
+      const m = OF.modal(`<div class="modal-head"><h3>Assign crew</h3><button class="x" data-close>&times;</button></div>
+        <div class="modal-body">
+          <div id="techList">${TECHS.length ? '' : '<p class="muted small">No technicians yet. Add one below.</p>'}</div>
+          <div class="row" style="gap:8px;margin-top:10px"><input id="newTech" placeholder="Add a technician name…" style="flex:1"><button class="btn btn-secondary btn-sm" id="addTech">Add</button></div>
+        </div>
+        <div class="modal-foot"><button class="btn btn-secondary" data-close>Cancel</button><button class="btn btn-primary" id="saveAssign">Save</button></div>`);
+      function renderList() {
+        m.q('#techList').innerHTML = TECHS.map(t => `<label class="row between" style="gap:10px;padding:8px 0;border-bottom:1px solid var(--line-2);cursor:pointer">
+          <span class="row" style="gap:10px"><input type="checkbox" class="tk" data-id="${t.id}" ${sel.has(t.id) ? 'checked' : ''} style="width:auto"><span class="badge no-dot" style="background:${t.color}1a;color:${t.color}">${OF.escape(t.name)}</span></span>
+          <label class="row tiny muted" style="gap:5px;cursor:pointer"><input type="radio" name="lead" class="ld" data-id="${t.id}" ${lead === t.id ? 'checked' : ''} ${sel.has(t.id) ? '' : 'disabled'} style="width:auto"> lead</label></label>`).join('') || '<p class="muted small">No technicians yet. Add one below.</p>';
+        m.el.querySelectorAll('.tk').forEach(c => c.onchange = () => { const id = +c.dataset.id; if (c.checked) sel.add(id); else { sel.delete(id); if (lead === id) lead = null; } renderList(); });
+        m.el.querySelectorAll('.ld').forEach(r => r.onchange = () => { lead = +r.dataset.id; });
+      }
+      renderList();
+      m.q('#addTech').onclick = async () => { const name = m.q('#newTech').value.trim(); if (!name) return; try { const r = await OF.post('/api/admin/technicians', { name }); TECHS.push(r.technician); sel.add(r.technician.id); m.q('#newTech').value = ''; renderList(); } catch (e) { OF.toast(e.message, 'error'); } };
+      m.q('#saveAssign').onclick = async () => {
+        try { const r = await OF.post(`/api/admin/appointments/${apptId}/assign`, { technicianIds: [...sel], leadId: lead }); OF.toast('Crew updated', 'ok'); onSaved && onSaved(r.technicians); m.close(); }
+        catch (e) { OF.toast(e.message, 'error'); }
+      };
     }
 
     async function newAppointment(prefill={}) {

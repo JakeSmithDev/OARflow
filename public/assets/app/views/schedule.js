@@ -3,6 +3,8 @@ const OF = window.OF;
 
     const TZ = () => OF.tenant.timezone;
     let view = OF.qs('view') || 'week';
+    let techFilter = '';
+    let TECHS = null;
     let cursor = OF.qs('date') || new Intl.DateTimeFormat('en-CA',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
 
     const ymdUTC = (d) => new Intl.DateTimeFormat('en-CA',{timeZone:'UTC',year:'numeric',month:'2-digit',day:'2-digit'}).format(d);
@@ -58,11 +60,15 @@ const OF = window.OF;
           <button class="arrow" id="prev">‹</button><button class="arrow" id="next">›</button>
           <button class="btn btn-secondary btn-sm" id="today">Today</button>
           <span class="sched-title">${title}</span>
-          <div class="segmented" style="margin-left:auto" id="viewseg">
+          <select id="techfilter" style="margin-left:auto;max-width:190px"><option value="">All technicians</option></select>
+          <div class="segmented" id="viewseg">
             ${['day','week','month'].map(v=>`<button data-v="${v}" class="${view===v?'active':''}">${v[0].toUpperCase()+v.slice(1)}</button>`).join('')}
           </div>
         </div>
         <div id="body"><div class="loading-page"><span class="spinner"></span></div></div>`;
+      if (!TECHS) { try { TECHS = (await OF.get('/api/admin/technicians')).technicians; } catch { TECHS = []; } }
+      const tf = document.getElementById('techfilter');
+      if (tf) { tf.innerHTML = `<option value="">All technicians</option>` + TECHS.map(t=>`<option value="${t.id}" ${String(techFilter)===String(t.id)?'selected':''}>${t.name}</option>`).join(''); tf.onchange=()=>{ techFilter=tf.value; render(root); }; }
       const step = view==='day'?1:view==='week'?7:0;
       document.getElementById('prev').onclick=()=>{ cursor = view==='month'? addMonth(-1): addYmd(cursor,-step); render(root); };
       document.getElementById('next').onclick=()=>{ cursor = view==='month'? addMonth(1): addYmd(cursor,step); render(root); };
@@ -70,6 +76,7 @@ const OF = window.OF;
       document.querySelectorAll('#viewseg [data-v]').forEach(b=>b.onclick=()=>{ view=b.dataset.v; render(root); });
 
       const data = await OF.get(`/api/admin/appointments/calendar?from=${r.from}T00:00:00.000Z&to=${r.to}T00:00:00.000Z`);
+      if (techFilter) data.appointments = data.appointments.filter(a=>(a.technicians||[]).some(t=>String(t.id)===String(techFilter)));
       const byDay = {}; data.appointments.forEach(a=>{ const k=tzYmd(a.scheduled_start); (byDay[k]=byDay[k]||[]).push(a); });
       const body = document.getElementById('body');
       if (view==='day') renderDay(body, byDay[cursor]||[], dayMeta(cursor,data));
@@ -78,7 +85,8 @@ const OF = window.OF;
     }
     function addMonth(n){ const [y,m]=cursor.split('-').map(Number); const d=new Date(Date.UTC(y,m-1+n,1)); return ymdUTC(d); }
 
-    function jobRowSmall(a){ const movable = a.status!=='completed' && a.status!=='canceled'; return `<div class="wc-job${movable?' movable':''}" ${movable?`draggable="true" data-id="${a.id}" data-time="${tzHm(a.scheduled_start)}"`:''} style="border-left-color:${a.service_color||'var(--brand)'}" onclick="OF.go('/admin/appointments?id=${a.id}')"><b>${OF.time(a.scheduled_start)}</b> ${OF.escape(a.customer_name)}<div class="muted" style="font-size:11px">${OF.escape(a.service_name||'')}</div></div>`; }
+    function techTag(a){ const lead=(a.technicians||[]).find(t=>t.is_lead)||(a.technicians||[])[0]; if(!lead) return ''; const extra=(a.technicians||[]).length-1; return `<div style="font-size:11px;margin-top:2px"><span class="m-dot" style="background:${lead.color};display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:4px"></span>${OF.escape(lead.name)}${extra>0?` +${extra}`:''}</div>`; }
+    function jobRowSmall(a){ const movable = a.status!=='completed' && a.status!=='canceled'; return `<div class="wc-job${movable?' movable':''}" ${movable?`draggable="true" data-id="${a.id}" data-time="${tzHm(a.scheduled_start)}"`:''} style="border-left-color:${(((a.technicians||[]).find(t=>t.is_lead)||{}).color)||a.service_color||'var(--brand)'}" onclick="OF.go('/admin/appointments?id=${a.id}')"><b>${OF.time(a.scheduled_start)}</b> ${OF.escape(a.customer_name)}<div class="muted" style="font-size:11px">${OF.escape(a.service_name||'')}</div>${techTag(a)}</div>`; }
 
     function renderDay(body, appts, meta) {
       const max = loadOf(appts);

@@ -211,6 +211,39 @@ async function main() {
     assert.ok(text.split('\n')[0].includes('Month'), 'csv header present');
   });
 
+  // --- Technicians + assignment (internal dispatch; never on public booking) ---
+  let techId;
+  await check('create a technician', async () => {
+    const { data } = await call('/api/admin/technicians', { method: 'POST', body: { name: 'Marco Diaz', color: '#2563eb', phone: '410-555-0142' } });
+    assert.ok(data.ok); techId = data.technician.id; assert.equal(data.technician.is_active, true);
+  });
+  let assignApptId;
+  await check('assign a technician to an appointment (lead)', async () => {
+    assignApptId = (await call('/api/admin/appointments')).data.appointments.find((a) => a.scheduled_start).id;
+    const { data } = await call(`/api/admin/appointments/${assignApptId}/assign`, { method: 'POST', body: { technicianIds: [techId], leadId: techId } });
+    assert.ok(data.ok); assert.equal(data.technicians.length, 1); assert.equal(data.technicians[0].is_lead, true);
+  });
+  await check('assignment shows on appointment detail + calendar', async () => {
+    const detail = (await call('/api/admin/appointments/' + assignApptId)).data;
+    assert.equal(detail.technicians[0].name, 'Marco Diaz');
+    const cal = (await call('/api/admin/appointments/calendar?from=2026-01-01T00:00:00.000Z&to=2027-01-01T00:00:00.000Z')).data;
+    const appt = cal.appointments.find((a) => a.id === assignApptId);
+    assert.ok(appt.technicians.some((t) => t.id === techId));
+  });
+  await check('reassigning replaces the set (idempotent)', async () => {
+    await call(`/api/admin/appointments/${assignApptId}/assign`, { method: 'POST', body: { technicianIds: [techId], leadId: techId } });
+    const { data } = await call('/api/admin/appointments/' + assignApptId);
+    assert.equal(data.technicians.length, 1);
+  });
+  await check('assigning an unknown technician is rejected', async () => {
+    const { status } = await call(`/api/admin/appointments/${assignApptId}/assign`, { method: 'POST', body: { technicianIds: [999999] } });
+    assert.equal(status, 400);
+  });
+  await check('technician field-app link is generated', async () => {
+    const { data } = await call(`/api/admin/technicians/${techId}/field-link`, { method: 'POST' });
+    assert.ok(data.url.includes('/field?token='));
+  });
+
   // --- Drag-and-drop reschedule (date+time PATCH used by the calendar) ---
   await check('reschedule appointment by date+time (DnD path)', async () => {
     const appt = (await call('/api/admin/appointments')).data.appointments.find((a) => a.scheduled_start);
