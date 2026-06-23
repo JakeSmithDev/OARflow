@@ -5,8 +5,22 @@ const OF = window.OF;
     async function refresh() {
       const d = await OF.get('/api/admin/developer');
       EVENTS = d.events;
+      renderSystem();
       renderKeys(d.apiKeys);
       renderHooks(d.endpoints, d.deliveries);
+    }
+
+    async function renderSystem() {
+      let s; try { s = await OF.get('/api/admin/developer/system'); } catch { return; }
+      const pf = s.preflight; const dr = s.drivers;
+      const chip = (label, val, ok) => `<span class="badge ${ok ? 'ok' : 'warn'} no-dot" style="margin:0 6px 6px 0">${label}: ${OF.escape(val)}</span>`;
+      const items = (arr, color) => arr.map((i) => `<div class="small" style="padding:3px 0"><span style="color:var(--${color})">●</span> ${OF.escape(i.message)} <span class="tiny muted">— ${OF.escape(i.fix)}</span></div>`).join('');
+      document.getElementById('system').innerHTML = `<div class="card card-pad" style="margin-bottom:18px;border-left:4px solid var(--${pf.ok ? 'ok' : 'danger'})">
+        <div class="row between" style="margin-bottom:8px"><strong>Go-live status</strong>${pf.ok ? '<span class="badge ok no-dot">Ready</span>' : `<span class="badge danger no-dot">${pf.critical.length} blocker${pf.critical.length === 1 ? '' : 's'}</span>`}</div>
+        <div class="row wrap">${chip('database', dr.database, dr.database !== 'pglite')}${chip('storage', dr.storage, dr.storage === 's3')}${chip('email', dr.email, dr.email !== 'console')}${chip('jobs', dr.inngest, true)}</div>
+        ${pf.critical.length ? `<div style="margin-top:8px">${items(pf.critical, 'danger')}</div>` : ''}
+        ${pf.warnings.length ? `<details style="margin-top:6px"><summary class="small muted" style="cursor:pointer">${pf.warnings.length} warning(s)</summary>${items(pf.warnings, 'warn')}</details>` : ''}
+        <p class="tiny muted" style="margin-top:8px">Run <code>npm run doctor</code> on your server for the full preflight. Each business configures its own Stripe / SMS / email under Settings → Integrations.</p></div>`;
     }
 
     function renderKeys(keys) {
@@ -62,6 +76,6 @@ const OF = window.OF;
     }
 
     OF.page({ active: 'developer', title: 'Developer', subtitle: 'API keys, webhooks & Zapier', render: async (root) => {
-      root.innerHTML = '<div id="keys" class="card card-pad" style="margin-bottom:18px"></div><div id="hooks" class="card card-pad"></div>';
+      root.innerHTML = '<div id="system"></div><div id="keys" class="card card-pad" style="margin-bottom:18px"></div><div id="hooks" class="card card-pad"></div>';
       await refresh();
     } });

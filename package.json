@@ -15,6 +15,8 @@
     "seed": "node scripts/seed.js",
     "setup": "node scripts/migrate.js && node scripts/seed.js",
     "encrypt-secrets": "node scripts/encrypt-secrets.js",
+    "doctor": "node scripts/doctor.js",
+    "new-tenant": "node scripts/new-tenant.js",
     "smoke": "node scripts/smoke.js"
   },
   "dependencies": {

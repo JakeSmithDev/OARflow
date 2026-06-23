@@ -10,6 +10,7 @@ import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { config, inngestConfigured } from './config.js';
 import { serverError } from './lib/http.js';
+import { checkConfig } from './lib/preflight.js';
 
 import stripeWebhookRouter from './routes/stripe_webhook.js';
 import publicRouter from './routes/public.js';
@@ -45,6 +46,27 @@ export function createApp() {
   app.set('trust proxy', true);
   app.disable('x-powered-by');
 
+  // --- Security headers (defense in depth; also covers non-Vercel hosting) ---
+  app.use((req, res, next) => {
+    res.set('X-Content-Type-Options', 'nosniff');
+    res.set('X-Frame-Options', 'SAMEORIGIN');
+    res.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+    res.set('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
+    if (config.isProduction) res.set('Strict-Transport-Security', 'max-age=15552000; includeSubDomains');
+    // CSP is opt-in (set CONTENT_SECURITY_POLICY) so a misconfigured policy can
+    // never break a launch. A tested allowlist value ships in docs/DEPLOY_VERCEL.md.
+    if (process.env.CONTENT_SECURITY_POLICY) res.set('Content-Security-Policy', process.env.CONTENT_SECURITY_POLICY);
+    next();
+  });
+
+  // Log production-critical config issues once per cold start (never throws).
+  if (config.isProduction) {
+    try {
+      const pf = checkConfig();
+      if (!pf.ok) console.warn('[preflight] PRODUCTION CONFIG ISSUES:', pf.critical.map((c) => c.id).join(', '), '— run `npm run doctor` for details.');
+    } catch { /* preflight is best-effort */ }
+  }
+
   // Stripe webhook needs the raw body for signature verification — mount BEFORE JSON parser.
   app.use('/api/stripe/webhook', express.raw({ type: '*/*' }), stripeWebhookRouter);
 
@@ -54,7 +76,14 @@ export function createApp() {
   app.use(express.urlencoded({ extended: true }));
 
   app.use('/api', (req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
-  app.get('/api/health', (req, res) => res.json({ ok: true, env: config.env, time: new Date().toISOString() }));
+
+  // Liveness/readiness for uptime monitors + deploy gates. Pings the DB; returns
+  // 503 if the database is unreachable. No secrets, no auth.
+  app.get('/api/health', async (req, res) => {
+    let db = 'down';
+    try { const { query } = await import('./lib/db.js'); await query('SELECT 1'); db = 'up'; } catch { db = 'down'; }
+    res.status(db === 'up' ? 200 : 503).json({ ok: db === 'up', env: config.env, db, time: new Date().toISOString() });
+  });
 
   // --- JSON APIs ----------------------------------------------------------
   app.use('/api/admin', adminApiRouter);

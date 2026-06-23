@@ -30,6 +30,11 @@ async function s3Client() {
 /** Save bytes and record a files row. Returns the file row. */
 export async function saveFile(tenant, { buffer, filename, contentType, ownerType, ownerId, kind, createdBy, meta }) {
   const driver = storageDriver();
+  // On serverless (Vercel) the filesystem is ephemeral — refuse to persist to
+  // local disk in production where the upload would be silently lost.
+  if (driver === 'local' && config.isProduction) {
+    throw new Error('Object storage is not configured. Set S3_BUCKET / S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY (S3, Cloudflare R2, or MinIO) to store files in production.');
+  }
   const key = `tenants/${tenant.id}/${kind || 'file'}/${randomToken(8)}-${safeName(filename)}`;
   if (driver === 's3') {
     const { PutObjectCommand } = await import('@aws-sdk/client-s3');
