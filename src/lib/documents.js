@@ -49,7 +49,12 @@ export async function createDocument(tenant, { templateId, customerId, appointme
   let tpl = null; let rawBody = body; let requiresSig = true; let docTitle = title;
   if (templateId) { tpl = await getTemplate(tenant, templateId); if (!tpl) return { ok: false, error: 'Unknown template.' }; rawBody = tpl.body; requiresSig = tpl.requires_signature; docTitle = docTitle || tpl.name; }
   let appointment = null;
-  if (appointmentId) appointment = await queryOne('SELECT a.*, s.name AS service_name FROM appointments a LEFT JOIN service_types s ON s.id=a.service_type_id WHERE a.tenant_id=$1 AND a.id=$2', [tenant.id, appointmentId]);
+  if (appointmentId) {
+    // The appointment must belong to THIS customer — otherwise the document would
+    // merge another customer's service/date context.
+    appointment = await queryOne('SELECT a.*, s.name AS service_name FROM appointments a LEFT JOIN service_types s ON s.id=a.service_type_id WHERE a.tenant_id=$1 AND a.id=$2 AND a.customer_id=$3', [tenant.id, appointmentId, customerId]);
+    if (!appointment) return { ok: false, error: 'That appointment does not belong to this customer.' };
+  }
   const rendered = await renderBody(tenant, rawBody || '', { customer, appointment });
   const doc = await queryOne(
     `INSERT INTO documents (tenant_id, customer_id, appointment_id, template_id, title, body, requires_signature, access_token, created_by)

@@ -392,6 +392,11 @@ async function main() {
     const r = await call('/api/documents/sign', { method: 'POST', auth: false, body: { token: d2.access_token } });
     assert.equal(r.status, 400);
   });
+  await check('[codex] document rejects appointment from another customer', async () => {
+    // assignApptId belongs to customer 1; pairing it with customer 2 must be rejected.
+    const r = await call('/api/admin/documents', { method: 'POST', body: { customerId: 2, templateId: tplId, appointmentId: assignApptId } });
+    assert.equal(r.status, 400);
+  });
 
   // --- Route optimization + GPS ---
   await check('routing requires technicianId + date', async () => {
@@ -643,6 +648,12 @@ async function main() {
     const a1 = (await call('/api/admin/reviews/request', { method: 'POST', body: { customerId: appt.customer_id, appointmentId: appt.id } })).data.request;
     const a2 = (await call('/api/admin/reviews/request', { method: 'POST', body: { customerId: appt.customer_id, appointmentId: appt.id } })).data.request;
     assert.equal(a1.id, a2.id);
+  });
+  await check('[codex] review request rejects mismatched customer/appointment', async () => {
+    const appt = (await call('/api/admin/appointments')).data.appointments.find((a) => a.customer_id === 1);
+    const otherCustomer = appt.customer_id === 2 ? 1 : 2;
+    const r = await call('/api/admin/reviews/request', { method: 'POST', body: { customerId: otherCustomer, appointmentId: appt.id } });
+    assert.equal(r.status, 400);
   });
 
   // --- Recurring plans + subscriptions ---

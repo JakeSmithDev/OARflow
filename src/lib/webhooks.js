@@ -103,10 +103,14 @@ async function attempt(delivery, endpoint) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-OARFlow-Event': delivery.event, 'X-OARFlow-Signature': sign(endpoint.secret, body) },
       body,
+      // Do NOT follow redirects: a validated https endpoint could 3xx to
+      // localhost/metadata/private targets and defeat the SSRF guard.
+      redirect: 'manual',
       signal: AbortSignal.timeout(8000),
     });
     code = res.status;
-    if (!res.ok) error = `HTTP ${res.status}`;
+    if (code >= 300 && code < 400) error = 'redirect not allowed';
+    else if (!res.ok) error = `HTTP ${res.status}`;
   } catch (e) { error = e.message; }
   const ok = code >= 200 && code < 300;
   const attempts = delivery.attempts + 1;
@@ -121,10 +125,11 @@ async function attempt(delivery, endpoint) {
   return ok;
 }
 
-/** Deliver all due deliveries for a tenant (pending/failed with next_attempt due). */
+/** Deliver all DUE deliveries for a tenant. Only 'pending' rows retry; 'failed'
+ *  is terminal (after the attempt cap) so dead endpoints aren't retried forever. */
 export async function deliverDue(tenantId, max = 50) {
   const due = await query(
-    "SELECT * FROM webhook_deliveries WHERE tenant_id=$1 AND status IN ('pending','failed') AND next_attempt_at <= now() ORDER BY id LIMIT $2",
+    "SELECT * FROM webhook_deliveries WHERE tenant_id=$1 AND status='pending' AND next_attempt_at <= now() ORDER BY id LIMIT $2",
     [tenantId, max],
   );
   let delivered = 0;

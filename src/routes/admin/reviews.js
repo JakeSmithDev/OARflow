@@ -29,7 +29,12 @@ router.post('/request', requirePermission('reviews.manage'), asyncHandler(async 
   if (!customerId) return badRequest(res, 'A customer is required.');
   if (!(await ownsId(req.tenant.id, 'customers', customerId))) return badRequest(res, 'Unknown customer.');
   const appointmentId = toInt(b.appointmentId);
-  if (appointmentId && !(await ownsId(req.tenant.id, 'appointments', appointmentId))) return badRequest(res, 'Unknown appointment.');
+  if (appointmentId) {
+    // Appointment must belong to THIS customer (not just the tenant), so the
+    // request can't be tied to another customer's service context.
+    const a = await queryOne('SELECT 1 FROM appointments WHERE tenant_id=$1 AND id=$2 AND customer_id=$3', [req.tenant.id, appointmentId, customerId]);
+    if (!a) return badRequest(res, 'That appointment does not belong to this customer.');
+  }
   const reqRow = await createReviewRequest(req.tenant, { customerId, appointmentId: appointmentId || null, channel: b.channel });
   const r = await sendReviewRequest(req.tenant, reqRow);
   await logAudit({ tenantId: req.tenant.id, adminUsername: req.admin.username, action: 'review_request', entityType: 'customer', entityId: customerId });
