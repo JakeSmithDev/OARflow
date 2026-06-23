@@ -91,9 +91,17 @@ export function defaultTenantSettings(overrides = {}) {
         quietHours: { start: '21:00', end: '08:00' },
         optInText: 'Reply STOP to opt out, HELP for help. Msg & data rates may apply.',
       },
+      // AI voice receptionist — SCAFFOLD ONLY (no live telephony is wired yet).
       voice: {
-        provider: 'none', enabled: false, accountSid: '', authToken: '', fromNumber: '',
-        aiProvider: 'none', forwardTo: '', greeting: '', transcripts: true,
+        provider: 'none',          // none|vapi|retell|twilio (scaffold)
+        enabled: false,
+        accountSid: '', authToken: '', fromNumber: '',
+        aiProvider: 'none', transcripts: true,
+        greeting: 'Thanks for calling! I can help you book a service or take a message.',
+        // Where/when to hand a call off to a human.
+        handoff: { transferTo: '', onUrgent: true, onRequest: true, afterHoursVoicemail: true },
+        // What to do when a call is missed or goes to voicemail.
+        missedCall: { textBack: true, message: 'Sorry we missed your call! Reply here and we\'ll help you book a service.', createFollowUp: true },
       },
       // CSV/IIF export now; a live API sync (e.g. QuickBooks Online) can be added
       // later behind the same accounting provider interface.

@@ -466,6 +466,39 @@ async function main() {
     assert.equal(data.history[0].technician_name, 'Marco Diaz');
   });
 
+  // --- AI receptionist SCAFFOLD (no live voice) ---
+  await check('receptionist reports scaffold (not live)', async () => {
+    const { data } = await call('/api/admin/voice');
+    assert.equal(data.status.live, false); assert.equal(data.status.scaffold, true);
+    assert.ok(!('authToken' in data.settings), 'secrets never returned');
+  });
+  await check('simulate a booking call captures intent', async () => {
+    const { data } = await call('/api/admin/voice/simulate', { method: 'POST', body: { scenario: 'booking' } });
+    assert.ok(data.ok); assert.equal(data.call.intent.type, 'book'); assert.equal(data.call.status, 'completed');
+  });
+  await check('urgent call triggers handoff', async () => {
+    const { data } = await call('/api/admin/voice/simulate', { method: 'POST', body: { scenario: 'transfer' } });
+    assert.equal(data.call.handoff, true); assert.equal(data.call.status, 'transferred'); assert.ok(data.call.handoff_reason);
+  });
+  await check('missed call runs the text-back workflow', async () => {
+    const { data } = await call('/api/admin/voice/simulate', { method: 'POST', body: { scenario: 'missed' } });
+    assert.equal(data.call.status, 'missed'); assert.ok(data.missed.ran);
+  });
+  await check('voice webhook records + dedupes by external id', async () => {
+    const body = { id: 'ext_call_777', from: '+14105550123', to: '+14105551169', status: 'completed', transcript: 'I want to schedule a service' };
+    const a = await call('/api/webhooks/voice/mock', { method: 'POST', auth: false, body });
+    assert.ok(a.data.ok); const id1 = a.data.callId;
+    const b = await call('/api/webhooks/voice/mock', { method: 'POST', auth: false, body });
+    assert.equal(b.data.callId, id1, 'idempotent on external id');
+  });
+  await check('receptionist settings encrypt the auth token', async () => {
+    const r = await call('/api/admin/voice/settings', { method: 'PUT', body: { provider: 'vapi', enabled: true, authToken: 'super-secret-key', greeting: 'Hello' } });
+    assert.ok(r.data.ok);
+    const back = await call('/api/admin/voice');
+    assert.ok(!JSON.stringify(back.data.settings).includes('super-secret-key'), 'token not exposed');
+    assert.equal(back.data.settings.hasCredentials, true);
+  });
+
   // --- Reviews / NPS (no rating gating) ---
   await check('set a public review platform URL', async () => {
     const { data } = await call('/api/admin/reviews/settings', { method: 'PUT', body: { platforms: { google: 'https://g.page/r/demo/review' } } });
