@@ -20,6 +20,7 @@ import complianceRouter from './compliance.js';
 import devicesRouter from './devices.js';
 import voiceRouter from './voice.js';
 import developerRouter from './developer.js';
+import commissionsRouter from './commissions.js';
 
 const router = express.Router();
 
@@ -43,5 +44,6 @@ router.use('/compliance', complianceRouter);
 router.use('/devices', devicesRouter);
 router.use('/voice', voiceRouter);
 router.use('/developer', developerRouter);
+router.use('/commissions', commissionsRouter);
 
 export default router;

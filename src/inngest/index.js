@@ -42,14 +42,28 @@ defineWorkflow({
   trigger: { event: 'appointment.completed' },
   fn: async ({ event }) => {
     await recordJobRun(event.data.tenantId, 'appointment.completed', { appointmentId: event.data.appointmentId });
-    // Enqueue a post-service review request (idempotent per appointment).
     const t = await getTenantById(event.data.tenantId);
-    if (t?.settings?.reviews?.enabled && t.settings.reviews.autoRequest) {
-      const { queryOne } = await import('../lib/db.js');
+    const { queryOne } = await import('../lib/db.js');
+    const appt = await queryOne('SELECT * FROM appointments WHERE id=$1 AND tenant_id=$2', [event.data.appointmentId, event.data.tenantId]);
+    // Enqueue a post-service review request (idempotent per appointment).
+    if (appt && t?.settings?.reviews?.enabled && t.settings.reviews.autoRequest) {
       const { maybeAutoRequest } = await import('../lib/reviews.js');
-      const appt = await queryOne('SELECT * FROM appointments WHERE id=$1 AND tenant_id=$2', [event.data.appointmentId, event.data.tenantId]);
-      if (appt) await maybeAutoRequest(t, appt).catch(() => {});
+      await maybeAutoRequest(t, appt).catch(() => {});
     }
+    // Accrue revenue/flat commissions for the assigned crew (idempotent).
+    if (appt && t) { const { accrueForAppointment } = await import('../lib/commissions.js'); await accrueForAppointment(t, appt).catch(() => {}); }
+  },
+});
+
+// Accrue collected-basis commissions when an invoice is paid (idempotent).
+defineWorkflow({
+  id: 'on-invoice-paid',
+  trigger: { event: 'invoice.paid' },
+  fn: async ({ event }) => {
+    const t = await getTenantById(event.data.tenantId);
+    const { queryOne } = await import('../lib/db.js');
+    const inv = await queryOne('SELECT * FROM invoices WHERE id=$1 AND tenant_id=$2', [event.data.invoiceId, event.data.tenantId]);
+    if (t && inv) { const { accrueForInvoicePaid } = await import('../lib/commissions.js'); await accrueForInvoicePaid(t, inv).catch(() => {}); }
   },
 });
 

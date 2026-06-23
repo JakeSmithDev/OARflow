@@ -541,6 +541,42 @@ async function main() {
     assert.ok(dlv.some((d) => d.status === 'delivered' && d.response_code === 200), 'signed delivery succeeded to the sink');
   });
 
+  // --- Commission tracking ---
+  let commAppt;
+  await check('create a commission rule (10% of revenue)', async () => {
+    const { data } = await call('/api/admin/commissions/rules', { method: 'POST', body: { name: 'Tech 10%', technicianId: techId, basis: 'revenue', percent: 10 } });
+    assert.ok(data.ok);
+  });
+  await check('completing an assigned job accrues commission', async () => {
+    const services = (await call('/api/admin/appointments/meta/services')).data.services;
+    const created = await call('/api/admin/appointments', { method: 'POST', body: { customer: { name: 'Commission Test' }, serviceId: services[0].id, date: '2026-08-10', time: '10:00', force: true } });
+    commAppt = created.data.appointment.id;
+    await call(`/api/admin/appointments/${commAppt}/assign`, { method: 'POST', body: { technicianIds: [techId], leadId: techId } });
+    await call(`/api/admin/appointments/${commAppt}`, { method: 'PATCH', body: { status: 'completed' } });
+    await new Promise((r) => setTimeout(r, 500));
+    const d = await call('/api/admin/commissions');
+    const e = d.data.entries.find((x) => x.appointment_id === commAppt && x.technician_id === techId);
+    assert.ok(e, 'commission accrued for the assigned tech'); assert.equal(e.basis, 'revenue'); assert.ok(e.amount_cents > 0);
+  });
+  await check('completion accrual is idempotent', async () => {
+    await call(`/api/admin/appointments/${commAppt}`, { method: 'PATCH', body: { status: 'completed' } });
+    await new Promise((r) => setTimeout(r, 350));
+    const d = await call('/api/admin/commissions');
+    assert.equal(d.data.entries.filter((x) => x.appointment_id === commAppt && x.technician_id === techId).length, 1);
+  });
+  await check('per-tech summary + mark paid', async () => {
+    const before = (await call('/api/admin/commissions')).data.summary.find((s) => s.technicianId === techId);
+    assert.ok(before && before.accruedCents > 0);
+    await call('/api/admin/commissions/pay', { method: 'POST', body: { technicianId: techId } });
+    const after = await call('/api/admin/commissions?status=accrued');
+    assert.ok(!after.data.entries.some((x) => x.technician_id === techId));
+  });
+  await check('commission CSV export', async () => {
+    const res = await fetch(base + '/api/admin/commissions/export.csv', { headers: { Cookie: cookie } });
+    assert.equal(res.headers.get('content-type').split(';')[0], 'text/csv');
+    assert.ok((await res.text()).split('\n')[0].includes('Commission'));
+  });
+
   // --- Reviews / NPS (no rating gating) ---
   await check('set a public review platform URL', async () => {
     const { data } = await call('/api/admin/reviews/settings', { method: 'PUT', body: { platforms: { google: 'https://g.page/r/demo/review' } } });
