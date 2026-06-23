@@ -438,6 +438,34 @@ async function main() {
     assert.ok(data.ok); assert.equal(data.application.applicator_name, 'Marco Diaz');
   });
 
+  // --- Devices / traps + QR inspections ---
+  let deviceId; let deviceQr;
+  await check('create a device with a QR scan link', async () => {
+    const { data } = await call('/api/admin/devices', { method: 'POST', body: { customerId: 1, label: 'Bait Station #1', deviceType: 'bait_station', locationNotes: 'NE corner' } });
+    assert.ok(data.ok); deviceId = data.device.id; deviceQr = data.device.qr_token;
+    assert.ok(data.device.scanUrl.includes('/device?d='));
+  });
+  await check('list devices for a customer', async () => {
+    const { data } = await call('/api/admin/devices?customerId=1');
+    assert.ok(data.devices.some((d) => d.id === deviceId));
+  });
+  await check('public QR endpoint returns device + history', async () => {
+    assert.equal((await call('/api/devices/nope', { auth: false })).status, 404);
+    const { data } = await call('/api/devices/' + deviceQr, { auth: false });
+    assert.ok(data.ok); assert.equal(data.device.label, 'Bait Station #1');
+  });
+  await check('inspection requires a valid technician field token', async () => {
+    const bad = await call(`/api/devices/${deviceQr}/inspect`, { method: 'POST', auth: false, body: { status: 'ok' } });
+    assert.equal(bad.status, 400);
+    const ok = await call(`/api/devices/${deviceQr}/inspect`, { method: 'POST', auth: false, body: { fieldToken, status: 'activity', activityLevel: 'low', actionTaken: 'Rebaited' } });
+    assert.ok(ok.data.ok);
+  });
+  await check('device history reflects the inspection', async () => {
+    const { data } = await call('/api/admin/devices/' + deviceId);
+    assert.ok(data.history.length >= 1); assert.equal(data.history[0].status, 'activity');
+    assert.equal(data.history[0].technician_name, 'Marco Diaz');
+  });
+
   // --- Reviews / NPS (no rating gating) ---
   await check('set a public review platform URL', async () => {
     const { data } = await call('/api/admin/reviews/settings', { method: 'PUT', body: { platforms: { google: 'https://g.page/r/demo/review' } } });

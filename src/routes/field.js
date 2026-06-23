@@ -10,6 +10,7 @@ import { decodeUpload, IMAGE_TYPES } from '../lib/uploads.js';
 import { sendAppointmentSms } from '../lib/notify_sms.js';
 import { mapsUrl } from '../lib/routing.js';
 import { listProducts, recordApplication, listApplications } from '../lib/compliance.js';
+import { listDevices } from '../lib/devices.js';
 import { scheduleForCompletion } from '../lib/follow_ups.js';
 import { emitEvent } from '../lib/events.js';
 import { zonedWallTimeToUtc, ymdInTimeZone } from '../lib/dates.js';
@@ -57,7 +58,8 @@ router.get('/jobs/:id', asyncHandler(async (req, res) => {
   const files = await listFiles(ctx.tenant, 'appointment', ctx.apptId);
   const applications = await listApplications(ctx.tenant, ctx.apptId);
   const products = await listProducts(ctx.tenant);
-  res.json({ ok: true, job: a, files, applications, products });
+  const devices = await listDevices(ctx.tenant, a.customer_id);
+  res.json({ ok: true, job: a, files, applications, products, devices, fieldToken: String(req.query.token || '') });
 }));
 
 // Log a chemical/material application from the field (snapshots the applicator).

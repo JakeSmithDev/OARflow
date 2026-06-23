@@ -20,6 +20,7 @@ import reviewsPublicRouter from './routes/reviews_public.js';
 import portalRouter from './routes/portal.js';
 import fieldRouter from './routes/field.js';
 import documentsPublicRouter from './routes/documents_public.js';
+import devicesPublicRouter from './routes/devices_public.js';
 import googleOAuthRouter from './routes/google_oauth.js';
 import cronRouter from './routes/cron.js';
 import smsWebhookRouter from './routes/sms_webhook.js';
@@ -63,6 +64,7 @@ export function createApp() {
   app.use('/api/portal', portalRouter);
   app.use('/api/field', fieldRouter);
   app.use('/api/documents', documentsPublicRouter);
+  app.use('/api/devices', devicesPublicRouter);
   app.use('/api/integrations/google', googleOAuthRouter);
   app.use('/api/webhooks/sms', smsWebhookRouter);
   app.use('/api/files', filesRouter);
@@ -86,6 +88,7 @@ export function createApp() {
   app.get(/^\/portal(\/.*)?$/, (req, res) => sendShell(res, 'portal/index.html'));
   app.get(/^\/field\/?$/, (req, res) => sendShell(res, 'field/index.html'));
   app.get(/^\/document(\/.*)?$/, (req, res) => sendShell(res, 'document/index.html'));
+  app.get(/^\/device(\/.*)?$/, (req, res) => sendShell(res, 'device/index.html'));
 
   // 404
   app.use((req, res) => {

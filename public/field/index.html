@@ -35,6 +35,7 @@
   <script>
     const esc=(s)=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     const token=new URLSearchParams(location.search).get('token');
+    if(token) try{ localStorage.setItem('oarflow_field_token', token); }catch{}
     const tfmt=(iso)=>iso?new Date(iso).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}):'—';
     let DATA=null;
     const api=(p,opts={})=>fetch('/api/field'+p,{...opts,headers:{'Content-Type':'application/json',...(opts.headers||{})}}).then(r=>r.json());
@@ -83,6 +84,9 @@
           <div class="row between"><strong>Photos</strong><label class="btn btn-secondary btn-sm" style="cursor:pointer">Add<input type="file" id="ph" accept="image/*" capture="environment" multiple hidden></label></div>
           <div class="thumbs" id="thumbs">${photos.map(p=>`<a href="${p.url}" target="_blank" rel="noopener"><img src="${p.url}"></a>`).join('')||'<span class="muted small">No photos yet.</span>'}</div>
         </div>
+        ${(d.devices||[]).length?`<div class="card card-pad" style="margin-top:14px"><strong>Devices &amp; stations</strong>
+          <div style="margin-top:8px">${d.devices.map(dv=>`<a href="/device?d=${dv.qr_token}" class="row between" style="padding:9px 0;border-bottom:1px solid var(--line-2);text-decoration:none;color:inherit"><span>${esc(dv.label)}<div class="tiny muted">${esc(dv.device_type)}${dv.last_status?' · last: '+esc(dv.last_status):''}</div></span><span class="muted">›</span></a>`).join('')}</div>
+          <p class="tiny muted" style="margin-top:8px">Tap a device (or scan its QR) to log an inspection.</p></div>`:''}
         <div class="card card-pad" style="margin-top:14px">
           <strong>Materials used</strong>
           <div id="matList" style="margin-top:6px">${(d.applications||[]).map(a=>`<div class="muted small" style="padding:4px 0">${esc(a.product_name)}${a.target_pest?' · '+esc(a.target_pest):''}</div>`).join('')||'<span class="muted small">None logged.</span>'}</div>

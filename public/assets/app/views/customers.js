@@ -55,7 +55,15 @@ const OF = window.OF;
             <div id="cardsBox"></div>
             ${d.cards.notConfigured?`<p class="tiny muted">Connect Stripe in Settings → Integrations to store cards on file.</p>`:''}
             ${d.cards.mock?`<p class="tiny muted">Demo mode — saved cards are simulated until a live processor is connected.</p>`:''}</div>
+          <div style="margin-bottom:16px"><div class="row between" style="margin-bottom:6px"><span class="muted tiny" style="text-transform:uppercase;letter-spacing:.04em;font-weight:700">Devices &amp; stations</span><button class="btn btn-secondary btn-xs" id="addDevBtn">Add device</button></div>
+            <div id="devBox"><p class="muted small">Loading…</p></div></div>
         </div>`, { wide:true });
+      function devHtml(devs){ return devs.length?devs.map(dv=>`<div class="row between" style="padding:7px 0;border-bottom:1px solid var(--line-2)"><div><div class="cell-strong" style="font-size:14px">${OF.escape(dv.label)}</div><div class="tiny muted">${OF.escape(dv.device_type)}${dv.serial?` · SN ${OF.escape(dv.serial)}`:''}${dv.last_status?` · last: ${OF.escape(dv.last_status)}`:''}</div></div><div class="row" style="gap:8px"><button class="link-btn" data-qr="${dv.qr_token}" data-label="${OF.escape(dv.label)}">QR</button><button class="link-btn" data-dev="${dv.id}">History</button></div></div>`).join(''):'<p class="muted small">No devices placed yet.</p>'; }
+      async function loadDevices(){ const r=await OF.get('/api/admin/devices?customerId='+id); const box=dr.q('#devBox'); if(!box)return; box.innerHTML=devHtml(r.devices);
+        box.querySelectorAll('[data-qr]').forEach(b=>b.onclick=()=>printQr(b.dataset.qr,b.dataset.label));
+        box.querySelectorAll('[data-dev]').forEach(b=>b.onclick=()=>deviceHistoryModal(b.dataset.dev)); }
+      dr.q('#addDevBtn')?.addEventListener('click', ()=>deviceModal(id, ()=>loadDevices()));
+      loadDevices();
       function cardsHtml(pms){ return pms.length?pms.map(pm=>`<div class="row between" style="padding:7px 0;border-bottom:1px solid var(--line-2)">
         <span>${OF.icon('money',14)} ${OF.escape((pm.brand||'card'))} ••${OF.escape(pm.last4||'')} <span class="tiny muted">exp ${pm.exp_month}/${String(pm.exp_year).slice(-2)}</span>${pm.is_default?' <span class="badge ok no-dot">Default</span>':''}${pm.is_mock?' <span class="tiny muted">(test)</span>':''}</span>
         <span class="row" style="gap:8px">${pm.is_default?'':`<button class="link-btn" data-default="${pm.id}">Make default</button>`}<button class="link-btn" data-remove="${pm.id}" style="color:var(--danger)">Remove</button></span></div>`).join(''):'<p class="muted small">No cards on file.</p>'; }
@@ -78,6 +86,32 @@ const OF = window.OF;
       };
     }
     function section(title, inner){ return `<div style="margin-bottom:16px"><div class="muted tiny" style="text-transform:uppercase;letter-spacing:.04em;font-weight:700;margin-bottom:6px">${title}</div>${inner||'<p class="muted small">None yet.</p>'}</div>`; }
+
+    function deviceModal(customerId, onSaved) {
+      const m = OF.modal(`<div class="modal-head"><h3>Add device / station</h3><button class="x" data-close>&times;</button></div>
+        <div class="modal-body">
+          <div class="field"><label>Label *</label><input id="dv_label" placeholder="e.g. Bait Station #1 — NE corner"></div>
+          <div class="grid cols-2"><div class="field"><label>Type</label><select id="dv_type"><option value="bait_station">Bait station</option><option value="trap">Trap</option><option value="monitor">Monitor</option><option value="sensor">Sensor</option></select></div><div class="field"><label>Serial</label><input id="dv_serial"></div></div>
+          <div class="field"><label>Location notes</label><input id="dv_loc" placeholder="Where it's installed"></div>
+        </div>
+        <div class="modal-foot"><button class="btn btn-secondary" data-close>Cancel</button><button class="btn btn-primary" id="dv_save">Add device</button></div>`);
+      m.q('#dv_save').onclick=async()=>{ if(!m.q('#dv_label').value.trim())return OF.toast('Label required','error');
+        try{ await OF.post('/api/admin/devices',{ customerId:+customerId, label:m.q('#dv_label').value.trim(), deviceType:m.q('#dv_type').value, serial:m.q('#dv_serial').value, locationNotes:m.q('#dv_loc').value }); OF.toast('Device added','ok'); m.close(); onSaved&&onSaved(); }catch(e){ OF.toast(e.message,'error'); } };
+    }
+    async function deviceHistoryModal(deviceId) {
+      const d = await OF.get('/api/admin/devices/'+deviceId);
+      const h = d.history.map(x=>`<div class="row between" style="padding:7px 0;border-bottom:1px solid var(--line-2)"><div><span class="badge no-dot">${OF.escape(x.status)}</span> ${x.activity_level?`<span class="tiny muted">activity ${OF.escape(x.activity_level)}</span>`:''}<div class="tiny muted">${x.action_taken?OF.escape(x.action_taken)+' · ':''}${x.technician_name?OF.escape(x.technician_name):''}</div></div><span class="tiny muted">${OF.dateTime(x.inspected_at)}</span></div>`).join('')||'<p class="muted small">No inspections yet.</p>';
+      OF.modal(`<div class="modal-head"><h3>${OF.escape(d.device.label)}</h3><button class="x" data-close>&times;</button></div><div class="modal-body"><div class="muted small" style="margin-bottom:8px">${OF.escape(d.device.device_type)}${d.device.location_notes?' · '+OF.escape(d.device.location_notes):''}</div>${h}<p class="tiny muted" style="margin-top:10px;word-break:break-all">Scan link: ${OF.escape(d.device.scanUrl)}</p></div><div class="modal-foot"><button class="btn btn-primary" data-close>Close</button></div>`, { wide:true });
+    }
+    function printQr(token, label) {
+      const url = location.origin + '/device?d=' + token;
+      const w = window.open('', '_blank');
+      w.document.write(`<html><head><title>${label}</title><script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"><\/script>
+        <style>body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;text-align:center;padding:40px}#qr{display:inline-block;margin:16px}h2{margin:0}</style></head>
+        <body><h2>${label.replace(/</g,'&lt;')}</h2><div id="qr"></div><p style="color:#475569;font-size:13px;word-break:break-all">${url}</p>
+        <script>new QRCode(document.getElementById('qr'),{text:'${url}',width:220,height:220});setTimeout(()=>window.print(),500);<\/script></body></html>`);
+      w.document.close();
+    }
 
     function addCustomer() {
       const m = OF.modal(`<div class="modal-head"><h3>Add customer</h3><button class="x" data-close>&times;</button></div>

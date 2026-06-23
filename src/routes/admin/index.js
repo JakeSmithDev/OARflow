@@ -17,6 +17,7 @@ import accountingRouter from './accounting.js';
 import routingRouter from './routing.js';
 import documentsRouter from './documents.js';
 import complianceRouter from './compliance.js';
+import devicesRouter from './devices.js';
 
 const router = express.Router();
 
@@ -37,5 +38,6 @@ router.use('/accounting', accountingRouter);
 router.use('/routing', routingRouter);
 router.use('/documents', documentsRouter);
 router.use('/compliance', complianceRouter);
+router.use('/devices', devicesRouter);
 
 export default router;
