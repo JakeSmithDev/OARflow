@@ -1,7 +1,7 @@
 // Multi-unit properties + units with a simple diagram (annotation markers over
 // an optional floorplan image). Units tie to devices (P3b) for per-unit history.
 import { query, queryOne } from './db.js';
-import { signedUrl } from './storage.js';
+import { signedUrl, getFile } from './storage.js';
 
 export async function listProperties(tenant, customerId) {
   const r = await query(
@@ -62,7 +62,7 @@ export async function unitDetail(tenant, unitId) {
   const u = await queryOne('SELECT * FROM units WHERE tenant_id=$1 AND id=$2', [tenant.id, unitId]);
   if (!u) return null;
   let floorplanUrl = null;
-  if (u.floorplan_file_id) { const f = await queryOne('SELECT * FROM files WHERE id=$1', [u.floorplan_file_id]); if (f) floorplanUrl = await signedUrl(f); }
+  if (u.floorplan_file_id) { const f = await getFile(tenant.id, u.floorplan_file_id); if (f) floorplanUrl = await signedUrl(f); }
   const devices = (await query("SELECT id, label, device_type, qr_token, status FROM devices WHERE tenant_id=$1 AND unit_id=$2 AND status='active' ORDER BY label", [tenant.id, unitId])).rows;
   const inspections = (await query(
     `SELECT di.status, di.activity_level, di.inspected_at, d.label AS device_label, t.name AS technician_name

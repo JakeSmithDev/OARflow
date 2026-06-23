@@ -88,7 +88,7 @@ async function matchCustomer(tenant, phone) {
 /** Persist a normalized call event (idempotent on provider+external_id). */
 export async function recordCall(tenant, providerName, evt) {
   if (evt.externalId) {
-    const dup = await queryOne('SELECT * FROM call_logs WHERE provider=$1 AND external_id=$2', [providerName, evt.externalId]);
+    const dup = await queryOne('SELECT * FROM call_logs WHERE tenant_id=$1 AND provider=$2 AND external_id=$3', [tenant.id, providerName, evt.externalId]);
     if (dup) return { call: dup, duplicate: true };
   }
   const intent = deriveIntent(evt);

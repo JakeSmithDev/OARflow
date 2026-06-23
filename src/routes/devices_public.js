@@ -13,7 +13,7 @@ router.get('/:qr', asyncHandler(async (req, res) => {
   const device = await getByQr(req.params.qr);
   if (!device) return notFound(res, 'Device not found.');
   const tenant = await getTenantById(device.tenant_id);
-  const customer = await queryOne('SELECT name FROM customers WHERE id=$1', [device.customer_id]);
+  const customer = await queryOne('SELECT name FROM customers WHERE tenant_id=$1 AND id=$2', [device.tenant_id, device.customer_id]);
   res.json({
     ok: true,
     device: { label: device.label, type: device.device_type, serial: device.serial, locationNotes: device.location_notes, status: device.status, installedAt: device.installed_at },

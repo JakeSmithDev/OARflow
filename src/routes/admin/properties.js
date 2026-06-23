@@ -47,6 +47,9 @@ router.post('/units/:id/diagram', asyncHandler(async (req, res) => {
 }));
 router.post('/units/:id/floorplan', asyncHandler(async (req, res) => {
   const id = toInt(req.params.id);
+  // Verify the unit belongs to this tenant BEFORE storing anything.
+  const unit = await unitDetail(req.tenant, id);
+  if (!unit) return notFound(res);
   const dec = decodeUpload(req.body || {}, { allow: IMAGE_TYPES });
   if (dec.error) return badRequest(res, dec.error);
   const file = await saveFile(req.tenant, { buffer: dec.buffer, filename: dec.filename, contentType: dec.contentType, ownerType: 'unit', ownerId: id, kind: 'floorplan', createdBy: req.admin.username });
