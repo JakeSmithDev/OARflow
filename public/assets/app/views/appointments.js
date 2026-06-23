@@ -76,6 +76,8 @@ const OF = window.OF;
             <div id="crewBox" class="row wrap" style="gap:6px">${crew.length?crew.map(techChip).join(''):'<span class="muted small">No one assigned yet.</span>'}</div></div>`:''}
           <div class="card card-pad" style="margin-bottom:16px"><div class="row between" style="margin-bottom:8px"><h4 style="margin:0">Photos &amp; files</h4><label class="btn btn-ghost btn-xs" style="cursor:pointer">Upload<input type="file" id="fileInput" accept="image/*,application/pdf" multiple hidden></label></div>
             <div id="filesBox">${filesHtml(jobFiles)}</div></div>
+          <div class="card card-pad" style="margin-bottom:16px"><div class="row between" style="margin-bottom:8px"><h4 style="margin:0">Materials used</h4><div class="row" style="gap:6px"><button class="btn btn-ghost btn-xs" id="reportBtn">Service report</button><button class="btn btn-ghost btn-xs" id="addMat">Add material</button></div></div>
+            <div id="matBox"><p class="muted small">Loading…</p></div></div>
           <div class="field"><label>Internal notes</label><textarea id="internalNotes">${OF.escape(a.internal_notes||'')}</textarea></div>
           <button class="btn btn-secondary btn-sm" id="saveNotes">Save notes</button>
           <hr class="divider">
@@ -100,6 +102,11 @@ const OF = window.OF;
       dr.q('#assignBtn')?.addEventListener('click', ()=>assignModal(id, crew, (updated)=>{ dr.q('#crewBox').innerHTML = updated.length?updated.map(techChip).join(''):'<span class="muted small">No one assigned yet.</span>'; }));
       function bindFiles(){ dr.el.querySelectorAll('[data-del]').forEach(b=>b.onclick=async()=>{ if(!(await OF.confirm({title:'Delete this file?',confirmText:'Delete',danger:true})))return; await OF.del(`/api/admin/appointments/${id}/files/${b.dataset.del}`); jobFiles=jobFiles.filter(f=>String(f.id)!==b.dataset.del); dr.q('#filesBox').innerHTML=filesHtml(jobFiles); }); }
       bindFiles();
+      function matHtml(apps){ return apps.length? apps.map(a=>`<div class="row between" style="padding:7px 0;border-bottom:1px solid var(--line-2)"><div><div class="cell-strong" style="font-size:14px">${OF.escape(a.product_name)}${a.epa_reg_no?` <span class="tiny muted">EPA ${OF.escape(a.epa_reg_no)}</span>`:''}</div><div class="tiny muted">${[a.target_pest,a.area_treated,a.quantity?`${a.quantity}${a.unit||''}`:'',a.method].filter(Boolean).map(OF.escape).join(' · ')}${a.applicator_name?` · ${OF.escape(a.applicator_name)}`:''}</div></div><button class="link-btn" data-mat="${a.id}" style="color:var(--danger)">✕</button></div>`).join('') : '<p class="muted small">No materials recorded.</p>'; }
+      async function loadMats(){ const r=await OF.get(`/api/admin/appointments/${id}/applications`); const box=dr.q('#matBox'); if(box){ box.innerHTML=matHtml(r.applications); box.querySelectorAll('[data-mat]').forEach(b=>b.onclick=async()=>{ if(!(await OF.confirm({title:'Remove this material record?',confirmText:'Remove',danger:true})))return; await OF.del(`/api/admin/appointments/${id}/applications/${b.dataset.mat}`); loadMats(); }); } }
+      loadMats();
+      dr.q('#addMat')?.addEventListener('click', ()=>materialModal(id, ()=>loadMats()));
+      dr.q('#reportBtn')?.addEventListener('click', ()=>serviceReportModal(id));
       dr.q('#fileInput')?.addEventListener('change', async (e)=>{
         const list=[...e.target.files]; if(!list.length) return;
         OF.toast(`Uploading ${list.length} file${list.length>1?'s':''}…`);
@@ -146,6 +153,41 @@ const OF = window.OF;
         try { const r = await OF.post(`/api/admin/appointments/${apptId}/assign`, { technicianIds: [...sel], leadId: lead }); OF.toast('Crew updated', 'ok'); onSaved && onSaved(r.technicians); m.close(); }
         catch (e) { OF.toast(e.message, 'error'); }
       };
+    }
+
+    let PRODUCTS = null;
+    async function materialModal(apptId, onSaved) {
+      if (!PRODUCTS) PRODUCTS = (await OF.get('/api/admin/compliance/products')).products;
+      await loadTechs();
+      const m = OF.modal(`<div class="modal-head"><h3>Record material used</h3><button class="x" data-close>&times;</button></div>
+        <div class="modal-body">
+          <div class="field"><label>Product</label><select id="mp">${PRODUCTS.length?PRODUCTS.map(p=>`<option value="${p.id}">${OF.escape(p.name)}${p.epa_reg_no?` (EPA ${OF.escape(p.epa_reg_no)})`:''}</option>`).join(''):'<option value="">— add products in Compliance —</option>'}</select></div>
+          <div class="grid cols-2"><div class="field"><label>Target pest</label><input id="mpest"></div><div class="field"><label>Area treated</label><input id="marea" placeholder="Perimeter, kitchen…"></div></div>
+          <div class="grid cols-3"><div class="field"><label>Quantity</label><input id="mqty" type="number" step="0.01"></div><div class="field"><label>Unit</label><input id="munit" placeholder="oz, gal"></div><div class="field"><label>Method</label><select id="mmethod"><option value="">—</option><option>spray</option><option>granular</option><option>bait</option><option>dust</option><option>fog</option></select></div></div>
+          <div class="field"><label>Applicator</label><select id="mtech"><option value="">—</option>${TECHS.map(t=>`<option value="${t.id}">${OF.escape(t.name)}</option>`).join('')}</select></div>
+        </div>
+        <div class="modal-foot"><button class="btn btn-secondary" data-close>Cancel</button><button class="btn btn-primary" id="msave">Record</button></div>`);
+      m.q('#msave').onclick=async()=>{
+        const productId=+m.q('#mp').value||null; if(!productId) return OF.toast('Add a product in Compliance first','error');
+        try { await OF.post(`/api/admin/appointments/${apptId}/applications`,{ productId, targetPest:m.q('#mpest').value, areaTreated:m.q('#marea').value, quantity:m.q('#mqty').value||null, unit:m.q('#munit').value, method:m.q('#mmethod').value, technicianId:+m.q('#mtech').value||null });
+          OF.toast('Material recorded','ok'); m.close(); onSaved&&onSaved(); } catch(e){ OF.toast(e.message,'error'); }
+      };
+    }
+
+    async function serviceReportModal(apptId) {
+      const d = await OF.get(`/api/admin/appointments/${apptId}/service-report`);
+      const r = d.report; const a = r.appointment;
+      const apps = r.applications.map(x=>`<tr><td>${OF.escape(x.product_name)}</td><td>${OF.escape(x.epa_reg_no||'—')}</td><td>${OF.escape(x.target_pest||'—')}</td><td>${OF.escape(x.area_treated||'—')}</td><td>${x.quantity?OF.escape(`${x.quantity}${x.unit||''}`):'—'}</td></tr>`).join('') || '<tr><td colspan="5" class="muted">No materials recorded.</td></tr>';
+      const m = OF.modal(`<div class="modal-head"><h3>Service report</h3><button class="x" data-close>&times;</button></div>
+        <div class="modal-body" id="srBody" style="max-height:74vh;overflow:auto">
+          <h2 style="margin:0">${OF.escape(r.company.name)}</h2><p class="muted small" style="margin:2px 0 12px">${OF.escape(r.company.phone||'')}</p>
+          <div class="card card-pad" style="margin-bottom:12px"><div><b>${OF.escape(a.customer_name)}</b></div><div class="small muted">${OF.escape([a.customer_address,a.city,a.state].filter(Boolean).join(', '))}</div>
+            <div class="small" style="margin-top:6px">${OF.escape(a.service_name||'Service')}${a.scheduled_start?` · ${OF.dateTime(a.scheduled_start)}`:''}</div>
+            ${r.crew.length?`<div class="small" style="margin-top:6px">Technician: ${r.crew.map(c=>OF.escape(c.name)+(c.license_no?` (Lic ${OF.escape(c.license_no)})`:'')).join(', ')}</div>`:''}</div>
+          <table class="tbl"><thead><tr><th>Product</th><th>EPA #</th><th>Target</th><th>Area</th><th>Qty</th></tr></thead><tbody>${apps}</tbody></table>
+        </div>
+        <div class="modal-foot"><button class="btn btn-secondary" data-close>Close</button><button class="btn btn-primary" id="srPrint">Print</button></div>`, { wide:true });
+      m.q('#srPrint').onclick=()=>{ const w=window.open('','_blank'); w.document.write(`<html><head><title>Service Report</title><link rel="stylesheet" href="/assets/app/app.css"></head><body style="padding:24px">${m.q('#srBody').innerHTML}</body></html>`); w.document.close(); w.focus(); setTimeout(()=>w.print(),300); };
     }
 
     async function newAppointment(prefill={}) {

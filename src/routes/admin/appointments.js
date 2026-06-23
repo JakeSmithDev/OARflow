@@ -16,6 +16,7 @@ import { requirePermission } from '../../lib/permissions.js';
 import { setAssignments, getAssignments, assignmentsForAppointments } from '../../lib/technicians.js';
 import { saveFile, listFiles, getFile, deleteFile, signedUrl } from '../../lib/storage.js';
 import { decodeUpload } from '../../lib/uploads.js';
+import { recordApplication, listApplications, deleteApplication, serviceReport } from '../../lib/compliance.js';
 import { logAudit } from '../../lib/audit.js';
 import { formatDateLabel, formatTimeLabel } from '../../lib/dates.js';
 import { config } from '../../config.js';
@@ -184,6 +185,27 @@ router.delete('/:id/files/:fileId', asyncHandler(async (req, res) => {
   await deleteFile(f);
   await logAudit({ tenantId: req.tenant.id, adminUsername: req.admin.username, action: 'job_file_delete', entityType: 'appointment', entityId: toInt(req.params.id), details: { fileId: f.id } });
   res.json({ ok: true });
+}));
+
+// --- Compliance: chemical/material applications + service report ----------
+router.get('/:id/applications', asyncHandler(async (req, res) => {
+  if (!(await ownsId(req.tenant.id, 'appointments', toInt(req.params.id)))) return notFound(res);
+  res.json({ ok: true, applications: await listApplications(req.tenant, toInt(req.params.id)) });
+}));
+router.post('/:id/applications', asyncHandler(async (req, res) => {
+  const r = await recordApplication(req.tenant, toInt(req.params.id), req.body || {}, req.admin.username);
+  if (!r.ok) return badRequest(res, r.error);
+  await logAudit({ tenantId: req.tenant.id, adminUsername: req.admin.username, action: 'chem_application', entityType: 'appointment', entityId: toInt(req.params.id), details: { product: r.application.product_name } });
+  res.json({ ok: true, application: r.application });
+}));
+router.delete('/:id/applications/:appId', asyncHandler(async (req, res) => {
+  await deleteApplication(req.tenant, toInt(req.params.appId));
+  res.json({ ok: true });
+}));
+router.get('/:id/service-report', asyncHandler(async (req, res) => {
+  const report = await serviceReport(req.tenant, toInt(req.params.id));
+  if (!report) return notFound(res);
+  res.json({ ok: true, report });
 }));
 
 // --- Assign technicians (dispatch) ---------------------------------------

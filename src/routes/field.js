@@ -9,6 +9,7 @@ import { saveFile, listFiles, signedUrl } from '../lib/storage.js';
 import { decodeUpload, IMAGE_TYPES } from '../lib/uploads.js';
 import { sendAppointmentSms } from '../lib/notify_sms.js';
 import { mapsUrl } from '../lib/routing.js';
+import { listProducts, recordApplication, listApplications } from '../lib/compliance.js';
 import { scheduleForCompletion } from '../lib/follow_ups.js';
 import { emitEvent } from '../lib/events.js';
 import { zonedWallTimeToUtc, ymdInTimeZone } from '../lib/dates.js';
@@ -54,7 +55,19 @@ router.get('/jobs/:id', asyncHandler(async (req, res) => {
        FROM appointments a JOIN customers c ON c.id=a.customer_id LEFT JOIN service_types s ON s.id=a.service_type_id
       WHERE a.id=$1 AND a.tenant_id=$2`, [ctx.apptId, ctx.tenant.id]);
   const files = await listFiles(ctx.tenant, 'appointment', ctx.apptId);
-  res.json({ ok: true, job: a, files });
+  const applications = await listApplications(ctx.tenant, ctx.apptId);
+  const products = await listProducts(ctx.tenant);
+  res.json({ ok: true, job: a, files, applications, products });
+}));
+
+// Log a chemical/material application from the field (snapshots the applicator).
+router.post('/jobs/:id/applications', asyncHandler(async (req, res) => {
+  const ctx = await authJob(req);
+  if (!ctx || ctx.forbidden) return notFound(res);
+  const body = { ...(req.body || {}), technicianId: ctx.tech.id, applicatorName: ctx.tech.name, applicatorLicense: ctx.tech.license_no };
+  const r = await recordApplication(ctx.tenant, ctx.apptId, body, `tech:${ctx.tech.id}`);
+  if (!r.ok) return badRequest(res, r.error);
+  res.json({ ok: true, application: r.application });
 }));
 
 router.post('/jobs/:id/on-my-way', asyncHandler(async (req, res) => {

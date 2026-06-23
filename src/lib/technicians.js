@@ -20,7 +20,8 @@ export async function createTechnician(tenant, { name, email, phone, color, user
 }
 
 export async function updateTechnician(tenant, id, fields) {
-  const cols = { name: fields.name, email: fields.email, phone: fields.phone, color: fields.color, user_id: fields.userId, is_active: fields.isActive };
+  const cols = { name: fields.name, email: fields.email, phone: fields.phone, color: fields.color, user_id: fields.userId, is_active: fields.isActive,
+    license_no: fields.licenseNo, license_state: fields.licenseState, license_expires: fields.licenseExpires };
   const sets = []; const params = [id, tenant.id];
   for (const [k, v] of Object.entries(cols)) { if (v !== undefined) { params.push(v); sets.push(`${k}=$${params.length}`); } }
   if (!sets.length) return queryOne('SELECT * FROM technicians WHERE id=$1 AND tenant_id=$2', [id, tenant.id]);

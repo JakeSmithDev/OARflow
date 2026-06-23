@@ -409,6 +409,35 @@ async function main() {
     assert.ok(data.routeUrl && data.routeUrl.includes('maps'));
   });
 
+  // --- Pest compliance (chemical records + state export) ---
+  let productId;
+  await check('create a chemical product (catalog)', async () => {
+    const { data } = await call('/api/admin/compliance/products', { method: 'POST', body: { name: 'Termidor SC', epaRegNo: '7969-210', activeIngredient: 'Fipronil', signalWord: 'Caution', unit: 'oz', defaultRate: '0.8 oz/gal', targetPests: 'Ants, Termites' } });
+    assert.ok(data.ok); productId = data.product.id;
+  });
+  let applId;
+  await check('record an application (snapshots EPA + applicator)', async () => {
+    const { data } = await call(`/api/admin/appointments/${assignApptId}/applications`, { method: 'POST', body: { productId, technicianId: techId, targetPest: 'Ants', areaTreated: 'Perimeter', quantity: 1.5, unit: 'gal', method: 'spray' } });
+    assert.ok(data.ok, JSON.stringify(data)); applId = data.application.id;
+    assert.equal(data.application.epa_reg_no, '7969-210'); assert.equal(data.application.product_name, 'Termidor SC');
+    assert.equal(data.application.applicator_name, 'Marco Diaz');
+  });
+  await check('service report includes applications + crew', async () => {
+    const { data } = await call(`/api/admin/appointments/${assignApptId}/service-report`);
+    assert.ok(data.report.applications.some((a) => a.id === applId));
+    assert.ok(data.report.crew.some((c) => c.name === 'Marco Diaz'));
+  });
+  await check('state-report CSV export includes the application', async () => {
+    const res = await fetch(base + '/api/admin/compliance/applications.csv?from=2026-01-01&to=2026-12-31', { headers: { Cookie: cookie } });
+    assert.equal(res.headers.get('content-type').split(';')[0], 'text/csv');
+    const text = await res.text();
+    assert.ok(text.split('\n')[0].includes('EPA Reg #')); assert.ok(text.includes('Termidor SC'));
+  });
+  await check('field tech can log a material application', async () => {
+    const { data } = await call(`/api/field/jobs/${assignApptId}/applications`, { method: 'POST', auth: false, body: { token: fieldToken, productId, targetPest: 'Spiders' } });
+    assert.ok(data.ok); assert.equal(data.application.applicator_name, 'Marco Diaz');
+  });
+
   // --- Reviews / NPS (no rating gating) ---
   await check('set a public review platform URL', async () => {
     const { data } = await call('/api/admin/reviews/settings', { method: 'PUT', body: { platforms: { google: 'https://g.page/r/demo/review' } } });
