@@ -14,6 +14,19 @@ export const config = {
   isProduction: NODE_ENV === 'production',
   port: Number(process.env.PORT || 3000),
 
+  // Express `trust proxy` setting. Default true (Vercel/most PaaS sit behind a
+  // trusted proxy that sets X-Forwarded-For). Set TRUST_PROXY=false on a directly
+  // exposed host so clients can't spoof their IP to bypass rate limits, or a
+  // number for a specific hop count.
+  trustProxy: (() => {
+    const v = process.env.TRUST_PROXY;
+    if (v === undefined || v === '') return true;
+    if (v === 'false' || v === '0') return false;
+    if (v === 'true') return true;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : v; // hop count or named subnet
+  })(),
+
   // Public base URL used to build links in emails / payment redirects.
   baseUrl: (process.env.BASE_URL || `http://localhost:${process.env.PORT || 3000}`).replace(/\/$/, ''),
 

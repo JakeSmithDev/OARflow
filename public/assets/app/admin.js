@@ -35,6 +35,9 @@
   OF.patch = (p, body) => api(p, { method: 'PATCH', body });
   OF.del = (p, body) => api(p, { method: 'DELETE', body });
   OF.val = (id) => document.getElementById(id)?.value;
+  // Sanitize a color before interpolating into a style string (XSS guard for any
+  // legacy non-hex data; new writes are validated to hex server-side).
+  OF.color = (c, fallback = 'var(--brand)') => (/^#[0-9a-fA-F]{3}$|^#[0-9a-fA-F]{6}$/.test(String(c || '')) ? c : fallback);
 
   // --- Formatting ---------------------------------------------------------
   OF.money = (cents, opts = {}) => {
@@ -164,17 +167,31 @@
     ]],
   ];
 
+  // Capability required to SEE each nav item (matches the server-side guards).
+  // Missing entry = visible to any admin. '*' = owner only.
+  const NAV_CAP = {
+    schedule: 'schedule.view', requests: 'requests.manage', appointments: 'appointments.manage',
+    messaging: 'messaging.use', receptionist: 'messaging.use', compliance: 'compliance.manage',
+    customers: 'customers.manage', estimates: 'estimates.manage', invoices: 'invoices.manage',
+    recurring: 'plans.manage', followups: 'followups.manage', reports: 'reports.view',
+    commissions: 'commissions.manage', reviews: 'reviews.manage', documents: 'documents.manage',
+    developer: '*', settings: '*',
+  };
+  OF.hasCap = (cap) => { if (!cap) return true; const caps = (OF.session && OF.session.capabilities) || []; return caps.includes('*') || caps.includes(cap); };
+
   function renderShell(active, counts = {}) {
     const t = OF.tenant || {};
     const brand = (t.branding || {});
-    const navHtml = NAV.map(([section, items]) => `
-      <div class="nav-section">${section}</div>
-      ${items.map(([icon, label, href, countKey]) => `
+    const navHtml = NAV.map(([section, items]) => {
+      const visible = items.filter(([icon]) => OF.hasCap(NAV_CAP[icon]));
+      if (!visible.length) return ''; // hide a section with no permitted items
+      return `<div class="nav-section">${section}</div>
+      ${visible.map(([icon, label, href, countKey]) => `
         <a class="nav-link ${active === icon ? 'active' : ''}" href="${href}" data-view="${icon}">
           ${OF.icon(icon)} <span>${label}</span>
           ${countKey ? `<span class="badge-count" data-count="${countKey}"${counts[countKey] ? '' : ' hidden'}>${counts[countKey] || ''}</span>` : ''}
-        </a>`).join('')}
-    `).join('');
+        </a>`).join('')}`;
+    }).join('');
     const u = OF.session || {};
     return `
       <aside class="sidebar" id="sidebar">

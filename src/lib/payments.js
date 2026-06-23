@@ -138,6 +138,7 @@ export async function chargeInvoiceOnFile(tenant, invoice, { paymentMethodId, am
   if (st.mock || pm.is_mock) {
     const ref = `mock_pi_${crypto.randomUUID()}`;
     const r = await recordPayment(tenant, invoice.id, { amountCents: amount, method: 'card_on_file', stripeRef: ref, externalRef: ref, note: `Card on file ••${pm.last4 || ''} (simulated)`, createdBy });
+    if (r.rejected) return { ok: false, error: r.rejected === 'overpay' ? 'This invoice was already paid by a concurrent charge.' : 'The invoice could not be charged.' };
     return { ok: true, mock: true, invoice: r.invoice, amountCents: amount };
   }
 

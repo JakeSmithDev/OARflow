@@ -40,4 +40,15 @@ export function requirePermission(cap) {
   };
 }
 
-export default { CAPS, capabilitiesFor, hasCapability, requirePermission };
+/**
+ * Middleware: enforce a capability on MUTATING requests only (POST/PATCH/PUT/
+ * DELETE), leaving GET/HEAD readable by any signed-in admin. Mounted at the
+ * router level it gates every write in that domain without blocking reads that
+ * dashboards/pickers rely on.
+ */
+export function requireWrite(cap) {
+  const guard = requirePermission(cap);
+  return (req, res, next) => (req.method === 'GET' || req.method === 'HEAD' ? next() : guard(req, res, next));
+}
+
+export default { CAPS, capabilitiesFor, hasCapability, requirePermission, requireWrite };

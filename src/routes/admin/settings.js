@@ -3,7 +3,7 @@
 // templates, team members, and integration credentials (Stripe, email).
 import express from 'express';
 import { requireAdmin, requireRole } from '../../lib/auth.js';
-import { asyncHandler, badRequest, notFound, toInt } from '../../lib/http.js';
+import { asyncHandler, badRequest, notFound, toInt, hexColor } from '../../lib/http.js';
 import { query, queryOne } from '../../lib/db.js';
 import { updateTenantProfile, updateTenantSettings, getTenantById } from '../../lib/tenants.js';
 import { hashPassword, encryptSecret } from '../../lib/crypto.js';
@@ -84,13 +84,13 @@ router.post('/services', asyncHandler(async (req, res) => {
     `INSERT INTO service_types (tenant_id, name, description, duration_minutes, base_price_cents, deposit_cents, booking_mode, color, sort_order)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
     [req.tenant.id, b.name, b.description || null, toInt(b.durationMinutes) || 60, Math.round(b.basePriceCents || 0),
-     Math.round(b.depositCents || 0), b.bookingMode || 'default', b.color || '#2563eb', toInt(b.sortOrder) || 0],
+     Math.round(b.depositCents || 0), b.bookingMode || 'default', hexColor(b.color, '#2563eb'), toInt(b.sortOrder) || 0],
   );
   res.json({ ok: true, service: row });
 }));
 router.patch('/services/:id', asyncHandler(async (req, res) => {
   const b = req.body || {};
-  const cols = { name: b.name, description: b.description, duration_minutes: toInt(b.durationMinutes), base_price_cents: b.basePriceCents != null ? Math.round(b.basePriceCents) : undefined, deposit_cents: b.depositCents != null ? Math.round(b.depositCents) : undefined, booking_mode: b.bookingMode, color: b.color, is_active: b.isActive, sort_order: toInt(b.sortOrder) };
+  const cols = { name: b.name, description: b.description, duration_minutes: toInt(b.durationMinutes), base_price_cents: b.basePriceCents != null ? Math.round(b.basePriceCents) : undefined, deposit_cents: b.depositCents != null ? Math.round(b.depositCents) : undefined, booking_mode: b.bookingMode, color: b.color === undefined ? undefined : hexColor(b.color), is_active: b.isActive, sort_order: toInt(b.sortOrder) };
   const sets = []; const params = [toInt(req.params.id), req.tenant.id];
   for (const [k, v] of Object.entries(cols)) if (v !== undefined) { params.push(v); sets.push(`${k}=$${params.length}`); }
   if (!sets.length) return badRequest(res, 'Nothing to update.');

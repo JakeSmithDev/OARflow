@@ -1,6 +1,7 @@
 // Admin quotes/estimates: build, send (with online accept link), convert to invoice.
 import express from 'express';
 import { requireAdmin } from '../../lib/auth.js';
+import { requireWrite } from '../../lib/permissions.js';
 import { asyncHandler, badRequest, notFound, toInt } from '../../lib/http.js';
 import { query, queryOne } from '../../lib/db.js';
 import { createEstimate, updateEstimate, convertToInvoice, declineEstimate } from '../../lib/estimates.js';
@@ -13,6 +14,7 @@ import { config } from '../../config.js';
 
 const router = express.Router();
 router.use(requireAdmin());
+router.use(requireWrite('estimates.manage'));
 
 function summaryHtml(tenant, e) {
   const cur = tenant.currency;

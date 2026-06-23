@@ -10,12 +10,16 @@ import { ownsId } from '../../lib/ownership.js';
 import { emitEvent } from '../../lib/events.js';
 import { isConfigured as stripeConfigured } from '../../lib/stripe.js';
 import { listPaymentMethods, chargeInvoiceOnFile, cardsStatus } from '../../lib/payments.js';
+import { requireWrite, requirePermission } from '../../lib/permissions.js';
 import { logAudit } from '../../lib/audit.js';
 import { formatCents } from '../../lib/money.js';
 import { config } from '../../config.js';
 
 const router = express.Router();
 router.use(requireAdmin());
+router.use(requireWrite('invoices.manage')); // create/update/send gated; reads open
+// Money movement is a stricter capability than building invoices.
+router.use(['/:id/payment', '/:id/charge-on-file', '/:id/void'], requirePermission('payments.manage'));
 
 function summaryHtml(tenant, inv) {
   const cur = tenant.currency;
@@ -170,10 +174,14 @@ router.post('/:id/payment', asyncHandler(async (req, res) => {
   // let a refund exceed what's been collected.
   if (amount > 0 && amount > balance) return badRequest(res, `Payment exceeds the balance due (${formatCents(balance, req.tenant.currency)}). Enter ${formatCents(balance, req.tenant.currency)} or less.`);
   if (amount < 0 && (current.amount_paid_cents + amount) < 0) return badRequest(res, `Refund exceeds the amount collected (${formatCents(current.amount_paid_cents, req.tenant.currency)}).`);
-  const { invoice } = await recordPayment(req.tenant, id, {
+  const result = await recordPayment(req.tenant, id, {
     amountCents: amount, eventType: amount < 0 ? 'refund' : 'payment',
     method: b.method || 'cash', note: b.note, createdBy: req.admin.username,
   });
+  if (result.rejected === 'overpay') return badRequest(res, `Payment exceeds the balance due (${formatCents(result.balanceCents, req.tenant.currency)}).`);
+  if (result.rejected === 'void') return badRequest(res, 'This invoice is void and cannot take payments.');
+  if (result.rejected === 'over_refund') return badRequest(res, `Refund exceeds the amount collected (${formatCents(result.balanceCents, req.tenant.currency)}).`);
+  const { invoice } = result;
   if (b.sendReceipt && invoice) {
     const c = await queryOne('SELECT name, email FROM customers WHERE id=$1', [invoice.customer_id]);
     if (c?.email) {

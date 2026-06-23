@@ -12,7 +12,7 @@ import { scheduleForCompletion } from '../../lib/follow_ups.js';
 import { sendAppointmentReminder } from '../../lib/reminders.js';
 import { emitEvent } from '../../lib/events.js';
 import { sendTemplated, detailsTable } from '../../lib/email_templates.js';
-import { requirePermission } from '../../lib/permissions.js';
+import { requirePermission, requireWrite } from '../../lib/permissions.js';
 import { setAssignments, getAssignments, assignmentsForAppointments } from '../../lib/technicians.js';
 import { saveFile, listFiles, getFile, deleteFile, signedUrl } from '../../lib/storage.js';
 import { decodeUpload } from '../../lib/uploads.js';
@@ -23,6 +23,7 @@ import { config } from '../../config.js';
 
 const router = express.Router();
 router.use(requireAdmin());
+router.use(requireWrite('appointments.manage')); // reads open to admins; writes gated
 
 const SELECT = `
   SELECT a.*, c.name AS customer_name, c.email AS customer_email, c.phone AS customer_phone,

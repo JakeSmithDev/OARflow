@@ -3,7 +3,42 @@
 // HMAC-SHA256 (X-OARFlow-Signature: sha256=...). Failed deliveries retry with
 // exponential backoff (driven by daily maintenance).
 import crypto from 'node:crypto';
+import dns from 'node:dns/promises';
+import net from 'node:net';
 import { query, queryOne } from './db.js';
+import { config } from '../config.js';
+
+// --- SSRF guard ------------------------------------------------------------
+function isPrivateIp(ip) {
+  if (net.isIPv4(ip)) {
+    const [a, b] = ip.split('.').map(Number);
+    return a === 10 || a === 127 || a === 0 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127);
+  }
+  const v = ip.toLowerCase();
+  return v === '::1' || v === '::' || v.startsWith('fc') || v.startsWith('fd') || v.startsWith('fe80') || v.startsWith('::ffff:127.') || v.startsWith('::ffff:10.') || v.startsWith('::ffff:169.254');
+}
+
+/**
+ * Validate an outbound webhook target. Always rejects non-http(s) schemes. In
+ * production additionally requires https and blocks localhost / private /
+ * link-local / cloud-metadata addresses (after DNS resolution) to prevent SSRF.
+ * Dev allows localhost so you can test against a local sink.
+ */
+export async function assertSafeWebhookUrl(raw) {
+  let u;
+  try { u = new URL(String(raw)); } catch { return { ok: false, error: 'Invalid URL.' }; }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return { ok: false, error: 'URL must be http(s).' };
+  if (config.isProduction && u.protocol !== 'https:') return { ok: false, error: 'Webhook URLs must use https.' };
+  if (!config.isProduction) return { ok: true }; // dev: allow localhost sinks
+  const host = u.hostname.replace(/^\[|\]$/g, '');
+  if (host === 'localhost' || host.endsWith('.local') || host.endsWith('.internal')) return { ok: false, error: 'Internal hosts are not allowed.' };
+  if (net.isIP(host)) { if (isPrivateIp(host)) return { ok: false, error: 'Private/loopback addresses are not allowed.' }; return { ok: true }; }
+  try {
+    const addrs = await dns.lookup(host, { all: true });
+    if (addrs.some((a) => isPrivateIp(a.address))) return { ok: false, error: 'Host resolves to a private address.' };
+  } catch { return { ok: false, error: 'Host could not be resolved.' }; }
+  return { ok: true };
+}
 
 export const WEBHOOK_EVENTS = [
   'appointment.scheduled', 'appointment.completed', 'appointment.canceled',
@@ -57,6 +92,12 @@ export async function enqueue(tenantId, event, data) {
 async function attempt(delivery, endpoint) {
   const body = JSON.stringify(delivery.payload);
   let code = 0; let error = null;
+  // Re-validate at delivery time (DNS can change after creation — TOCTOU).
+  const safe = await assertSafeWebhookUrl(endpoint.url);
+  if (!safe.ok) {
+    await query("UPDATE webhook_deliveries SET status='failed', attempts=attempts+1, error=$2 WHERE id=$1", [delivery.id, `blocked: ${safe.error}`]);
+    return false;
+  }
   try {
     const res = await fetch(endpoint.url, {
       method: 'POST',

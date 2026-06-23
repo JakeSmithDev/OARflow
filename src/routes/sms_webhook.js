@@ -6,6 +6,7 @@ import crypto from 'node:crypto';
 import { asyncHandler } from '../lib/http.js';
 import { query, queryOne } from '../lib/db.js';
 import { getTenantById } from '../lib/tenants.js';
+import { config } from '../config.js';
 import { normalizeE164, getOrCreateConversation, setConsent, smsCreds } from '../lib/sms.js';
 
 const router = express.Router();
@@ -17,12 +18,18 @@ async function resolveTenantByNumber(toPhone) {
   return t ? getTenantById(t.id) : null;
 }
 
+// Verify a Twilio request signature. Fails CLOSED in production: an unsigned or
+// unverifiable request is rejected so the public endpoint can't be forged to
+// inject inbound messages or flip STOP/START consent. In dev we allow unsigned
+// requests for manual testing.
 function verifyTwilioSignature(tenant, req) {
   const sig = req.headers['x-twilio-signature'];
-  if (!sig) return true; // not a signed provider request (dev/manual) — allow
-  const authToken = smsCreds(tenant).authToken;
-  if (!authToken) return true;
-  const url = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
+  const authToken = tenant ? smsCreds(tenant).authToken : '';
+  if (!sig || !authToken) return !config.isProduction;
+  // Build the URL Twilio signed. Behind a proxy (Vercel) trust-proxy makes
+  // req.protocol honor X-Forwarded-Proto; fall back to the configured base URL.
+  const host = req.get('host');
+  const url = host ? `${req.protocol}://${host}${req.originalUrl}` : `${config.baseUrl}${req.originalUrl}`;
   const params = req.body || {};
   const data = url + Object.keys(params).sort().map((k) => k + params[k]).join('');
   const expected = crypto.createHmac('sha1', authToken).update(Buffer.from(data, 'utf-8')).digest('base64');
@@ -34,13 +41,17 @@ const START = new Set(['START', 'YES', 'UNSTOP']);
 
 router.post('/:provider', asyncHandler(async (req, res) => {
   const b = req.body || {};
-  // Status callback?
+  // Status callback? Resolve the message's tenant and VERIFY before mutating,
+  // and scope the update by tenant so a forged SID can't touch another tenant.
   if (b.MessageStatus && b.MessageSid) {
+    const msg = await queryOne('SELECT tenant_id FROM sms_messages WHERE provider_message_id=$1', [b.MessageSid]);
+    const tenant = msg ? await getTenantById(msg.tenant_id) : null;
+    if (!verifyTwilioSignature(tenant, req)) return res.status(403).send('bad signature');
     const status = ({ delivered: 'delivered', undelivered: 'failed', failed: 'failed', sent: 'sent' })[b.MessageStatus] || null;
-    if (status) {
+    if (status && msg) {
       await query(
-        "UPDATE sms_messages SET status=$2, delivered_at=CASE WHEN $2='delivered' THEN now() ELSE delivered_at END, error_code=COALESCE($3,error_code) WHERE provider_message_id=$1",
-        [b.MessageSid, status, b.ErrorCode || null],
+        "UPDATE sms_messages SET status=$2, delivered_at=CASE WHEN $2='delivered' THEN now() ELSE delivered_at END, error_code=COALESCE($3,error_code) WHERE provider_message_id=$1 AND tenant_id=$4",
+        [b.MessageSid, status, b.ErrorCode || null, msg.tenant_id],
       );
     }
     return res.type('text/xml').send('<Response></Response>');

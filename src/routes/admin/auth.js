@@ -9,6 +9,7 @@ import {
   requireAdmin, newTotpSecret, totpKeyUri, verifyTotpCode,
 } from '../../lib/auth.js';
 import { query, queryOne } from '../../lib/db.js';
+import { capabilitiesFor } from '../../lib/permissions.js';
 import { logAudit } from '../../lib/audit.js';
 
 const router = express.Router();
@@ -56,7 +57,7 @@ router.get('/session', requireAdmin(), asyncHandler(async (req, res) => {
   const t = req.tenant;
   res.json({
     ok: true,
-    user: req.admin,
+    user: { ...req.admin, capabilities: capabilitiesFor(req.admin) }, // resolved set for nav gating
     tenant: {
       id: t.id, slug: t.slug, name: t.name, timezone: t.timezone, currency: t.currency,
       branding: t.settings.branding,

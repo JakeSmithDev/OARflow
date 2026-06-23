@@ -88,9 +88,20 @@ export async function generateDueCycles(tenant, { now = new Date() } = {}) {
     "SELECT * FROM subscriptions WHERE tenant_id=$1 AND status='active' AND next_run_date IS NOT NULL AND next_run_date <= $2",
     [tenant.id, today],
   );
-  let appts = 0; let invoices = 0;
+  let appts = 0; let invoices = 0; let processed = 0;
   for (const sub of rows) {
     const runYmd = ymdInTimeZone(new Date(sub.next_run_date), 'UTC');
+    const nextRun = addMonthsYmd(runYmd, monthsForInterval(sub.interval, sub.interval_count));
+    // Atomic compare-and-swap claim: advance next_run_date ONLY if it still equals
+    // what we read. A concurrent maintenance run (e.g. cron double-fire) loses the
+    // CAS and skips, so we never double-generate. (No row lock held across the
+    // appointment/invoice creation — safe on PGlite + serverless.)
+    const claimed = await queryOne(
+      "UPDATE subscriptions SET last_run_date=$3, next_run_date=$4, updated_at=now() WHERE id=$1 AND tenant_id=$2 AND status='active' AND next_run_date=$5 RETURNING id",
+      [sub.id, tenant.id, runYmd, nextRun, sub.next_run_date],
+    );
+    if (!claimed) continue; // another run already advanced this subscription
+    processed += 1;
     const service = sub.service_type_id ? await getService(tenant.id, sub.service_type_id) : null;
     let appointmentId = null;
     if (sub.auto_schedule) {
@@ -112,10 +123,8 @@ export async function generateDueCycles(tenant, { now = new Date() } = {}) {
       }, 'recurring');
       invoices += 1;
     }
-    const nextRun = addMonthsYmd(runYmd, monthsForInterval(sub.interval, sub.interval_count));
-    await query('UPDATE subscriptions SET last_run_date=$2, next_run_date=$3, updated_at=now() WHERE id=$1', [sub.id, runYmd, nextRun]);
   }
-  return { subscriptions: rows.length, appointments: appts, invoices };
+  return { subscriptions: processed, appointments: appts, invoices };
 }
 
 export default { monthsForInterval, addMonthsYmd, enrollSubscription, activateSubscriptionFromCheckout, generateDueCycles };

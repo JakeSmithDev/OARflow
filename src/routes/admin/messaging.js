@@ -5,9 +5,11 @@ import { asyncHandler, badRequest, notFound, toInt } from '../../lib/http.js';
 import { query, queryOne } from '../../lib/db.js';
 import { sendSms, isSmsConfigured } from '../../lib/sms.js';
 import { ownsId } from '../../lib/ownership.js';
+import { requireWrite } from '../../lib/permissions.js';
 
 const router = express.Router();
 router.use(requireAdmin());
+router.use(requireWrite('messaging.use'));
 
 router.get('/meta', asyncHandler(async (req, res) => {
   res.json({ ok: true, configured: isSmsConfigured(req.tenant), fromNumber: req.tenant.settings.integrations.sms?.fromNumber || '' });

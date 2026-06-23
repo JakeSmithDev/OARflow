@@ -43,7 +43,7 @@ function sendShell(res, relPath) {
 
 export function createApp() {
   const app = express();
-  app.set('trust proxy', true);
+  app.set('trust proxy', config.trustProxy);
   app.disable('x-powered-by');
 
   // --- Security headers (defense in depth; also covers non-Vercel hosting) ---
@@ -65,6 +65,18 @@ export function createApp() {
       const pf = checkConfig();
       if (!pf.ok) console.warn('[preflight] PRODUCTION CONFIG ISSUES:', pf.critical.map((c) => c.id).join(', '), '— run `npm run doctor` for details.');
     } catch { /* preflight is best-effort */ }
+  }
+
+  // Fail CLOSED on insecure crypto in production: a default TOKEN_SECRET or a
+  // missing ENCRYPTION_KEY means tokens/secrets aren't safe, so refuse to serve
+  // anything but /api/health until it's fixed (overridable with ALLOW_INSECURE_PROD=1).
+  const insecureProd = config.isProduction && !process.env.ALLOW_INSECURE_PROD
+    && (config.tokenSecret === 'dev-insecure-token-secret-change-me' || !config.encryptionKey || config.encryptionKey.length < 32);
+  if (insecureProd) {
+    app.use((req, res, next) => {
+      if (req.path === '/api/health') return next();
+      res.status(503).json({ ok: false, error: 'Service not configured: set TOKEN_SECRET and ENCRYPTION_KEY. See docs/DEPLOY_VERCEL.md.' });
+    });
   }
 
   // Stripe webhook needs the raw body for signature verification — mount BEFORE JSON parser.

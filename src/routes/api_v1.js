@@ -6,7 +6,7 @@ import { asyncHandler, badRequest, notFound, toInt } from '../lib/http.js';
 import { query, queryOne } from '../lib/db.js';
 import { getTenantById } from '../lib/tenants.js';
 import { resolveApiKey, keyHasScope } from '../lib/api_keys.js';
-import { createEndpoint } from '../lib/webhooks.js';
+import { createEndpoint, assertSafeWebhookUrl } from '../lib/webhooks.js';
 import { WEBHOOK_EVENTS } from '../lib/webhooks.js';
 import { findOrCreateCustomer } from '../lib/appointments.js';
 
@@ -91,6 +91,8 @@ router.post('/webhooks', asyncHandler(async (req, res) => {
   if (!requireWrite(req, res)) return;
   const b = req.body || {};
   if (!b.url || !/^https?:\/\//.test(b.url)) return badRequest(res, 'A valid https url is required.');
+  const safe = await assertSafeWebhookUrl(b.url);
+  if (!safe.ok) return badRequest(res, safe.error);
   const ep = await createEndpoint(req.tenant, { url: b.url, events: b.events }, `apikey:${req.apiKey.id}`);
   res.json({ ok: true, data: { id: ep.id, url: ep.url, events: ep.events, secret: ep.secret } });
 }));

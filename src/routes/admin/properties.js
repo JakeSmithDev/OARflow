@@ -10,9 +10,11 @@ import {
   listUnits, createUnit, updateUnit, saveDiagram, setFloorplan, unitDetail,
 } from '../../lib/properties.js';
 import { logAudit } from '../../lib/audit.js';
+import { requireWrite } from '../../lib/permissions.js';
 
 const router = express.Router();
 router.use(requireAdmin());
+router.use(requireWrite('customers.manage'));
 
 router.get('/', asyncHandler(async (req, res) => {
   const customerId = toInt(req.query.customerId);

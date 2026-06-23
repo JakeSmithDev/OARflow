@@ -83,25 +83,37 @@ export async function recordPayment(tenant, invoiceId, { amountCents, eventType 
   return withTx(async (cx) => {
     // The invoice MUST belong to this tenant. Every query below is tenant-scoped
     // so a payment (incl. a webhook with attacker-controlled metadata) can never
-    // read or mutate another tenant's invoice.
-    const invRow0 = await cx.query('SELECT * FROM invoices WHERE id=$1 AND tenant_id=$2', [invoiceId, tenant.id]);
+    // read or mutate another tenant's invoice. FOR UPDATE locks the row so two
+    // concurrent payments serialize — preventing an over-payment race.
+    const invRow0 = await cx.query('SELECT * FROM invoices WHERE id=$1 AND tenant_id=$2 FOR UPDATE', [invoiceId, tenant.id]);
     if (!invRow0.rows.length) return { invoice: null, notFound: true };
+    const inv0 = invRow0.rows[0];
 
     if (externalRef) {
       const dup = await cx.query('SELECT id FROM financial_events WHERE tenant_id=$1 AND external_ref=$2', [tenant.id, externalRef]);
-      if (dup.rows.length) return { invoice: invRow0.rows[0], duplicate: true };
+      if (dup.rows.length) return { invoice: inv0, duplicate: true };
+    }
+    // Authoritative (in-transaction) guards — defense in depth over route checks.
+    const amt = Math.round(amountCents);
+    if (eventType === 'payment' && amt > 0) {
+      if (inv0.status === 'void') return { invoice: inv0, rejected: 'void' };
+      const balance = inv0.total_cents - inv0.amount_paid_cents;
+      if (amt > balance) return { invoice: inv0, rejected: 'overpay', balanceCents: balance };
+    }
+    if (eventType === 'refund' && (inv0.amount_paid_cents + amt) < 0) {
+      return { invoice: inv0, rejected: 'over_refund', balanceCents: inv0.amount_paid_cents };
     }
     await cx.query(
       `INSERT INTO financial_events (tenant_id, invoice_id, customer_id, event_type, amount_cents, method, note, stripe_ref, external_ref, created_by)
        SELECT $1,$2,i.customer_id,$3,$4,$5,$6,$7,$8,$9 FROM invoices i WHERE i.id=$2 AND i.tenant_id=$1`,
-      [tenant.id, invoiceId, eventType, Math.round(amountCents), method || null, note || null, stripeRef || null, externalRef || null, createdBy || null],
+      [tenant.id, invoiceId, eventType, amt, method || null, note || null, stripeRef || null, externalRef || null, createdBy || null],
     );
     const sum = await cx.query(
       "SELECT COALESCE(SUM(amount_cents),0)::bigint paid FROM financial_events WHERE tenant_id=$1 AND invoice_id=$2 AND event_type IN ('payment','refund','adjustment')",
       [tenant.id, invoiceId],
     );
     const paid = Number(sum.rows[0].paid);
-    const inv = invRow0.rows[0];
+    const inv = inv0;
     // A void invoice stays void no matter what lands in the ledger — never revive it.
     let status = inv.status;
     if (inv.status !== 'void') {

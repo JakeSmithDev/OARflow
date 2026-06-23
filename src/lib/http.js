@@ -47,8 +47,18 @@ export function dollarsToCents(value) {
   return Math.round(n * 100);
 }
 
+// Prefer Express's req.ip, which honors the configured `trust proxy` setting:
+// when trust proxy is off (directly-exposed host) it returns the socket address
+// and ignores the spoofable X-Forwarded-For header, so rate limits can't be
+// bypassed. Falls back to the socket address.
 export function getClientIp(req) {
-  const fwd = req.headers['x-forwarded-for'];
-  if (typeof fwd === 'string' && fwd.length) return fwd.split(',')[0].trim();
-  return req.socket?.remoteAddress || '0.0.0.0';
+  return req.ip || req.socket?.remoteAddress || '0.0.0.0';
+}
+
+// Coerce a user-supplied color to a safe #rgb/#rrggbb hex so it can never break
+// out of a CSS/style string (stored-XSS guard). Returns the fallback otherwise.
+export function hexColor(value, fallback = '#1f8a3d') {
+  if (typeof value !== 'string') return fallback;
+  const v = value.trim();
+  return /^#[0-9a-fA-F]{3}$|^#[0-9a-fA-F]{6}$/.test(v) ? v.toLowerCase() : fallback;
 }

@@ -3,7 +3,7 @@ import express from 'express';
 import { requireAdmin, requireRole } from '../../lib/auth.js';
 import { asyncHandler, badRequest, toInt } from '../../lib/http.js';
 import { createApiKey, listApiKeys, revokeApiKey } from '../../lib/api_keys.js';
-import { listEndpoints, createEndpoint, deleteEndpoint, recentDeliveries, deliverDue, WEBHOOK_EVENTS } from '../../lib/webhooks.js';
+import { listEndpoints, createEndpoint, deleteEndpoint, recentDeliveries, deliverDue, assertSafeWebhookUrl, WEBHOOK_EVENTS } from '../../lib/webhooks.js';
 import { checkConfig } from '../../lib/preflight.js';
 import { backendKind } from '../../lib/db.js';
 import { logAudit } from '../../lib/audit.js';
@@ -37,6 +37,8 @@ router.delete('/keys/:id', asyncHandler(async (req, res) => {
 router.post('/webhooks', asyncHandler(async (req, res) => {
   const b = req.body || {};
   if (!b.url || !/^https?:\/\//.test(b.url)) return badRequest(res, 'A valid URL is required.');
+  const safe = await assertSafeWebhookUrl(b.url);
+  if (!safe.ok) return badRequest(res, safe.error);
   const ep = await createEndpoint(req.tenant, { url: b.url, events: b.events }, req.admin.username);
   await logAudit({ tenantId: req.tenant.id, adminUsername: req.admin.username, action: 'webhook_create', entityType: 'webhook_endpoint', entityId: ep.id });
   res.json({ ok: true, endpoint: ep }); // secret returned once

@@ -4,7 +4,7 @@ import express from 'express';
 import { requireAdmin } from '../../lib/auth.js';
 import { requirePermission } from '../../lib/permissions.js';
 import { asyncHandler, badRequest, notFound, toInt } from '../../lib/http.js';
-import { listTechnicians, createTechnician, updateTechnician, ensureFieldToken } from '../../lib/technicians.js';
+import { listTechnicians, createTechnician, updateTechnician, ensureFieldToken, revokeFieldToken } from '../../lib/technicians.js';
 import { logAudit } from '../../lib/audit.js';
 import { config } from '../../config.js';
 
@@ -30,11 +30,18 @@ router.patch('/:id', requirePermission('dispatch.manage'), asyncHandler(async (r
   res.json({ ok: true, technician: t });
 }));
 
-// Generate/return the technician's field-app (PWA) link.
+// Issue a fresh field-app (PWA) link — rotates the token, invalidating any prior
+// link. The token is stored hashed; the plaintext only appears in this URL.
 router.post('/:id/field-link', requirePermission('dispatch.manage'), asyncHandler(async (req, res) => {
   const token = await ensureFieldToken(req.tenant, toInt(req.params.id));
   if (!token) return notFound(res);
   res.json({ ok: true, url: `${config.baseUrl}/field?token=${token}` });
+}));
+
+// Revoke a technician's field-app access entirely.
+router.post('/:id/field-link/revoke', requirePermission('dispatch.manage'), asyncHandler(async (req, res) => {
+  await revokeFieldToken(req.tenant, toInt(req.params.id));
+  res.json({ ok: true });
 }));
 
 export default router;

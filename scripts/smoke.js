@@ -826,6 +826,22 @@ async function main() {
     assert.equal(off.disabled, true, 'no reminders when disabled');
   });
 
+  await check('[codex] service color validated to hex (stored-XSS guard)', async () => {
+    const { data } = await call('/api/admin/settings/services', { method: 'POST', body: { name: 'Color Test', color: 'red" onload=alert(1)//', basePriceCents: 1000 } });
+    assert.ok(data.service); assert.match(data.service.color, /^#[0-9a-f]{3,6}$/); assert.doesNotMatch(data.service.color, /onload|"/);
+  });
+  await check('[codex] field token rotates + old link invalidated', async () => {
+    const t1 = new URL((await call(`/api/admin/technicians/${techId}/field-link`, { method: 'POST' })).data.url).searchParams.get('token');
+    const t2 = new URL((await call(`/api/admin/technicians/${techId}/field-link`, { method: 'POST' })).data.url).searchParams.get('token');
+    assert.notEqual(t1, t2);
+    assert.equal((await call('/api/field/me?token=' + t1, { auth: false })).status, 404, 'old token invalidated');
+    assert.equal((await call('/api/field/me?token=' + t2, { auth: false })).status, 200, 'new token valid');
+  });
+  await check('[codex] webhook rejects non-http scheme (SSRF guard)', async () => {
+    assert.equal((await call('/api/admin/developer/webhooks', { method: 'POST', body: { url: 'javascript:alert(1)', events: ['*'] } })).status, 400);
+    assert.equal((await call('/api/admin/developer/webhooks', { method: 'POST', body: { url: 'ftp://example.com/x', events: ['*'] } })).status, 400);
+  });
+
   await check('[fix] staff role blocked from settings, allowed for ops', async () => {
     await call('/api/admin/auth/logout', { method: 'POST' });
     cookie = '';
@@ -835,6 +851,14 @@ async function main() {
     assert.equal(s.status, 403, 'staff blocked from settings');
     const appts = await call('/api/admin/appointments');
     assert.equal(appts.status, 200, 'staff can still run the day');
+  });
+  await check('[codex] staff cannot move money or use developer API', async () => {
+    // (staff session still active) — reads allowed, payment/charge/developer denied
+    assert.equal((await call('/api/admin/invoices')).status, 200, 'staff can read invoices');
+    assert.equal((await call(`/api/admin/invoices/${invId}/payment`, { method: 'POST', body: { amountCents: 100, method: 'cash' } })).status, 403, 'staff blocked from recording payments');
+    assert.equal((await call(`/api/admin/invoices/${invId}/void`, { method: 'POST' })).status, 403, 'staff blocked from voiding');
+    assert.equal((await call('/api/admin/developer')).status, 403, 'staff blocked from developer/API keys');
+    assert.equal((await call('/api/admin/customers/1/payment-methods', { method: 'POST', body: {} })).status, 403, 'staff blocked from saving cards');
   });
 
   await check('[p1a] appointment confirmation SMS + idempotent', async () => {
@@ -846,8 +870,10 @@ async function main() {
     assert.ok(r1.ok && r1.status === 'sent');
     const r2 = await sendAppointmentSms(tenant, 1, 'confirmation');
     assert.equal(r2.status, 'duplicate', 'confirmation SMS not double-sent');
-    const n = await dbm.queryOne("SELECT count(*)::int n FROM sms_messages WHERE appointment_id=1 AND purpose='transactional'");
-    assert.equal(n.n, 1);
+    // Exactly one CONFIRMATION row for this appointment (a separate reminder may
+    // also exist — we're asserting the confirmation specifically isn't doubled).
+    const n = await dbm.queryOne("SELECT count(*)::int n FROM sms_messages WHERE appointment_id=1 AND purpose='transactional' AND body LIKE '%is set for%'");
+    assert.equal(n.n, 1, 'confirmation SMS must not be double-sent');
   });
   await check('[p1a] booking captured SMS consent (opted_in)', async () => {
     const dbm = await import('../src/lib/db.js');

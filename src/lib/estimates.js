@@ -52,16 +52,38 @@ export async function declineEstimate(tenant, id) {
   return queryOne("UPDATE estimates SET status='declined', declined_at=now(), updated_at=now() WHERE tenant_id=$1 AND id=$2 AND status NOT IN ('accepted','converted') RETURNING *", [tenant.id, id]);
 }
 
-/** Convert an estimate to a draft invoice (idempotent on the estimate). */
+/**
+ * Convert an estimate to a draft invoice. Idempotent AND concurrency-safe via an
+ * atomic compare-and-swap "claim": exactly one concurrent caller flips the row to
+ * 'converted'; the loser sees it's taken and no-ops. (No nested transaction — so
+ * it's safe on both pooled Postgres and the single-connection PGlite, and serverless-friendly.)
+ */
 export async function convertToInvoice(tenant, id, createdBy) {
-  const e = await queryOne('SELECT * FROM estimates WHERE tenant_id=$1 AND id=$2', [tenant.id, id]);
-  if (!e) return { ok: false, error: 'Not found.' };
-  if (e.converted_invoice_id) return { ok: true, invoiceId: e.converted_invoice_id, already: true };
-  const inv = await createInvoice(tenant, {
-    customerId: e.customer_id, lineItems: e.line_items, taxRatePercent: e.tax_rate_percent, discountCents: e.discount_cents,
-    notes: e.notes, terms: e.terms,
-  }, createdBy);
-  await query("UPDATE estimates SET status='converted', converted_invoice_id=$3, updated_at=now() WHERE tenant_id=$1 AND id=$2", [tenant.id, id, inv.id]);
+  const existing = await queryOne('SELECT * FROM estimates WHERE tenant_id=$1 AND id=$2', [tenant.id, id]);
+  if (!existing) return { ok: false, error: 'Not found.' };
+  if (existing.converted_invoice_id) return { ok: true, invoiceId: existing.converted_invoice_id, already: true };
+  const prevStatus = existing.status;
+  // Claim: only succeeds if not already converted. Whoever wins this UPDATE owns the conversion.
+  const claimed = await queryOne(
+    "UPDATE estimates SET status='converted', updated_at=now() WHERE tenant_id=$1 AND id=$2 AND converted_invoice_id IS NULL AND status<>'converted' RETURNING id",
+    [tenant.id, id],
+  );
+  if (!claimed) {
+    const e = await queryOne('SELECT converted_invoice_id FROM estimates WHERE tenant_id=$1 AND id=$2', [tenant.id, id]);
+    return { ok: true, invoiceId: e?.converted_invoice_id || null, already: true };
+  }
+  let inv;
+  try {
+    inv = await createInvoice(tenant, {
+      customerId: existing.customer_id, lineItems: existing.line_items, taxRatePercent: existing.tax_rate_percent, discountCents: existing.discount_cents,
+      notes: existing.notes, terms: existing.terms,
+    }, createdBy);
+  } catch (err) {
+    // Roll the claim back so a transient failure doesn't strand the estimate.
+    await query('UPDATE estimates SET status=$3, updated_at=now() WHERE tenant_id=$1 AND id=$2 AND converted_invoice_id IS NULL', [tenant.id, id, prevStatus]).catch(() => {});
+    throw err;
+  }
+  await query('UPDATE estimates SET converted_invoice_id=$3, updated_at=now() WHERE tenant_id=$1 AND id=$2', [tenant.id, id, inv.id]);
   return { ok: true, invoiceId: inv.id, invoice: inv };
 }
 

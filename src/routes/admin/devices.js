@@ -5,9 +5,11 @@ import { asyncHandler, badRequest, notFound, toInt } from '../../lib/http.js';
 import { ownsId } from '../../lib/ownership.js';
 import { listDevices, createDevice, updateDevice, getDevice, deviceHistory, recordInspection, deviceScanUrl } from '../../lib/devices.js';
 import { logAudit } from '../../lib/audit.js';
+import { requireWrite } from '../../lib/permissions.js';
 
 const router = express.Router();
 router.use(requireAdmin());
+router.use(requireWrite('appointments.manage'));
 
 router.get('/', asyncHandler(async (req, res) => {
   const customerId = toInt(req.query.customerId);

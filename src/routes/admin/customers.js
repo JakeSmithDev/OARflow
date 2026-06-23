@@ -4,6 +4,7 @@ import { requireAdmin } from '../../lib/auth.js';
 import { asyncHandler, badRequest, notFound, toInt, getClientIp } from '../../lib/http.js';
 import { query, queryOne } from '../../lib/db.js';
 import { logAudit } from '../../lib/audit.js';
+import { requireWrite, requirePermission } from '../../lib/permissions.js';
 import { randomToken } from '../../lib/crypto.js';
 import { config } from '../../config.js';
 import {
@@ -13,6 +14,9 @@ import {
 
 const router = express.Router();
 router.use(requireAdmin());
+router.use(requireWrite('customers.manage')); // reads open to admins; writes gated
+// Saving/charging cards is a payments action — stricter than customers.manage.
+router.use(['/:id/setup-intent', '/:id/payment-methods', '/:id/payment-methods/:pmId', '/:id/payment-methods/:pmId/default'], (req, res, next) => (req.method === 'GET' ? next() : requirePermission('payments.manage')(req, res, next)));
 
 async function loadCustomer(req) { return queryOne('SELECT * FROM customers WHERE tenant_id=$1 AND id=$2', [req.tenant.id, toInt(req.params.id)]); }
 

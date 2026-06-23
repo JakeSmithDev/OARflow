@@ -7,7 +7,7 @@ const OF = window.OF;
 
     async function loadServices() { if (!SERVICES.length) SERVICES = (await OF.get('/api/admin/appointments/meta/services')).services; return SERVICES; }
     async function loadTechs() { if (!TECHS) TECHS = (await OF.get('/api/admin/technicians')).technicians; return TECHS; }
-    function techChip(t) { return `<span class="badge no-dot" style="background:${t.color}1a;color:${t.color}">${t.is_lead ? '★ ' : ''}${OF.escape(t.name)}</span>`; }
+    function techChip(t) { const c = OF.color(t.color); return `<span class="badge no-dot" style="background:${c}1a;color:${c}">${t.is_lead ? '★ ' : ''}${OF.escape(t.name)}</span>`; }
 
     // Run an action; if the slot is at capacity, ask to override and retry with force.
     async function doForce(fn) {

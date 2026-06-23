@@ -7,10 +7,12 @@ import { enrollSubscription, generateDueCycles, monthsForInterval } from '../../
 import { createSubscriptionCheckout, isConfigured as stripeConfigured } from '../../lib/stripe.js';
 import { logAudit } from '../../lib/audit.js';
 import { ownsId } from '../../lib/ownership.js';
+import { requireWrite } from '../../lib/permissions.js';
 import { config } from '../../config.js';
 
 const router = express.Router();
 router.use(requireAdmin());
+router.use(requireWrite('plans.manage'));
 
 function mrrOf(rows) {
   let mrr = 0;

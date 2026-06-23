@@ -1,7 +1,9 @@
 // Technicians (field staff) + per-appointment assignment. Assignment is an
 // internal dispatch concern only — never exposed on the public booking side.
+import crypto from 'node:crypto';
 import { query, queryOne, withTx } from './db.js';
 import { randomToken } from './crypto.js';
+import { hexColor } from './http.js';
 
 export async function listTechnicians(tenant, { includeInactive = false } = {}) {
   const r = await query(
@@ -15,12 +17,12 @@ export async function listTechnicians(tenant, { includeInactive = false } = {}) 
 export async function createTechnician(tenant, { name, email, phone, color, userId }) {
   return queryOne(
     `INSERT INTO technicians (tenant_id, name, email, phone, color, user_id) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
-    [tenant.id, name, email || null, phone || null, color || '#2563eb', userId || null],
+    [tenant.id, name, email || null, phone || null, hexColor(color, '#2563eb'), userId || null],
   );
 }
 
 export async function updateTechnician(tenant, id, fields) {
-  const cols = { name: fields.name, email: fields.email, phone: fields.phone, color: fields.color, user_id: fields.userId, is_active: fields.isActive,
+  const cols = { name: fields.name, email: fields.email, phone: fields.phone, color: fields.color === undefined ? undefined : hexColor(fields.color), user_id: fields.userId, is_active: fields.isActive,
     license_no: fields.licenseNo, license_state: fields.licenseState, license_expires: fields.licenseExpires };
   const sets = []; const params = [id, tenant.id];
   for (const [k, v] of Object.entries(cols)) { if (v !== undefined) { params.push(v); sets.push(`${k}=$${params.length}`); } }
@@ -73,19 +75,31 @@ export async function assignmentsForAppointments(tenant, appointmentIds = []) {
   return map;
 }
 
-/** Get (creating if needed) a technician's field-app token. */
+const FIELD_TOKEN_TTL_DAYS = 180;
+function hashFieldToken(token) { return crypto.createHash('sha256').update(token).digest('hex'); }
+
+/**
+ * Issue a fresh field-app token (rotates — invalidates any prior token). We store
+ * only the SHA-256 hash + an expiry; the plaintext is returned once for the link.
+ */
 export async function ensureFieldToken(tenant, technicianId) {
-  const t = await queryOne('SELECT * FROM technicians WHERE tenant_id=$1 AND id=$2', [tenant.id, technicianId]);
+  const t = await queryOne('SELECT id FROM technicians WHERE tenant_id=$1 AND id=$2', [tenant.id, technicianId]);
   if (!t) return null;
-  if (t.field_token) return t.field_token;
   const token = randomToken();
-  await query('UPDATE technicians SET field_token=$3 WHERE tenant_id=$1 AND id=$2', [tenant.id, technicianId, token]);
+  const expires = new Date(Date.now() + FIELD_TOKEN_TTL_DAYS * 86400000);
+  await query('UPDATE technicians SET field_token_hash=$3, field_token_expires=$4, field_token=NULL, updated_at=now() WHERE tenant_id=$1 AND id=$2', [tenant.id, technicianId, hashFieldToken(token), expires.toISOString()]);
   return token;
+}
+
+/** Revoke a technician's field-app access. */
+export async function revokeFieldToken(tenant, technicianId) {
+  await query('UPDATE technicians SET field_token_hash=NULL, field_token_expires=NULL, field_token=NULL, updated_at=now() WHERE tenant_id=$1 AND id=$2', [tenant.id, technicianId]);
+  return { ok: true };
 }
 
 export async function technicianByFieldToken(token) {
   if (!token) return null;
-  return queryOne('SELECT * FROM technicians WHERE field_token=$1 AND is_active=TRUE', [token]);
+  return queryOne('SELECT * FROM technicians WHERE field_token_hash=$1 AND is_active=TRUE AND (field_token_expires IS NULL OR field_token_expires > now())', [hashFieldToken(token)]);
 }
 
 export async function isAssigned(tenant, technicianId, appointmentId) {
@@ -113,5 +127,5 @@ export async function technicianJobs(tenant, technicianId, { from, to }) {
 
 export default {
   listTechnicians, createTechnician, updateTechnician, setAssignments, getAssignments,
-  assignmentsForAppointments, ensureFieldToken, technicianByFieldToken,
+  assignmentsForAppointments, ensureFieldToken, revokeFieldToken, technicianByFieldToken,
 };

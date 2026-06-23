@@ -8,9 +8,11 @@ import { processDueFollowUps } from '../../lib/follow_ups.js';
 import { zonedWallTimeToUtc } from '../../lib/dates.js';
 import { randomToken } from '../../lib/crypto.js';
 import { ownsId } from '../../lib/ownership.js';
+import { requireWrite } from '../../lib/permissions.js';
 
 const router = express.Router();
 router.use(requireAdmin());
+router.use(requireWrite('followups.manage'));
 
 // --- Queue ----------------------------------------------------------------
 router.get('/', asyncHandler(async (req, res) => {
