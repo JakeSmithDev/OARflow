@@ -18,6 +18,7 @@ const OF = window.OF;
     }
 
     async function openDrawer(id) {
+      window.__custId = id;
       const d = await OF.get('/api/admin/customers/'+id);
       const c = d.customer;
       const dr = OF.drawer(`
@@ -57,7 +58,14 @@ const OF = window.OF;
             ${d.cards.mock?`<p class="tiny muted">Demo mode — saved cards are simulated until a live processor is connected.</p>`:''}</div>
           <div style="margin-bottom:16px"><div class="row between" style="margin-bottom:6px"><span class="muted tiny" style="text-transform:uppercase;letter-spacing:.04em;font-weight:700">Devices &amp; stations</span><button class="btn btn-secondary btn-xs" id="addDevBtn">Add device</button></div>
             <div id="devBox"><p class="muted small">Loading…</p></div></div>
+          <div style="margin-bottom:16px"><div class="row between" style="margin-bottom:6px"><span class="muted tiny" style="text-transform:uppercase;letter-spacing:.04em;font-weight:700">Properties &amp; units</span><button class="btn btn-secondary btn-xs" id="addPropBtn">Add property</button></div>
+            <div id="propBox"><p class="muted small">Loading…</p></div></div>
         </div>`, { wide:true });
+      async function loadProps(){ const r=await OF.get('/api/admin/properties?customerId='+id); const box=dr.q('#propBox'); if(!box)return;
+        box.innerHTML = r.properties.length? r.properties.map(p=>`<div class="row between" style="padding:7px 0;border-bottom:1px solid var(--line-2)"><div><div class="cell-strong" style="font-size:14px">${OF.escape(p.name)}</div><div class="tiny muted">${OF.escape([p.address,p.city,p.state].filter(Boolean).join(', '))||'—'} · ${p.unit_count} unit${p.unit_count===1?'':'s'}</div></div><button class="link-btn" data-prop="${p.id}" data-name="${OF.escape(p.name)}">Units</button></div>`).join('') : '<p class="muted small">No properties. Add one for multi-unit buildings.</p>';
+        box.querySelectorAll('[data-prop]').forEach(b=>b.onclick=()=>propertyModal(b.dataset.prop, b.dataset.name)); }
+      dr.q('#addPropBtn')?.addEventListener('click', ()=>propertyAddModal(id, ()=>loadProps()));
+      loadProps();
       function devHtml(devs){ return devs.length?devs.map(dv=>`<div class="row between" style="padding:7px 0;border-bottom:1px solid var(--line-2)"><div><div class="cell-strong" style="font-size:14px">${OF.escape(dv.label)}</div><div class="tiny muted">${OF.escape(dv.device_type)}${dv.serial?` · SN ${OF.escape(dv.serial)}`:''}${dv.last_status?` · last: ${OF.escape(dv.last_status)}`:''}</div></div><div class="row" style="gap:8px"><button class="link-btn" data-qr="${dv.qr_token}" data-label="${OF.escape(dv.label)}">QR</button><button class="link-btn" data-dev="${dv.id}">History</button></div></div>`).join(''):'<p class="muted small">No devices placed yet.</p>'; }
       async function loadDevices(){ const r=await OF.get('/api/admin/devices?customerId='+id); const box=dr.q('#devBox'); if(!box)return; box.innerHTML=devHtml(r.devices);
         box.querySelectorAll('[data-qr]').forEach(b=>b.onclick=()=>printQr(b.dataset.qr,b.dataset.label));
@@ -111,6 +119,57 @@ const OF = window.OF;
         <body><h2>${label.replace(/</g,'&lt;')}</h2><div id="qr"></div><p style="color:#475569;font-size:13px;word-break:break-all">${url}</p>
         <script>new QRCode(document.getElementById('qr'),{text:'${url}',width:220,height:220});setTimeout(()=>window.print(),500);<\/script></body></html>`);
       w.document.close();
+    }
+
+    function propertyAddModal(customerId, onSaved) {
+      const m = OF.modal(`<div class="modal-head"><h3>Add property</h3><button class="x" data-close>&times;</button></div>
+        <div class="modal-body"><div class="field"><label>Name *</label><input id="pp_name" placeholder="e.g. Maple Apartments"></div>
+          <div class="field"><label>Address</label><input id="pp_addr"></div>
+          <div class="grid cols-3"><div class="field"><label>City</label><input id="pp_city"></div><div class="field"><label>State</label><input id="pp_state"></div><div class="field"><label>ZIP</label><input id="pp_zip"></div></div></div>
+        <div class="modal-foot"><button class="btn btn-secondary" data-close>Cancel</button><button class="btn btn-primary" id="pp_save">Add</button></div>`);
+      m.q('#pp_save').onclick=async()=>{ if(!m.q('#pp_name').value.trim())return OF.toast('Name required','error');
+        await OF.post('/api/admin/properties',{ customerId:+customerId, name:m.q('#pp_name').value.trim(), address:m.q('#pp_addr').value, city:m.q('#pp_city').value, state:m.q('#pp_state').value, postalCode:m.q('#pp_zip').value }); OF.toast('Property added','ok'); m.close(); onSaved&&onSaved(); };
+    }
+    async function propertyModal(propertyId, propName) {
+      const cust = OF.qs('id') || (window.__custId);
+      const d = await OF.get('/api/admin/properties/'+propertyId+'/units');
+      const m = OF.modal(`<div class="modal-head"><h3>${OF.escape(propName)} — units</h3><button class="x" data-close>&times;</button></div>
+        <div class="modal-body"><div id="unitList">${d.units.length? d.units.map(u=>`<div class="row between" style="padding:8px 0;border-bottom:1px solid var(--line-2)"><div><span class="cell-strong">${OF.escape(u.label)}</span>${u.floor?` <span class="tiny muted">floor ${OF.escape(u.floor)}</span>`:''}<div class="tiny muted">${u.device_count} device${u.device_count===1?'':'s'}</div></div><button class="link-btn" data-unit="${u.id}">Open</button></div>`).join('') : '<p class="muted small">No units yet.</p>'}</div>
+          <div class="row" style="gap:8px;margin-top:10px"><input id="u_label" placeholder="Unit label (e.g. Apt 2B)" style="flex:1"><input id="u_floor" placeholder="Floor" style="max-width:90px"><button class="btn btn-secondary btn-sm" id="u_add">Add</button></div></div>
+        <div class="modal-foot"><button class="btn btn-primary" data-close>Close</button></div>`, { wide:true });
+      const reload=()=>{ m.close(); propertyModal(propertyId, propName); };
+      m.q('#u_add').onclick=async()=>{ if(!m.q('#u_label').value.trim())return; await OF.post('/api/admin/properties/units',{ propertyId:+propertyId, label:m.q('#u_label').value.trim(), floor:m.q('#u_floor').value }); reload(); };
+      m.el.querySelectorAll('[data-unit]').forEach(b=>b.onclick=()=>{ m.close(); unitModal(b.dataset.unit); });
+    }
+    async function unitModal(unitId) {
+      const d = await OF.get('/api/admin/properties/units/'+unitId);
+      const u = d.unit; const markers = (u.diagram && u.diagram.markers) || [];
+      const m = OF.modal(`<div class="modal-head"><h3>${OF.escape(u.label)}</h3><button class="x" data-close>&times;</button></div>
+        <div class="modal-body" style="max-height:78vh;overflow:auto">
+          <div class="muted tiny" style="text-transform:uppercase;letter-spacing:.04em;font-weight:700;margin-bottom:6px">Floorplan diagram</div>
+          <div id="diagWrap" style="position:relative;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--surface-2);min-height:120px">
+            ${d.floorplanUrl?`<img id="fp" src="${d.floorplanUrl}" style="display:block;width:100%">`:'<div class="center muted small" style="padding:30px">No floorplan yet. Upload one, then tap to place device pins.</div>'}
+            <div id="pins"></div>
+          </div>
+          <div class="row wrap" style="gap:8px;margin:10px 0">
+            <label class="btn btn-secondary btn-sm" style="cursor:pointer">Upload floorplan<input type="file" id="fpUp" accept="image/*" hidden></label>
+            ${d.floorplanUrl?'<button class="btn btn-primary btn-sm" id="saveDiag">Save pins</button><span class="tiny muted">Tap the plan to add a pin.</span>':''}
+          </div>
+          <div class="muted tiny" style="text-transform:uppercase;letter-spacing:.04em;font-weight:700;margin:10px 0 6px">Devices in this unit</div>
+          <div id="uDevs">${d.devices.length? d.devices.map(dv=>`<div class="row between" style="padding:6px 0;border-bottom:1px solid var(--line-2)"><span>${OF.escape(dv.label)} <span class="tiny muted">${OF.escape(dv.device_type)}</span></span></div>`).join('') : '<p class="muted small">No devices here.</p>'}</div>
+          <div class="row" style="gap:8px;margin-top:8px"><input id="ud_label" placeholder="Add device label" style="flex:1"><button class="btn btn-secondary btn-sm" id="ud_add">Add device</button></div>
+          ${d.inspections.length?`<div class="muted tiny" style="text-transform:uppercase;letter-spacing:.04em;font-weight:700;margin:12px 0 6px">Recent activity</div>${d.inspections.map(h=>`<div class="row between" style="padding:5px 0"><span class="small">${OF.escape(h.device_label)} · ${OF.escape(h.status)}</span><span class="tiny muted">${OF.date(h.inspected_at)}</span></div>`).join('')}`:''}
+        </div>
+        <div class="modal-foot"><button class="btn btn-primary" data-close>Done</button></div>`, { wide:true });
+      const custId = window.__custId;
+      let pins = markers.slice();
+      function renderPins(){ const box=m.q('#pins'); if(!box)return; box.innerHTML=pins.map((p,i)=>`<span title="${OF.escape(p.label||'')}" style="position:absolute;left:${p.x*100}%;top:${p.y*100}%;transform:translate(-50%,-100%);cursor:pointer" data-pin="${i}">📍</span>`).join(''); box.querySelectorAll('[data-pin]').forEach(s=>s.onclick=(ev)=>{ ev.stopPropagation(); if(confirm('Remove this pin?')){ pins.splice(+s.dataset.pin,1); renderPins(); } }); }
+      renderPins();
+      const fp=m.q('#fp');
+      if(fp) fp.onclick=(ev)=>{ const r=fp.getBoundingClientRect(); const x=(ev.clientX-r.left)/r.width, y=(ev.clientY-r.top)/r.height; const label=prompt('Pin label (e.g. Station 3):')||''; pins.push({x,y,label,deviceId:null}); renderPins(); };
+      m.q('#saveDiag')?.addEventListener('click', async()=>{ await OF.post(`/api/admin/properties/units/${unitId}/diagram`,{ markers:pins }); OF.toast('Diagram saved','ok'); });
+      m.q('#fpUp').onchange=async(e)=>{ const file=e.target.files[0]; if(!file)return; const dataBase64=await new Promise(r=>{const fr=new FileReader();fr.onload=()=>r(fr.result);fr.readAsDataURL(file);}); await OF.post(`/api/admin/properties/units/${unitId}/floorplan`,{ filename:file.name, contentType:file.type, dataBase64 }); OF.toast('Floorplan uploaded','ok'); m.close(); unitModal(unitId); };
+      m.q('#ud_add').onclick=async()=>{ const label=m.q('#ud_label').value.trim(); if(!label)return; if(!custId){ OF.toast('Reopen from the customer to add devices','error'); return; } await OF.post('/api/admin/devices',{ customerId:+custId, label, unitId:+unitId, deviceType:'bait_station' }); OF.toast('Device added','ok'); m.close(); unitModal(unitId); };
     }
 
     function addCustomer() {

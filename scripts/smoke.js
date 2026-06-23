@@ -577,6 +577,38 @@ async function main() {
     assert.ok((await res.text()).split('\n')[0].includes('Commission'));
   });
 
+  // --- Multi-unit properties + units + diagrams ---
+  let propId; let unitId;
+  await check('create a property for a customer', async () => {
+    const { data } = await call('/api/admin/properties', { method: 'POST', body: { customerId: 1, name: 'Maple Apartments', address: '500 Maple Ave', city: 'Baltimore', state: 'MD' } });
+    assert.ok(data.ok); propId = data.property.id;
+  });
+  await check('add units to the property', async () => {
+    unitId = (await call('/api/admin/properties/units', { method: 'POST', body: { propertyId: propId, label: 'Apt 2B', floor: '2' } })).data.unit.id;
+    await call('/api/admin/properties/units', { method: 'POST', body: { propertyId: propId, label: 'Apt 3A', floor: '3' } });
+    const { data } = await call('/api/admin/properties/' + propId + '/units');
+    assert.equal(data.units.length, 2);
+    const props = (await call('/api/admin/properties?customerId=1')).data.properties;
+    assert.equal(props.find((p) => p.id === propId).unit_count, 2);
+  });
+  await check('tie a device to a unit + see it in unit detail', async () => {
+    await call('/api/admin/devices', { method: 'POST', body: { customerId: 1, label: 'Station 2B-1', unitId, deviceType: 'bait_station' } });
+    const { data } = await call('/api/admin/properties/units/' + unitId);
+    assert.ok(data.devices.some((d) => d.label === 'Station 2B-1'));
+  });
+  await check('save a unit diagram (clamped markers)', async () => {
+    const { data } = await call(`/api/admin/properties/units/${unitId}/diagram`, { method: 'POST', body: { markers: [{ x: 0.25, y: 0.4, label: 'Kitchen' }, { x: 2, y: -1, label: 'clamp me' }] } });
+    assert.ok(data.ok);
+    const detail = (await call('/api/admin/properties/units/' + unitId)).data;
+    assert.equal(detail.unit.diagram.markers.length, 2);
+    assert.equal(detail.unit.diagram.markers[1].x, 1); // clamped to [0,1]
+    assert.equal(detail.unit.diagram.markers[1].y, 0);
+  });
+  await check('upload a unit floorplan (image)', async () => {
+    const { data } = await call(`/api/admin/properties/units/${unitId}/floorplan`, { method: 'POST', body: { filename: 'plan.png', contentType: 'image/png', dataBase64: PNG1x1 } });
+    assert.ok(data.floorplanUrl.includes('/api/files/'));
+  });
+
   // --- Reviews / NPS (no rating gating) ---
   await check('set a public review platform URL', async () => {
     const { data } = await call('/api/admin/reviews/settings', { method: 'PUT', body: { platforms: { google: 'https://g.page/r/demo/review' } } });

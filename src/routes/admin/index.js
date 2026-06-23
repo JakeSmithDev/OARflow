@@ -21,6 +21,7 @@ import devicesRouter from './devices.js';
 import voiceRouter from './voice.js';
 import developerRouter from './developer.js';
 import commissionsRouter from './commissions.js';
+import propertiesRouter from './properties.js';
 
 const router = express.Router();
 
@@ -45,5 +46,6 @@ router.use('/devices', devicesRouter);
 router.use('/voice', voiceRouter);
 router.use('/developer', developerRouter);
 router.use('/commissions', commissionsRouter);
+router.use('/properties', propertiesRouter);
 
 export default router;
