@@ -45,6 +45,9 @@ export async function emitEvent(name, data = {}, { source } = {}) {
     [tenantId, name, JSON.stringify(data), source || (inngestConfigured() ? 'inngest' : 'local')],
   ).catch(() => {});
 
+  // Fan out to any tenant-configured outbound webhooks (best-effort, isolated).
+  if (tenantId) import('./webhooks.js').then(({ enqueue }) => enqueue(tenantId, name, data)).catch(() => {});
+
   if (inngestConfigured()) {
     try { await inngest.send({ name, data }); }
     catch (e) { console.error('inngest send failed:', e.message); }

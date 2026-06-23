@@ -8,6 +8,7 @@ import { processDueReminders } from '../lib/reminders.js';
 import { generateDueCycles } from '../lib/recurring.js';
 import { processDueFollowUps } from '../lib/follow_ups.js';
 import { processDueReviews } from '../lib/reviews.js';
+import { processWebhooks } from '../lib/webhooks.js';
 
 /** Daily maintenance across all tenants. Shared by the Inngest cron (prod) and
  *  the /api/cron/daily endpoint (dev / Vercel cron). Idempotent at the row level
@@ -21,8 +22,9 @@ export async function runDailyMaintenance() {
     const followups = await processDueFollowUps(tenant).catch((e) => ({ error: e.message }));
     const reminders = await processDueReminders(tenant).catch((e) => ({ error: e.message }));
     const reviews = await processDueReviews(tenant).catch((e) => ({ error: e.message }));
-    await recordJobRun(id, 'daily_maintenance', { cycles, followups, reminders, reviews });
-    summary.push({ tenant: id, cycles, followups, reminders, reviews });
+    const webhooks = await processWebhooks(tenant).catch((e) => ({ error: e.message }));
+    await recordJobRun(id, 'daily_maintenance', { cycles, followups, reminders, reviews, webhooks });
+    summary.push({ tenant: id, cycles, followups, reminders, reviews, webhooks });
   }
   return summary;
 }

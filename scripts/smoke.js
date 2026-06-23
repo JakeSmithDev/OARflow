@@ -499,6 +499,48 @@ async function main() {
     assert.equal(back.data.settings.hasCredentials, true);
   });
 
+  // --- Public API v1 + outbound webhooks (Zapier/Make) ---
+  let apiKey;
+  await check('owner can mint an API key (secret shown once)', async () => {
+    const { data } = await call('/api/admin/developer/keys', { method: 'POST', body: { name: 'Zapier', scopes: ['read', 'write'] } });
+    assert.ok(data.key.secret.startsWith('oarf_')); apiKey = data.key.secret;
+    const back = await call('/api/admin/developer');
+    assert.ok(!JSON.stringify(back.data.apiKeys).includes(apiKey), 'full secret never returned again');
+  });
+  await check('API rejects requests without a key', async () => {
+    const res = await fetch(base + '/api/v1/customers');
+    assert.equal(res.status, 401);
+  });
+  await check('API key authenticates + scopes the tenant', async () => {
+    const res = await fetch(base + '/api/v1/customers', { headers: { Authorization: 'Bearer ' + apiKey } });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.ok(Array.isArray(body.data) && body.data.length >= 1);
+    const me = await (await fetch(base + '/api/v1/me', { headers: { Authorization: 'Bearer ' + apiKey } })).json();
+    assert.ok(me.tenant.name); assert.ok(me.events.includes('invoice.paid'));
+  });
+  await check('API can create a customer (write scope)', async () => {
+    const res = await fetch(base + '/api/v1/customers', { method: 'POST', headers: { Authorization: 'Bearer ' + apiKey, 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'API Created', email: 'api.created@example.com' }) });
+    const body = await res.json(); assert.ok(body.ok); assert.ok(body.data.id);
+  });
+  let hookEpId;
+  await check('subscribe a webhook endpoint (HMAC secret once)', async () => {
+    const { data } = await call('/api/admin/developer/webhooks', { method: 'POST', body: { url: base + '/api/v1/ping', events: ['*'] } });
+    assert.ok(data.endpoint.secret.startsWith('whsec_')); hookEpId = data.endpoint.id;
+  });
+  await check('emitting an event enqueues + delivers a signed webhook', async () => {
+    // create+pay an invoice in full -> invoice.paid event fans out to the endpoint
+    const inv = (await call('/api/admin/invoices', { method: 'POST', body: { customerId: 1, taxRatePercent: 0, lineItems: [{ label: 'Hook test', unit_amount_cents: 1000, taxable: false }] } })).data.invoice;
+    await call(`/api/admin/invoices/${inv.id}/send`, { method: 'POST' });
+    await call(`/api/admin/invoices/${inv.id}/payment`, { method: 'POST', body: { amountCents: inv.total_cents, method: 'cash' } });
+    await new Promise((r) => setTimeout(r, 600)); // let the async webhook fan-out settle
+    await call('/api/admin/developer/webhooks/deliver', { method: 'POST' });
+    const back = await call('/api/admin/developer');
+    const dlv = back.data.deliveries.filter((d) => d.event === 'invoice.paid');
+    assert.ok(dlv.length, 'invoice.paid delivery enqueued');
+    assert.ok(dlv.some((d) => d.status === 'delivered' && d.response_code === 200), 'signed delivery succeeded to the sink');
+  });
+
   // --- Reviews / NPS (no rating gating) ---
   await check('set a public review platform URL', async () => {
     const { data } = await call('/api/admin/reviews/settings', { method: 'PUT', body: { platforms: { google: 'https://g.page/r/demo/review' } } });

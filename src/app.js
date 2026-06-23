@@ -15,6 +15,7 @@ import stripeWebhookRouter from './routes/stripe_webhook.js';
 import publicRouter from './routes/public.js';
 import payRouter from './routes/pay.js';
 import quotesRouter from './routes/quotes.js';
+import apiV1Router from './routes/api_v1.js';
 import saveCardRouter from './routes/save_card.js';
 import reviewsPublicRouter from './routes/reviews_public.js';
 import portalRouter from './routes/portal.js';
@@ -60,6 +61,7 @@ export function createApp() {
   app.use('/api/public', publicRouter);
   app.use('/api/pay', payRouter);
   app.use('/api/quotes', quotesRouter);
+  app.use('/api/v1', apiV1Router);
   app.use('/api/save-card', saveCardRouter);
   app.use('/api/reviews', reviewsPublicRouter);
   app.use('/api/portal', portalRouter);
