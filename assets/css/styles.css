@@ -187,6 +187,10 @@ h3 { font-size: 1.3rem; }
 .hero .container { position: relative; z-index: 2; }
 .hero-grid { display: grid; gap: 40px; align-items: center; padding: clamp(48px,7vw,90px) 0; }
 @media (min-width: 940px){ .hero-grid { grid-template-columns: 1.05fr .95fr; gap: 56px; } }
+@media (max-width: 939px){
+  .hero-grid { gap: 0; padding: clamp(44px,12vw,72px) 0; }
+  .hero-art { display: none; }
+}
 .hero h1 { color: #fff; }
 .hero h1 .hl { color: #8fe3a6; }
 .hero p.lead { color: rgba(255,255,255,.86); margin-top: 18px; max-width: 560px; }
