@@ -433,3 +433,23 @@ h3 { font-size: 1.3rem; }
 .skip-link:focus { left: 12px; top: 12px; }
 .badge-soft { display:inline-flex; align-items:center; gap:8px; background:var(--bg-tint); color:var(--blue); border-radius:999px; padding:6px 14px; font-weight:600; font-size:.86rem; font-family:var(--font-head); }
 .badge-soft svg{ width:16px;height:16px; }
+
+/* --------------------------- Photos -------------------------------- */
+/* Drop real photos into existing media slots (object-fit cover keeps any
+   aspect ratio looking right). Add the .photo modifier to a .media-frame. */
+.media-frame.photo { padding: 0; background: var(--navy); }
+.media-frame.photo picture { display: block; width: 100%; height: 100%; }
+.media-frame.photo img { width: 100%; height: 100%; object-fit: cover; }
+
+/* Hero photo (replaces the hero illustration) */
+.hero-card.photo { padding: 14px; }
+.hero-card.photo picture { display: block; }
+.hero-photo { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 18px; display: block; }
+@media (max-width: 540px){ .hero-photo { aspect-ratio: 5 / 4; } }
+
+/* Branded photo in the contact sidebar */
+.aside-photo { border-radius: var(--radius); overflow: hidden; border: 1px solid var(--line); box-shadow: var(--shadow-sm); line-height: 0; aspect-ratio: 16 / 10; }
+.aside-photo img { width: 100%; height: 100%; object-fit: cover; }
+
+/* Optional caption under a media photo */
+.media-cap { margin-top: 10px; font-size: .82rem; color: var(--slate); text-align: center; }
