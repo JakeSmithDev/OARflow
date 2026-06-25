@@ -310,15 +310,31 @@ input[type=color] { padding: 4px; height: 42px; cursor: pointer; }
 .slot-row { display:flex; gap:14px; padding:10px 0; border-bottom:1px solid var(--line-2); }
 .slot-row:last-child { border-bottom:none; }
 .slot-row .time { width:78px; flex:none; font-weight:700; font-size:13px; color:var(--brand-700); }
-.slot-row .job { flex:1; border-left:3px solid var(--brand); background:var(--surface-2); border-radius:8px; padding:9px 11px; cursor:pointer; }
-.card-head { display:flex; align-items:center; padding:14px 16px 0; }
+.slot-row .job { flex:1; min-width:0; border-left:3px solid var(--brand); background:var(--surface-2); border-radius:8px; padding:9px 11px; cursor:pointer; }
+.schedule-day-card .card-head { padding:14px 16px; }
 
 @media (max-width: 1000px) {
   .week-grid { grid-template-columns:repeat(3, minmax(0,1fr)); }
 }
 @media (max-width: 620px) {
   .week-grid { grid-template-columns:repeat(2, minmax(0,1fr)); }
+  .sched-toolbar { display:grid; grid-template-columns:34px 34px minmax(0,1fr) minmax(0,1fr); align-items:center; }
+  .sched-toolbar #today,
+  .sched-toolbar #routeBtn { width:100%; }
+  .sched-title { grid-column:1 / -1; margin:2px 0 0; }
+  .sched-toolbar #techfilter,
+  .sched-toolbar .segmented { grid-column:1 / -1; max-width:none !important; width:100%; margin-left:0 !important; }
+  .sched-toolbar .segmented { display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); }
+  .sched-toolbar .segmented button { padding-inline:8px; }
+  .month-grid { gap:4px; }
   .m-cell { min-height:64px; }
+  .m-cell { padding:5px 4px; border-radius:8px; }
+  .m-cell .cap-pill { padding:1px 5px; font-size:10px; }
+  .m-dots { gap:2px; margin-top:6px; }
+  .m-dot { width:6px; height:6px; }
+  .slot-row { gap:8px; }
+  .slot-row .time { width:62px; font-size:12px; }
+  .slot-row .job .row.between { align-items:flex-start; gap:8px; }
 }
 
 /* Drag-and-drop reschedule (week view) */

@@ -119,6 +119,7 @@ export function createApp() {
   if (inngestConfigured()) app.use('/api/inngest', inngestRouter);
 
   // --- Static assets + marketing site (served from /public) ---------------
+  app.get('/favicon.ico', (req, res) => res.redirect(301, '/assets/img/favicon.svg'));
   app.use(express.static(PUBLIC_DIR, { extensions: ['html'], maxAge: '1h' }));
 
   // --- HTML shell fallbacks for deep links --------------------------------

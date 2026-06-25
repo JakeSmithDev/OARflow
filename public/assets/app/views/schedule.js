@@ -64,7 +64,7 @@ const OF = window.OF;
         if (!d.stops.length) { m.q('#rt_out').innerHTML = '<p class="muted small">No stops for this technician on this day.</p>'; return; }
         m.q('#rt_out').innerHTML = `${d.optimized?`<div class="badge ok no-dot" style="margin-bottom:8px">Optimized · ${d.totalMiles} mi</div>`:`<p class="tiny muted">${OF.escape(d.reason||'')}</p>`}
           <ol style="padding-left:18px;margin:8px 0">${d.stops.map(s=>`<li style="padding:5px 0"><b>${s.time?OF.time(s.time):''}</b> ${OF.escape(s.customerName)}<div class="tiny muted">${OF.escape(s.address||'No address')}</div></li>`).join('')}</ol>
-          ${d.mapsUrl?`<a class="btn btn-primary btn-block" href="${d.mapsUrl}" target="_blank" rel="noopener">${OF.icon('pin',15)} Open route in Google Maps</a>`:''}`;
+          ${d.mapsUrl?`<a class="btn btn-primary btn-block" href="${OF.escape(d.mapsUrl)}" target="_blank" rel="noopener">${OF.icon('pin',15)} Open route in Google Maps</a>`:''}`;
       }
       m.q('#rt_go').onclick = run;
       run();
@@ -93,7 +93,7 @@ const OF = window.OF;
         <div id="body"><div class="loading-page"><span class="spinner"></span></div></div>`;
       if (!TECHS) { try { TECHS = (await OF.get('/api/admin/technicians')).technicians; } catch { TECHS = []; } }
       const tf = document.getElementById('techfilter');
-      if (tf) { tf.innerHTML = `<option value="">All technicians</option>` + TECHS.map(t=>`<option value="${t.id}" ${String(techFilter)===String(t.id)?'selected':''}>${t.name}</option>`).join(''); tf.onchange=()=>{ techFilter=tf.value; render(root); }; }
+      if (tf) { tf.innerHTML = `<option value="">All technicians</option>` + TECHS.map(t=>`<option value="${t.id}" ${String(techFilter)===String(t.id)?'selected':''}>${OF.escape(t.name)}</option>`).join(''); tf.onchange=()=>{ techFilter=tf.value; render(root); }; }
       const step = view==='day'?1:view==='week'?7:0;
       document.getElementById('prev').onclick=()=>{ cursor = view==='month'? addMonth(-1): addYmd(cursor,-step); render(root); };
       document.getElementById('next').onclick=()=>{ cursor = view==='month'? addMonth(1): addYmd(cursor,step); render(root); };
@@ -117,10 +117,10 @@ const OF = window.OF;
     function renderDay(body, appts, meta) {
       const max = loadOf(appts);
       const head = `<div class="card-head"><h3>${appts.length} appointment${appts.length===1?'':'s'}</h3><span style="margin-left:auto">${capPill(appts.length,max,meta.capacity,meta.closed)}</span></div>`;
-      if (!appts.length) { body.innerHTML = `<div class="card">${head}<div class="empty"><div class="ic">${OF.icon('schedule',22)}</div><p>${meta.closed?'This day is marked closed.':'Nothing scheduled.'} <a href="/admin/appointments?new=1">Add a job</a>.</p></div></div>`; return; }
-      body.innerHTML = `<div class="card">${head}<div class="card-pad agenda">` + appts.sort((a,b)=>new Date(a.scheduled_start)-new Date(b.scheduled_start)).map(a=>`
+      if (!appts.length) { body.innerHTML = `<div class="card schedule-day-card">${head}<div class="empty"><div class="ic">${OF.icon('schedule',22)}</div><p>${meta.closed?'This day is marked closed.':'Nothing scheduled.'} <a href="/admin/appointments?new=1">Add a job</a>.</p></div></div>`; return; }
+      body.innerHTML = `<div class="card schedule-day-card">${head}<div class="card-pad agenda">` + appts.sort((a,b)=>new Date(a.scheduled_start)-new Date(b.scheduled_start)).map(a=>`
         <div class="slot-row"><div class="time">${OF.time(a.scheduled_start)}</div>
-        <div class="job" style="border-left-color:${a.service_color||'var(--brand)'}" onclick="OF.go('/admin/appointments?id=${a.id}')">
+        <div class="job" style="border-left-color:${OF.color(a.service_color)}" onclick="OF.go('/admin/appointments?id=${a.id}')">
           <div class="row between"><span class="cell-strong">${OF.escape(a.customer_name)}</span>${OF.statusBadge(a.status)}</div>
           <div class="small muted" style="margin-top:3px">${a.service_name?OF.escape(a.service_name):''}${a.service_address?` · ${OF.escape(a.service_address)}`:''}</div>
         </div></div>`).join('') + `</div></div>`;
@@ -169,7 +169,7 @@ const OF = window.OF;
       body.innerHTML = `<div class="month-grid" style="margin-bottom:6px">${dows.map(d=>`<div class="month-dow">${d}</div>`).join('')}</div>
         <div class="month-grid">` + cells.map(d=>{
         const appts=byDay[d]||[]; const meta=dayMeta(d,data); const out=!d.startsWith(ymPrefix); const isToday=d===todayYmd(); const max=loadOf(appts);
-        const dots = appts.slice(0,5).map(a=>`<span class="m-dot" style="background:${a.service_color||'var(--brand)'}"></span>`).join('');
+        const dots = appts.slice(0,5).map(a=>`<span class="m-dot" style="background:${OF.color(a.service_color)}"></span>`).join('');
         return `<div class="m-cell ${out?'out':''} ${meta.closed?'closed':''} ${isToday?'today':''}" onclick="window.__schedGo('${d}')">
           <div class="row between"><span class="m-num">${labelYmd(d,{day:'numeric'})}</span>${appts.length?(max>meta.capacity?`<span class="cap-pill" style="background:var(--danger-tint);color:var(--danger)">${appts.length}</span>`:`<span class="cap-pill" style="background:var(--brand-tint);color:var(--brand-700)">${appts.length}</span>`):''}</div>
           <div class="m-dots">${dots}</div>
