@@ -471,7 +471,12 @@ h3 { font-size: 1.3rem; }
 .hero-copy--photo { max-width: 560px; margin-left: auto; padding: clamp(64px, 11vw, 132px) 0; }
 .hero-copy--photo h1, .hero-copy--photo .lead { text-shadow: 0 1px 14px rgba(8,28,49,.5); }
 @media (max-width: 860px){
-  .hero--photo .hero-bg img { object-position: 28% 26%; }
-  .hero-scrim { background: linear-gradient(0deg, rgba(8,28,49,.92) 6%, rgba(8,28,49,.64) 34%, rgba(8,28,49,.2) 62%, rgba(8,28,49,0) 100%); }
-  .hero-copy--photo { max-width: 100%; margin-left: 0; padding-top: clamp(210px, 56vw, 360px); padding-bottom: 40px; }
+  .hero--photo .hero-bg img { object-position: 25% 50%; }
+  .hero-scrim {
+    background:
+      linear-gradient(0deg, rgba(8,28,49,.9), rgba(8,28,49,.72)),
+      linear-gradient(90deg, rgba(8,28,49,.34), rgba(8,28,49,.82));
+  }
+  .hero-copy--photo { max-width: 100%; margin-left: 0; padding: clamp(46px, 12vw, 72px) 0 44px; }
+  .hero--photo .hero-badges { gap: 8px 14px; margin-top: 24px; padding-top: 18px; }
 }

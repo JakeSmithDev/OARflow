@@ -455,3 +455,28 @@ h3 { font-size: 1.3rem; }
 
 /* Optional caption under a media photo */
 .media-cap { margin-top: 10px; font-size: .82rem; color: var(--slate); text-align: center; }
+
+/* ----------------------- Full-bleed photo hero --------------------- */
+.hero--photo { padding: 0; }
+.hero--photo::after { display: none; }            /* drop dotted texture over the photo */
+.hero--photo .hero-bg { position: absolute; inset: 0; z-index: 0; display: block; }
+.hero--photo .hero-bg img { width: 100%; height: 100%; object-fit: cover; object-position: 20% 50%; }
+.hero-scrim {
+  position: absolute; inset: 0; z-index: 1; pointer-events: none;
+  background:
+    linear-gradient(90deg, rgba(8,28,49,0) 16%, rgba(8,28,49,.5) 46%, rgba(8,28,49,.86) 78%),
+    linear-gradient(0deg, rgba(8,28,49,.55) 0%, rgba(8,28,49,0) 42%);
+}
+.hero--photo .container { position: relative; z-index: 2; }
+.hero-copy--photo { max-width: 560px; margin-left: auto; padding: clamp(64px, 11vw, 132px) 0; }
+.hero-copy--photo h1, .hero-copy--photo .lead { text-shadow: 0 1px 14px rgba(8,28,49,.5); }
+@media (max-width: 860px){
+  .hero--photo .hero-bg img { object-position: 25% 50%; }
+  .hero-scrim {
+    background:
+      linear-gradient(0deg, rgba(8,28,49,.9), rgba(8,28,49,.72)),
+      linear-gradient(90deg, rgba(8,28,49,.34), rgba(8,28,49,.82));
+  }
+  .hero-copy--photo { max-width: 100%; margin-left: 0; padding: clamp(46px, 12vw, 72px) 0 44px; }
+  .hero--photo .hero-badges { gap: 8px 14px; margin-top: 24px; padding-top: 18px; }
+}

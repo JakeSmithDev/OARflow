@@ -26,7 +26,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=Poppins:wght@500;600;700&amp;display=swap" rel="stylesheet">
-<link rel="stylesheet" href="assets/css/styles.css?v=20260625-2">
+<link rel="preload" as="image" type="image/webp" imagesrcset="assets/img/photos/hero-yard-1280.webp 1280w, assets/img/photos/hero-yard-2048.webp 2048w" imagesizes="100vw" fetchpriority="high">
+<link rel="stylesheet" href="assets/css/styles.css?v=20260625-4">
 <script type="application/ld+json">
 {"@context":"https://schema.org","@type":"LocalBusiness","@id":"https://www.pastpest.com/#business","name":"Pasternack Pest Management LLC","alternateName":"PPM","image":"https://www.pastpest.com/assets/img/photos/truck.jpg","url":"https://www.pastpest.com/","telephone":"+1-410-446-1169","priceRange":"$$","foundingDate":"2022","founder":{"@type":"Person","name":"Erik Pasternack"},"address":{"@type":"PostalAddress","addressRegion":"MD","addressCountry":"US"},"areaServed":[{"@type":"AdministrativeArea","name":"Carroll County, Maryland"},{"@type":"City","name":"Westminster, MD"},{"@type":"City","name":"Eldersburg, MD"},{"@type":"City","name":"Sykesville, MD"},{"@type":"City","name":"Hampstead, MD"},{"@type":"City","name":"Manchester, MD"},{"@type":"City","name":"Taneytown, MD"},{"@type":"City","name":"Mount Airy, MD"},{"@type":"City","name":"Finksburg, MD"},{"@type":"AdministrativeArea","name":"Anne Arundel County, Maryland"},{"@type":"City","name":"Glen Burnie, MD"},{"@type":"City","name":"Annapolis, MD"},{"@type":"City","name":"Severna Park, MD"},{"@type":"City","name":"Pasadena, MD"},{"@type":"City","name":"Columbia, MD"},{"@type":"City","name":"Ellicott City, MD"},{"@type":"City","name":"Catonsville, MD"},{"@type":"City","name":"Odenton, MD"}],"hasOfferCatalog":{"@type":"OfferCatalog","name":"Pest control services","itemListElement":[{"@type":"Offer","itemOffered":{"@type":"Service","name":"Cockroach control"}},{"@type":"Offer","itemOffered":{"@type":"Service","name":"Rodent control & exclusion"}},{"@type":"Offer","itemOffered":{"@type":"Service","name":"Termite inspection & control"}},{"@type":"Offer","itemOffered":{"@type":"Service","name":"Mosquito control"}},{"@type":"Offer","itemOffered":{"@type":"Service","name":"Bed bug treatment"}},{"@type":"Offer","itemOffered":{"@type":"Service","name":"Ant control"}},{"@type":"Offer","itemOffered":{"@type":"Service","name":"Spider control"}},{"@type":"Offer","itemOffered":{"@type":"Service","name":"Stinging insect (wasp, hornet, bee) removal"}}]}}
 </script>
@@ -76,28 +77,31 @@
 <main id="main">
 
 <!-- ============================= HERO ============================= -->
-<section class="hero">
+<section class="hero hero--photo">
+  <picture class="hero-bg">
+    <source type="image/webp" srcset="assets/img/photos/hero-yard-1280.webp 1280w, assets/img/photos/hero-yard-2048.webp 2048w" sizes="100vw">
+    <img src="assets/img/photos/hero-yard-2048.jpg" srcset="assets/img/photos/hero-yard-1280.jpg 1280w, assets/img/photos/hero-yard-2048.jpg 2048w" sizes="100vw" width="2048" height="864" alt="A happy dog running across a healthy, pest-free green backyard" fetchpriority="high" decoding="async">
+  </picture>
+  <div class="hero-scrim"></div>
   <div class="container">
-    <div class="hero-grid">
-      <div class="hero-copy">
-        <span class="eyebrow">
-          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2 4 5v6c0 5 3.4 8.7 8 10 4.6-1.3 8-5 8-10V5Z"/></svg>
-          Licensed &amp; insured · MDA #33560
-        </span>
-        <h1>Make pests a <span class="hl">thing of the past.</span></h1>
-        <p class="lead">Safe, affordable, custom pest control for Carroll County &amp; the Greater Baltimore area. We inspect, treat, and seal your home the right way — so the problem stays solved.</p>
-        <div class="btn-row">
-          <a class="btn btn-primary btn-lg" href="contact.html">Get my free quote</a>
-          <a class="btn btn-ghost-light btn-lg" href="tel:+14104461169">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.9.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92Z"/></svg>
-            (410) 446-1169
-          </a>
-        </div>
-        <div class="hero-badges">
-          <span class="hero-badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Free, no-pressure quotes</span>
-          <span class="hero-badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Pet- &amp; family-conscious</span>
-          <span class="hero-badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Locally owned</span>
-        </div>
+    <div class="hero-copy hero-copy--photo">
+      <span class="eyebrow">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2 4 5v6c0 5 3.4 8.7 8 10 4.6-1.3 8-5 8-10V5Z"/></svg>
+        Licensed &amp; insured · MDA #33560
+      </span>
+      <h1>Make Your Home a <span class="hl">Safe Place.</span></h1>
+      <p class="lead">Say goodbye to pests — for good. Safe, custom pest control that protects your family, your pets, and your home across Carroll County &amp; Greater Baltimore.</p>
+      <div class="btn-row">
+        <a class="btn btn-primary btn-lg" href="contact.html">Get my free quote</a>
+        <a class="btn btn-ghost-light btn-lg" href="tel:+14104461169">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.9.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92Z"/></svg>
+          (410) 446-1169
+        </a>
+      </div>
+      <div class="hero-badges">
+        <span class="hero-badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Free, no-pressure quotes</span>
+        <span class="hero-badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Pet- &amp; family-conscious</span>
+        <span class="hero-badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Locally owned</span>
       </div>
     </div>
   </div>
