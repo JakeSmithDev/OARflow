@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Book an appointment</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Poppins:wght@600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/assets/app/app.css" />
+  <style>
+    :root { --navy:#0a2740; }
+    body { background: linear-gradient(180deg, var(--brand-tint-2), var(--bg) 280px); }
+    h1,h2,h3,.company { font-family:'Poppins',var(--font); letter-spacing:-0.01em; }
+    .wrap { max-width: 760px; margin: 0 auto; padding: 26px 18px 80px; }
+    /* Branded hero */
+    .bk-hero { background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-lg); box-shadow:var(--shadow); padding:22px 24px; margin-bottom:22px; position:relative; overflow:hidden; }
+    .bk-hero::after { content:""; position:absolute; right:-40px; top:-40px; width:180px; height:180px; border-radius:50%; background:color-mix(in srgb, var(--brand) 10%, transparent); }
+    .bk-brand { display:flex; align-items:center; gap:14px; position:relative; z-index:1; }
+    .bk-brand .logo { width:50px;height:50px;flex:none;border-radius:14px;background:linear-gradient(135deg,var(--brand),color-mix(in srgb,var(--brand) 55%,#86efac));display:grid;place-items:center;color:#fff; box-shadow: inset 0 0 0 1px rgba(255,255,255,.18); }
+    .bk-brand > div { min-width:0; }
+    .bk-brand .company { font-size:22px; font-weight:800; color:var(--navy); line-height:1.15; overflow-wrap:anywhere; }
+    .bk-brand .tagline { margin:3px 0 0; color:var(--muted); font-size:14px; }
+    .bk-values { display:flex; flex-wrap:wrap; gap:10px 22px; margin-top:16px; padding-top:16px; border-top:1px solid var(--line-2); position:relative; z-index:1; }
+    .bk-value { display:inline-flex; align-items:center; gap:8px; font-size:13px; font-weight:600; color:var(--ink-2); }
+    .bk-value svg { color:var(--brand); flex:none; }
+    .bk-head { display:none; }
+    .svc .sdot svg { width:24px; height:24px; }
+    .steps { display:flex; gap:8px; margin-bottom: 20px; }
+    .steps .s { flex:1; height:5px; border-radius:999px; background: var(--line); }
+    .steps .s.done { background: var(--brand); }
+    .svc { display:flex; align-items:center; gap:14px; padding:16px 18px; border:1px solid var(--line); border-radius: var(--radius); background:var(--surface); cursor:pointer; transition:.12s; margin-bottom:12px; }
+    .svc:hover { border-color: var(--brand); box-shadow: var(--shadow); transform: translateY(-1px); }
+    .svc .sdot { width:42px;height:42px;border-radius:11px;flex:none;display:grid;place-items:center;color:#fff;font-weight:700; }
+    .svc .meta { flex:1; min-width:0; } .svc .meta h3 { font-size:16px; } .svc .meta p { margin:3px 0 0; color:var(--muted); font-size:13px; overflow-wrap:anywhere; }
+    .svc .price { text-align:right; font-weight:800; font-size:16px; flex:none; } .svc .price small { display:block; color:var(--muted); font-weight:600; font-size:11px; }
+    .navbtns { flex-wrap:wrap; }
+    @media (max-width:560px){ .wrap{padding:20px 14px 70px;} .svc{padding:13px 14px;} .bk-hero{padding:18px 16px;} .bk-brand .company{font-size:19px;} .svc .price{font-size:15px;} }
+    .datestrip { display:flex; gap:8px; overflow-x:auto; padding: 4px 2px 10px; }
+    .daybtn { flex:none; width:64px; padding:10px 0; border:1px solid var(--line); border-radius:12px; background:var(--surface); text-align:center; cursor:pointer; transition:.1s; }
+    .daybtn:hover { border-color: var(--brand); } .daybtn.active { background:var(--brand); color:#fff; border-color:var(--brand); }
+    .daybtn .dow { font-size:11px; font-weight:700; text-transform:uppercase; opacity:.7; } .daybtn .dnum { font-size:19px; font-weight:800; margin-top:2px; }
+    .daybtn.closed { opacity:.4; cursor:not-allowed; }
+    .slots { display:grid; grid-template-columns: repeat(auto-fill, minmax(96px,1fr)); gap:10px; margin-top:6px; }
+    .slots.win { grid-template-columns: repeat(auto-fill, minmax(150px,1fr)); }
+    .slot { padding:11px 8px; border:1px solid var(--line); border-radius:10px; background:var(--surface); text-align:center; font-weight:600; cursor:pointer; transition:.1s; }
+    .slot.win { padding:12px 10px; } .slot .rng { font-size:11px; font-weight:600; color:var(--muted); margin-top:3px; }
+    .slot.win.active .rng { color:rgba(255,255,255,.85); }
+    .slot:hover { border-color: var(--brand); } .slot.active { background:var(--brand); color:#fff; border-color:var(--brand); }
+    .slot:disabled { opacity:.35; cursor:not-allowed; text-decoration: line-through; }
+    /* Prominent live counter for multi-time-slot requests */
+    .reqhint { display:flex; align-items:center; gap:14px; background:var(--brand-tint); border:1px solid color-mix(in srgb, var(--brand) 22%, transparent); border-radius:16px; padding:16px 18px; margin-bottom:16px; }
+    .reqhint .badge-num { width:46px; height:46px; flex:none; border-radius:12px; background:var(--brand); color:#fff; display:grid; place-items:center; font-size:20px; font-weight:800; }
+    .reqhint .txt { font-size:16px; font-weight:700; color:var(--brand-700); line-height:1.35; }
+    .reqhint.done .badge-num { background:var(--ok); }
+    .reqdots { display:flex; gap:6px; margin-top:8px; }
+    .reqdots i { width:11px; height:11px; border-radius:50%; background:#fff; border:2px solid color-mix(in srgb, var(--brand) 35%, transparent); }
+    .reqdots i.on { background:var(--brand); border-color:var(--brand); }
+    .picked { display:flex; flex-wrap:wrap; gap:8px; margin: 4px 0 14px; }
+    .picked .p { display:flex; align-items:center; gap:8px; background:var(--brand-tint); color:var(--brand-700); border-radius:999px; padding:6px 8px 6px 14px; font-weight:600; font-size:13px; }
+    .picked .p button { border:none;background:rgba(0,0,0,.08);border-radius:50%;width:20px;height:20px;cursor:pointer;color:inherit; }
+    .navbtns { display:flex; gap:10px; margin-top:22px; }
+    .ok-screen { text-align:center; padding: 40px 20px; }
+    .ok-screen .big { width:74px;height:74px;border-radius:50%;background:var(--ok-tint);color:var(--ok);display:grid;place-items:center;margin:0 auto 18px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="bk-hero">
+      <div class="bk-brand">
+        <div class="logo" id="logo">·</div>
+        <div><div class="company" id="company">Book an appointment</div><p class="tagline" id="tagline"></p></div>
+      </div>
+      <div class="bk-values">
+        <span class="bk-value"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg> Pick a time that suits you</span>
+        <span class="bk-value"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14M22 4L12 14.01l-3-3"/></svg> Instant email confirmation</span>
+        <span class="bk-value"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z"/></svg> Manage it online anytime</span>
+      </div>
+    </header>
+    <div class="steps" id="steps"></div>
+    <div id="view"><div class="loading-page"><span class="spinner"></span></div></div>
+  </div>
+
+  <script>
+    const $ = (s, r=document) => r.querySelector(s);
+    const slug = new URLSearchParams(location.search).get('t') || 'default';
+    const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    function svcIcon(name){
+      const n=(name||'').toLowerCase(); let p='<path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z"/>';
+      if(/mosquito|tick/.test(n)) p='<path d="M12 3s6 6 6 11a6 6 0 0 1-12 0c0-5 6-11 6-11z"/>';
+      else if(/rodent|mouse|mice|rat/.test(n)) p='<circle cx="8" cy="9" r="3"/><circle cx="16" cy="9" r="3"/><path d="M5 19a7 7 0 0 1 14 0z"/>';
+      else if(/termite|inspect/.test(n)) p='<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>';
+      else if(/bug|ant|roach|spider|pest|bed/.test(n)) p='<path d="M12 8a4 4 0 0 1 4 4v3a4 4 0 0 1-8 0v-3a4 4 0 0 1 4-4z"/><path d="M12 8V5M8 12H4M20 12h-4M8 16l-3 2M16 16l3 2M8 8L6 6M16 8l2-2"/>';
+      return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
+    }
+    let CFG = null, TZ = 'America/New_York', CUR = 'USD';
+    const state = { step: 0, service: null, mode: null, date: null, slot: null, requested: [], details: {} };
+
+    const money = (c) => { try { return new Intl.NumberFormat('en-US',{style:'currency',currency:CUR}).format((c||0)/100);}catch{return '$'+((c||0)/100).toFixed(2);} };
+    const fmtDate = (d) => new Intl.DateTimeFormat('en-US',{timeZone:TZ,weekday:'short',month:'short',day:'numeric'}).format(d);
+    const fmtTime = (d) => new Intl.DateTimeFormat('en-US',{timeZone:TZ,hour:'numeric',minute:'2-digit'}).format(d);
+    async function api(path, opts={}) {
+      const res = await fetch(path, { method: opts.method||'GET', headers: opts.body?{'Content-Type':'application/json'}:{}, body: opts.body?JSON.stringify(opts.body):undefined });
+      const data = await res.json().catch(()=>({}));
+      if (!res.ok || data.ok===false) throw new Error(data.error || 'Something went wrong.');
+      return data;
+    }
+    function setSteps(n){ const total = state.mode==='request'?3:4; $('#steps').innerHTML = Array.from({length:total},(_,i)=>`<div class="s ${i<n?'done':''}"></div>`).join(''); }
+
+    async function boot() {
+      try {
+        CFG = await api(`/api/public/${slug}/bootstrap`);
+      } catch (e) { $('#view').innerHTML = `<div class="card card-pad center">${esc(e.message)}</div>`; return; }
+      TZ = CFG.tenant.timezone; CUR = CFG.tenant.currency;
+      const b = CFG.tenant.branding || {};
+      if (b.primaryColor) document.documentElement.style.setProperty('--brand', b.primaryColor);
+      $('#logo').textContent = (b.logoText||CFG.tenant.name||'O')[0];
+      $('#company').textContent = b.logoText || CFG.tenant.name;
+      $('#tagline').textContent = b.tagline || '';
+      // Deep link to a confirmation
+      const apptToken = new URLSearchParams(location.search).get('appt');
+      if (apptToken) return showExisting(apptToken);
+      renderServices();
+    }
+
+    function renderServices() {
+      state.step = 0; setSteps(0);
+      $('#view').innerHTML = `<h2 style="margin-bottom:14px">What can we help with?</h2>` +
+        CFG.services.map(s => `
+          <div class="svc" data-id="${s.id}">
+            <div class="sdot" style="background:${esc(s.color)}">${svcIcon(s.name)}</div>
+            <div class="meta"><h3>${esc(s.name)}</h3><p>${esc(s.description||'')}</p>
+              <p class="tiny">${s.durationMinutes} min · ${s.mode==='request'?'Request times — we confirm':'Instant booking'}</p></div>
+            <div class="price">${s.basePriceCents?money(s.basePriceCents):'Free'}<small>${s.basePriceCents?'starting':'estimate'}</small></div>
+          </div>`).join('');
+      $$('.svc').forEach(el => el.addEventListener('click', () => {
+        state.service = CFG.services.find(x => x.id == el.dataset.id);
+        state.mode = state.service.mode; state.slot=null; state.requested=[];
+        renderTime();
+      }));
+    }
+    const $$ = (s,r=document) => [...r.querySelectorAll(s)];
+
+    function dayList() {
+      const days = []; const now = new Date();
+      // Show from today through the admin-configured booking window (the
+      // availability API still filters out too-soon times per the lead time).
+      const span = Math.max(7, Math.min(CFG.booking.maxDaysOut||60, 120));
+      for (let i=0;i<=span;i++){ const d = new Date(now.getTime()+i*86400000); days.push(d); }
+      return days;
+    }
+    function ymd(d){ return new Intl.DateTimeFormat('en-CA',{timeZone:TZ,year:'numeric',month:'2-digit',day:'2-digit'}).format(d); }
+
+    const GRAN = () => (CFG.booking.granularity === 'windows' ? 'windows' : 'slots');
+    const NOUN = (n=1) => GRAN()==='windows' ? (n===1?'arrival window':'arrival windows') : (n===1?'time slot':'time slots');
+
+    function renderTime() {
+      state.step = 1; setSteps(1);
+      const reqMode = state.mode==='request';
+      const win = GRAN()==='windows';
+      $('#view').innerHTML = `
+        <button class="link-btn" id="back">← Services</button>
+        <h2 style="margin:10px 0 4px">${reqMode?(win?'Propose preferred windows':'Propose preferred times'):(win?'Pick an arrival window':'Pick a time')}</h2>
+        <p class="muted small" style="margin-bottom:14px">${esc(state.service.name)}</p>
+        ${reqMode?`<div class="reqhint" id="reqHint"><div class="badge-num" id="reqNum">0</div><div><div class="txt" id="reqHintText"></div><div class="reqdots" id="reqDots"></div></div></div>`:''}
+        ${reqMode?`<div class="picked" id="picked"></div>`:''}
+        <div class="datestrip" id="strip"></div>
+        <div id="slotsWrap"><p class="muted small">Select a day to see ${win?'windows':'times'}.</p></div>
+        <div class="navbtns">${reqMode?`<button class="btn btn-primary btn-lg" id="next" disabled>Continue</button>`:''}</div>`;
+      $('#back').onclick = renderServices;
+      const strip = $('#strip');
+      dayList().forEach(d => {
+        const btn = document.createElement('div'); btn.className='daybtn';
+        btn.innerHTML = `<div class="dow">${new Intl.DateTimeFormat('en-US',{timeZone:TZ,weekday:'short'}).format(d)}</div><div class="dnum">${new Intl.DateTimeFormat('en-US',{timeZone:TZ,day:'numeric'}).format(d)}</div>`;
+        btn.onclick = () => { $$('.daybtn').forEach(x=>x.classList.remove('active')); btn.classList.add('active'); loadSlots(ymd(d)); };
+        strip.appendChild(btn);
+      });
+      if (reqMode) renderPicked();
+    }
+
+    async function loadSlots(date) {
+      state.date = date;
+      const wrap = $('#slotsWrap'); wrap.innerHTML = `<div style="padding:14px"><span class="spinner"></span></div>`;
+      try {
+        const d = await api(`/api/public/${slug}/availability?serviceId=${state.service.id}&date=${date}`);
+        const win = (d.granularity||GRAN())==='windows';
+        if (!d.slots.length) { wrap.innerHTML = `<p class="muted small">No availability this day. Try another.</p>`; return; }
+        wrap.innerHTML = `<div class="slots${win?' win':''}">` + d.slots.map(s =>
+          `<button class="slot${win?' win':''}" ${s.available?'':'disabled'} data-start="${s.start}" data-end="${s.end}" data-label="${esc(s.label)}">${esc(s.label)}${win?`<div class="rng">${esc(s.rangeLabel||'')}</div>`:''}</button>`).join('') + `</div>`;
+        $$('.slot', wrap).forEach(b => b.addEventListener('click', () => {
+          const slot = { start: b.dataset.start, end: b.dataset.end, label: b.dataset.label, dateLabel: fmtDate(new Date(b.dataset.start)) };
+          if (state.mode==='request') {
+            if (state.requested.length >= (CFG.booking.requestSlotCount||3)) return;
+            if (state.requested.find(x=>x.start===slot.start)) return;
+            state.requested.push(slot); renderPicked();
+            b.classList.add('active'); setTimeout(()=>b.classList.remove('active'),300);
+          } else {
+            $$('.slot').forEach(x=>x.classList.remove('active')); b.classList.add('active');
+            state.slot = slot; renderDetails();
+          }
+        }));
+      } catch(e){ wrap.innerHTML = `<p class="muted small">${esc(e.message)}</p>`; }
+    }
+
+    function renderPicked() {
+      const box = $('#picked'); if(!box) return;
+      box.innerHTML = state.requested.map((s,i)=>`<span class="p">${esc(s.dateLabel)} · ${esc(s.label)} <button data-i="${i}">×</button></span>`).join('');
+      $$('button',box).forEach(b=>b.onclick=()=>{ state.requested.splice(+b.dataset.i,1); renderPicked(); });
+
+      // Big, friendly live counter.
+      const total = CFG.booking.requestSlotCount || 3;
+      const sel = state.requested.length;
+      const remaining = Math.max(0, total - sel);
+      const hint = $('#reqHintText'); const num = $('#reqNum'); const dots = $('#reqDots'); const wrap = $('#reqHint');
+      if (hint) {
+        let msg;
+        if (sel === 0) msg = `Select ${total} ${NOUN(total)} that work for your schedule — we'll confirm one so we can be sure to fit you in.`;
+        else if (remaining > 0) msg = `Great — select ${remaining} more ${NOUN(remaining)} that work for your schedule so we can be sure to fit you in.`;
+        else msg = `Perfect! You've selected ${total} ${NOUN(total)}. Tap Continue and we'll confirm one with you.`;
+        hint.textContent = msg;
+        if (num) num.textContent = remaining > 0 ? remaining : '✓';
+        if (wrap) wrap.classList.toggle('done', remaining === 0);
+        if (dots) dots.innerHTML = Array.from({length: total}, (_, i) => `<i class="${i < sel ? 'on' : ''}"></i>`).join('');
+      }
+      const next = $('#next'); if(next){ next.disabled = state.requested.length===0; next.onclick = renderDetails; }
+    }
+
+    function renderDetails() {
+      state.step = 2; setSteps(2);
+      const needAddr = CFG.booking.collectAddress;
+      $('#view').innerHTML = `
+        <button class="link-btn" id="back">← Back</button>
+        <h2 style="margin:10px 0 14px">Your details</h2>
+        <div class="card card-pad">
+          <div class="field"><label>Full name *</label><input id="f_name" type="text" value="${esc(state.details.name||'')}"></div>
+          <div class="grid cols-2">
+            <div class="field"><label>Email *</label><input id="f_email" type="email" value="${esc(state.details.email||'')}"></div>
+            <div class="field"><label>Phone</label><input id="f_phone" type="tel" value="${esc(state.details.phone||'')}"></div>
+          </div>
+          ${needAddr?`<div class="field"><label>Service address *</label><input id="f_addr" type="text" value="${esc(state.details.address||'')}"></div>`:''}
+          <div class="field"><label>Notes (optional)</label><textarea id="f_notes" placeholder="Gate code, pets, problem areas…">${esc(state.details.notes||'')}</textarea></div>
+        </div>
+        <div class="navbtns"><button class="btn btn-primary btn-lg btn-block" id="review">Review &amp; ${state.mode==='request'?'send request':'confirm'}</button></div>`;
+      $('#back').onclick = renderTime;
+      $('#review').onclick = () => {
+        state.details = { name:$('#f_name').value.trim(), email:$('#f_email').value.trim(), phone:$('#f_phone').value.trim(), address: needAddr?$('#f_addr').value.trim():'', notes:$('#f_notes').value.trim() };
+        if (!state.details.name || !state.details.email) return alert('Name and email are required.');
+        if (needAddr && !state.details.address) return alert('Service address is required.');
+        renderReview();
+      };
+    }
+
+    function renderReview() {
+      state.step = 3; setSteps(state.mode==='request'?3:3);
+      const whenHtml = state.mode==='request'
+        ? `<div><b>Preferred times</b><ul style="margin:6px 0;padding-left:18px">${state.requested.map(s=>`<li>${esc(s.dateLabel)} · ${esc(s.label)}</li>`).join('')}</ul></div>`
+        : `<div class="row between"><span class="muted">When</span><b>${esc(state.slot.dateLabel)} · ${esc(state.slot.label)}</b></div>`;
+      $('#view').innerHTML = `
+        <button class="link-btn" id="back">← Back</button>
+        <h2 style="margin:10px 0 14px">Review</h2>
+        <div class="card card-pad stack" style="gap:10px">
+          <div class="row between"><span class="muted">Service</span><b>${esc(state.service.name)}</b></div>
+          ${whenHtml}
+          <div class="row between"><span class="muted">Name</span><b>${esc(state.details.name)}</b></div>
+          ${state.details.address?`<div class="row between"><span class="muted">Address</span><b>${esc(state.details.address)}</b></div>`:''}
+          ${state.service.basePriceCents?`<hr class="divider"><div class="row between"><span class="muted">Estimate</span><b>${money(state.service.basePriceCents)}</b></div>`:''}
+        </div>
+        ${state.mode==='request'?`<p class="muted small" style="margin-top:12px">We'll review your preferred times and confirm one by email.</p>`:''}
+        <div class="navbtns"><button class="btn btn-primary btn-lg btn-block" id="confirm">${state.mode==='request'?'Send request':'Confirm booking'}</button></div>`;
+      $('#back').onclick = renderDetails;
+      $('#confirm').onclick = submit;
+    }
+
+    async function submit() {
+      const btn = $('#confirm'); btn.disabled = true; btn.textContent = 'Submitting…';
+      const payload = { serviceId: state.service.id, customer: state.details };
+      if (state.mode==='request') payload.requestedSlots = state.requested.map(s=>({start:s.start,end:s.end}));
+      else payload.slot = { start: state.slot.start, end: state.slot.end };
+      try {
+        const r = await api(`/api/public/${slug}/book`, { method:'POST', body: payload });
+        showSuccess(r.status);
+      } catch(e){ btn.disabled=false; btn.textContent='Try again'; alert(e.message); }
+    }
+
+    function showSuccess(status) {
+      $('#steps').innerHTML='';
+      const requested = status==='requested';
+      $('#view').innerHTML = `<div class="ok-screen">
+        <div class="big"><svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg></div>
+        <h2>${requested?'Request received!':'You\'re booked!'}</h2>
+        <p class="muted" style="max-width:420px;margin:10px auto 0">${requested?(CFG.booking.confirmationMessage||'We\'ll confirm one of your preferred times by email shortly.'):'A confirmation email is on its way. We look forward to seeing you!'}</p>
+        <div class="navbtns" style="justify-content:center">
+          <a class="btn btn-primary btn-lg" href="/">Back to homepage</a>
+          <a class="btn btn-secondary btn-lg" href="/services.html">Browse our services</a>
+        </div>
+      </div>`;
+    }
+
+    async function showExisting(token) {
+      try {
+        const d = await api(`/api/public/${slug}/appointment/${token}`);
+        const a = d.appointment;
+        $('#steps').innerHTML='';
+        const when = a.scheduledStart ? `${fmtDate(new Date(a.scheduledStart))} · ${fmtTime(new Date(a.scheduledStart))}` : 'To be confirmed';
+        $('#view').innerHTML = `<div class="card card-pad stack">
+          <div class="row between"><h2>Your appointment</h2>${(()=>{const m={scheduled:['ok','Confirmed'],requested:['warn','Pending confirmation'],completed:['ok','Completed'],canceled:['neutral','Canceled']}[a.status]||['neutral',a.status];return `<span class="badge ${m[0]}">${m[1]}</span>`;})()}</div>
+          <div class="row between"><span class="muted">Service</span><b>${esc(a.serviceName||'')}</b></div>
+          <div class="row between"><span class="muted">When</span><b>${esc(when)}</b></div>
+          ${a.serviceAddress?`<div class="row between"><span class="muted">Address</span><b>${esc(a.serviceAddress)}</b></div>`:''}
+          ${a.status==='requested'&&a.requestedSlots?`<div><span class="muted small">Proposed:</span><ul style="margin:6px 0;padding-left:18px">${a.requestedSlots.map(s=>`<li>${fmtDate(new Date(s.start))} · ${fmtTime(new Date(s.start))}</li>`).join('')}</ul></div>`:''}
+        </div>
+        <div class="navbtns"><a class="btn btn-secondary" href="/">Back to homepage</a></div>`;
+      } catch(e){ $('#view').innerHTML = `<div class="card card-pad center">${esc(e.message)}</div>`; }
+    }
+
+    boot();
+  </script>
+</body>
+</html>

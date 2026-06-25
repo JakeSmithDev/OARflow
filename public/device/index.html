@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Device</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Poppins:wght@600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/assets/app/app.css" />
+  <style>
+    body { background: var(--bg); }
+    h1,h2,#company { font-family:'Poppins',var(--font); letter-spacing:-0.01em; }
+    .wrap { max-width: 540px; margin: 0 auto; padding: 26px 16px 80px; }
+    .hist { padding:9px 0; border-bottom:1px solid var(--line-2); }
+    .pill { display:inline-block; padding:2px 9px; border-radius:999px; font-size:12px; font-weight:700; }
+    .ok { background:var(--ok-tint); color:#15803d; } .activity { background:var(--warn-tint); color:var(--warn); } .damaged,.missing { background:var(--danger-tint); color:var(--danger); }
+  </style>
+</head>
+<body>
+  <div class="wrap"><div id="view"><div class="loading-page"><span class="spinner"></span></div></div></div>
+  <script>
+    const esc=(s)=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const qr=new URLSearchParams(location.search).get('d');
+    const fieldToken=localStorage.getItem('oarflow_field_token')||'';
+    const dt=(iso)=>iso?new Date(iso).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}):'';
+
+    async function load(){
+      if(!qr){ document.getElementById('view').innerHTML='<div class="card card-pad">Invalid device link.</div>'; return; }
+      let d; try{ d=await (await fetch(`/api/devices/${encodeURIComponent(qr)}`)).json(); }catch{ d={ok:false}; }
+      if(!d.ok){ document.getElementById('view').innerHTML=`<div class="card card-pad">${esc(d.error||'Device not found.')}</div>`; return; }
+      const b=d.tenant.branding||{}; if(b.primaryColor) document.documentElement.style.setProperty('--brand',b.primaryColor);
+      render(d);
+    }
+
+    function render(d){
+      const dev=d.device;
+      const hist=d.history.length? d.history.map(h=>`<div class="hist"><div class="row between"><span class="pill ${esc(h.status)}">${esc(h.status)}</span><span class="tiny muted">${dt(h.inspectedAt)}</span></div>${h.activityLevel?`<div class="small">Activity: ${esc(h.activityLevel)}</div>`:''}${h.actionTaken?`<div class="small muted">${esc(h.actionTaken)}</div>`:''}${h.technician?`<div class="tiny muted">${esc(h.technician)}</div>`:''}</div>`).join('') : '<p class="muted small">No inspections logged yet.</p>';
+      document.getElementById('view').innerHTML=`
+        <div class="card card-pad" style="margin-bottom:14px"><h1 style="font-size:20px;margin:0">${esc(dev.label)}</h1>
+          <div class="muted small">${esc(dev.type)}${dev.serial?' · SN '+esc(dev.serial):''} · ${esc(d.tenant.name)}</div>
+          <div class="small" style="margin-top:6px">${esc(d.customer.name)}</div>
+          ${dev.locationNotes?`<div class="small muted" style="margin-top:4px">${esc(dev.locationNotes)}</div>`:''}</div>
+        ${fieldToken?`<div class="card card-pad" style="margin-bottom:14px"><strong>Log inspection</strong>
+          <div class="field" style="margin-top:8px"><label>Status</label><select id="i_status"><option value="ok">OK — no activity</option><option value="activity">Activity found</option><option value="serviced">Serviced / rebaited</option><option value="damaged">Damaged</option><option value="missing">Missing</option></select></div>
+          <div class="field"><label>Activity level</label><select id="i_act"><option value="">—</option><option>none</option><option>low</option><option>moderate</option><option>high</option></select></div>
+          <div class="field"><label>Action taken</label><input id="i_action" placeholder="Rebaited, replaced, removed…"></div>
+          <button class="btn btn-primary btn-block" id="i_save">Save inspection</button></div>`
+          :`<div class="card card-pad" style="margin-bottom:14px"><p class="muted small" style="margin:0">Open your field app first to log an inspection here.</p></div>`}
+        <div class="card card-pad"><strong>History</strong><div style="margin-top:8px">${hist}</div></div>`;
+      const sv=document.getElementById('i_save');
+      if(sv) sv.onclick=async()=>{ sv.disabled=true; sv.textContent='Saving…';
+        const body={ fieldToken, status:document.getElementById('i_status').value, activityLevel:document.getElementById('i_act').value, actionTaken:document.getElementById('i_action').value };
+        try{ const r=await (await fetch(`/api/devices/${encodeURIComponent(qr)}/inspect`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json();
+          if(r.ok) load(); else { alert(r.error||'Could not save.'); sv.disabled=false; sv.textContent='Save inspection'; } }
+        catch{ sv.disabled=false; sv.textContent='Save inspection'; }
+      };
+    }
+    load();
+  </script>
+</body>
+</html>

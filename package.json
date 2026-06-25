@@ -1,0 +1,37 @@
+{
+  "name": "oarflow",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "OARFlow — a modern booking, scheduling, invoicing & recurring-revenue platform for home-service businesses (pest control and beyond). Multi-tenant SaaS, runs anywhere.",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "migrate": "node scripts/migrate.js",
+    "migrate:status": "node scripts/migrate.js --status",
+    "seed": "node scripts/seed.js",
+    "setup": "node scripts/migrate.js && node scripts/seed.js",
+    "encrypt-secrets": "node scripts/encrypt-secrets.js",
+    "doctor": "node scripts/doctor.js",
+    "new-tenant": "node scripts/new-tenant.js",
+    "smoke": "node scripts/smoke.js"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1074.0",
+    "@aws-sdk/s3-request-presigner": "^3.1074.0",
+    "@electric-sql/pglite": "^0.2.17",
+    "cookie": "^0.7.2",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "inngest": "^4.7.0",
+    "nodemailer": "^9.0.1",
+    "otplib": "^12.0.1",
+    "pdf-lib": "^1.17.1",
+    "pg": "^8.13.1",
+    "qrcode": "^1.5.4",
+    "stripe": "^17.5.0"
+  }
+}

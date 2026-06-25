@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Leave a review</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Poppins:wght@600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/assets/app/app.css" />
+  <style>
+    :root { --navy:#0a2740; }
+    body { background: linear-gradient(180deg, var(--brand-tint-2), var(--bg) 220px); }
+    h1,h2,#company { font-family:'Poppins',var(--font); letter-spacing:-0.01em; }
+    .wrap { max-width: 480px; margin: 0 auto; padding: 36px 18px 80px; text-align:center; }
+    .logo { width:54px;height:54px;border-radius:14px;background:linear-gradient(135deg,var(--brand),color-mix(in srgb,var(--brand) 55%,#86efac));display:grid;place-items:center;color:#fff;font-weight:800;font-size:24px;margin:0 auto 14px; }
+    .stars { display:flex; justify-content:center; gap:8px; margin:20px 0; }
+    .star { font-size:42px; line-height:1; cursor:pointer; color:#d4d8de; transition:transform .1s, color .15s; user-select:none; }
+    .star:hover { transform:scale(1.12); }
+    .star.on { color:#f5b301; }
+    .plat { display:flex; flex-direction:column; gap:10px; margin-top:18px; }
+    .plat a { display:flex; align-items:center; justify-content:center; gap:8px; padding:13px; border-radius:12px; border:1px solid var(--line); background:#fff; font-weight:700; text-decoration:none; color:var(--ink); }
+    .ok-screen .big { width:70px;height:70px;border-radius:50%;background:var(--ok-tint);color:var(--ok);display:grid;place-items:center;margin:0 auto 16px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="logo" id="logo">·</div>
+    <h1 id="company" style="font-size:22px">Leave a review</h1>
+    <div id="view"><div class="loading-page"><span class="spinner"></span></div></div>
+  </div>
+  <script>
+    const esc = (s)=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const token = new URLSearchParams(location.search).get('token');
+    let rating = 0, PLATFORMS = {};
+    const platMeta = { google:{label:'Review us on Google'}, yelp:{label:'Review us on Yelp'}, facebook:{label:'Review us on Facebook'} };
+
+    async function load(){
+      if (!token) { fail('Invalid link.'); return; }
+      let d; try { d = await (await fetch(`/api/reviews?token=${encodeURIComponent(token)}`)).json(); } catch { d={ok:false}; }
+      if (!d.ok) { fail(d.error||'This link is no longer valid.'); return; }
+      const b = d.tenant.branding||{};
+      if (b.primaryColor) document.documentElement.style.setProperty('--brand', b.primaryColor);
+      document.getElementById('logo').textContent = (b.logoText||d.tenant.name||'O')[0];
+      document.getElementById('company').textContent = `How did we do?`;
+      PLATFORMS = d.platforms||{};
+      if (d.already) return thanks(true);
+      form(d.tenant);
+    }
+    function fail(m){ document.getElementById('view').innerHTML=`<div class="card card-pad">${esc(m)}</div>`; }
+
+    function form(tenant){
+      document.getElementById('view').innerHTML = `<p class="muted">Tap a star to rate your experience with ${esc(tenant.name)}.</p>
+        <div class="stars" id="stars">${[1,2,3,4,5].map(n=>`<span class="star" data-n="${n}">★</span>`).join('')}</div>
+        <div class="field"><textarea id="comment" placeholder="Anything you'd like to share? (optional)" rows="4"></textarea></div>
+        <button class="btn btn-primary btn-lg btn-block" id="submit">Submit review</button>`;
+      const stars = [...document.querySelectorAll('.star')];
+      const paint = ()=>stars.forEach(s=>s.classList.toggle('on', +s.dataset.n<=rating));
+      stars.forEach(s=>{ s.onclick=()=>{ rating=+s.dataset.n; paint(); }; s.onmouseenter=()=>stars.forEach(x=>x.classList.toggle('on',+x.dataset.n<=+s.dataset.n)); });
+      document.getElementById('stars').onmouseleave = paint;
+      document.getElementById('submit').onclick = async ()=>{
+        if (!rating) { document.getElementById('stars').animate([{transform:'translateX(-4px)'},{transform:'translateX(4px)'},{transform:'translateX(0)'}],{duration:200}); return; }
+        const btn=document.getElementById('submit'); btn.disabled=true; btn.textContent='Submitting…';
+        try { const r = await (await fetch('/api/reviews/respond',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token, rating, comment:document.getElementById('comment').value})})).json();
+          if (r.ok) { PLATFORMS=r.platforms||PLATFORMS; thanks(false); } else { btn.disabled=false; btn.textContent='Try again'; } }
+        catch { btn.disabled=false; btn.textContent='Try again'; }
+      };
+    }
+
+    function thanks(already){
+      const links = Object.entries(PLATFORMS).map(([k,url])=>`<a href="${esc(url)}" target="_blank" rel="noopener" data-plat="${k}">${esc((platMeta[k]||{}).label||('Review on '+k))}</a>`).join('');
+      document.getElementById('view').innerHTML = `<div class="ok-screen">
+        <div class="big"><svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg></div>
+        <h2>${already?'Thanks again!':'Thank you!'}</h2>
+        <p class="muted" style="margin-top:8px">${rating>=4||already?'We\\'d be grateful if you shared your experience publicly:':'Thanks for the honest feedback — we\\'ll use it to do better. If you\\'d like, you can also post publicly:'}</p>
+        ${links?`<div class="plat">${links}</div>`:''}</div>`;
+      document.querySelectorAll('[data-plat]').forEach(a=>a.addEventListener('click',()=>{ navigator.sendBeacon?.('/api/reviews/click', new Blob([JSON.stringify({token, platform:a.dataset.plat})],{type:'application/json'})); }));
+    }
+    load();
+  </script>
+</body>
+</html>

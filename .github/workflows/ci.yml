@@ -1,0 +1,22 @@
+name: CI
+
+on:
+  push:
+    branches: [main, development]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      # Full end-to-end suite: migrations + seed + the real HTTP surface, all
+      # in-process against PGlite (no external services needed).
+      - run: npm run smoke
+      # Preflight must pass for the dev profile (no production blockers expected).
+      - run: npm run doctor

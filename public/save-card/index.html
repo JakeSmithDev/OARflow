@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Add a card on file</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Poppins:wght@600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/assets/app/app.css" />
+  <style>
+    :root { --navy:#0a2740; }
+    body { background: linear-gradient(180deg, var(--brand-tint-2), var(--bg) 220px); }
+    h1,h2,#company { font-family:'Poppins',var(--font); letter-spacing:-0.01em; }
+    #company { color: var(--navy); }
+    .wrap { max-width: 480px; margin: 0 auto; padding: 36px 18px 80px; }
+    .bk-head { display:flex; align-items:center; gap:13px; margin-bottom: 22px; }
+    .bk-head .logo { width:46px;height:46px;border-radius:13px;background:linear-gradient(135deg,var(--brand),color-mix(in srgb,var(--brand) 55%,#86efac));display:grid;place-items:center;color:#fff;font-weight:800;font-size:20px; }
+    .ok-screen { text-align:center; padding: 30px 10px; }
+    .ok-screen .big { width:70px;height:70px;border-radius:50%;background:var(--ok-tint);color:var(--ok);display:grid;place-items:center;margin:0 auto 16px; }
+    #card-element { padding:12px;border:1px solid var(--line);border-radius:10px;background:#fff; }
+    .legal { color:var(--muted); font-size:12px; line-height:1.5; margin-top:12px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="bk-head"><div class="logo" id="logo">·</div><div><h1 id="company" style="font-size:20px">Add a card</h1><p class="muted small" id="sub" style="margin:2px 0 0"></p></div></div>
+    <div id="view"><div class="loading-page"><span class="spinner"></span></div></div>
+  </div>
+  <script src="https://js.stripe.com/v3/"></script>
+  <script>
+    const esc = (s)=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const qp = new URLSearchParams(location.search);
+    const id = qp.get('customer'); const token = qp.get('token');
+    let DATA;
+
+    async function load() {
+      if (!id || !token) { fail('Invalid link.'); return; }
+      let d; try { d = await (await fetch(`/api/save-card/${id}?token=${encodeURIComponent(token)}`)).json(); } catch { d={ok:false}; }
+      if (!d.ok) { fail(d.error||'This link is no longer valid.'); return; }
+      DATA = d;
+      const b = d.tenant.branding||{};
+      if (b.primaryColor) document.documentElement.style.setProperty('--brand', b.primaryColor);
+      document.getElementById('logo').textContent = (b.logoText||d.tenant.name||'O')[0];
+      document.getElementById('company').textContent = b.logoText || d.tenant.name;
+      document.getElementById('sub').textContent = `Securely save a card for ${d.customer.name}`;
+      if (!d.cards.available) { fail(`${esc(d.tenant.name)} isn't set up to store cards yet.`); return; }
+      d.setup && d.setup.mock ? renderMock(d) : renderStripe(d);
+    }
+    function fail(msg){ document.getElementById('view').innerHTML = `<div class="card card-pad center">${esc(msg)}</div>`; }
+    function legal(){ return `<p class="legal">By saving this card you authorize ${esc(DATA.tenant.name)} to charge it for services you request. You can ask them to remove it at any time.</p>`; }
+
+    function renderStripe(d){
+      document.getElementById('view').innerHTML = `<div class="card card-pad">
+        <div class="field"><label>Cardholder name</label><input id="nm" placeholder="Name on card" value="${esc(d.customer.name)}"></div>
+        <div class="field"><label>Card details</label><div id="card-element"></div><div id="card-err" class="small" style="color:var(--danger);margin-top:6px"></div></div>
+        <button class="btn btn-primary btn-lg btn-block" id="save">Save card securely</button>
+        ${legal()}</div>`;
+      const stripe = Stripe(d.setup.publishableKey);
+      const elements = stripe.elements();
+      const card = elements.create('card'); card.mount('#card-element');
+      card.on('change', e=>{ document.getElementById('card-err').textContent = e.error?e.error.message:''; });
+      document.getElementById('save').onclick = async ()=>{
+        const btn = document.getElementById('save'); btn.disabled=true; btn.textContent='Saving…';
+        const { setupIntent, error } = await stripe.confirmCardSetup(d.setup.clientSecret, { payment_method: { card, billing_details: { name: document.getElementById('nm').value } } });
+        if (error) { document.getElementById('card-err').textContent = error.message; btn.disabled=false; btn.textContent='Try again'; return; }
+        try { const r = await (await fetch(`/api/save-card/${id}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token, setupIntentId:setupIntent.id, name:document.getElementById('nm').value})})).json();
+          if (r.ok) success(r); else { document.getElementById('card-err').textContent=r.error||'Could not save.'; btn.disabled=false; btn.textContent='Try again'; } }
+        catch { btn.disabled=false; btn.textContent='Try again'; }
+      };
+    }
+
+    function renderMock(d){
+      document.getElementById('view').innerHTML = `<div class="card card-pad">
+        <div class="card-pad" style="background:var(--surface-2);border-radius:10px;margin-bottom:14px"><p class="small muted" style="margin:0">Demo mode — this business hasn't connected a live card processor, so no real card is stored. Enter any test details.</p></div>
+        <div class="field"><label>Cardholder name</label><input id="nm" placeholder="Name on card" value="${esc(d.customer.name)}"></div>
+        <div class="field"><label>Card number</label><input id="num" placeholder="4242 4242 4242 4242" value="4242 4242 4242 4242"></div>
+        <div class="grid cols-2"><div class="field"><label>Expiry</label><input id="exp" placeholder="MM/YY" value="12/30"></div><div class="field"><label>CVC</label><input id="cvc" placeholder="123" value="123"></div></div>
+        <button class="btn btn-primary btn-lg btn-block" id="save">Save card</button>
+        ${legal()}</div>`;
+      document.getElementById('save').onclick = async ()=>{
+        const btn = document.getElementById('save'); btn.disabled=true; btn.textContent='Saving…';
+        const num = (document.getElementById('num').value||'').replace(/\s/g,''); const exp=(document.getElementById('exp').value||'').split('/');
+        try { const r = await (await fetch(`/api/save-card/${id}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token, name:document.getElementById('nm').value, last4:num.slice(-4)||'4242', expMonth:+exp[0]||12, expYear:+('20'+(exp[1]||'30').trim())})})).json();
+          if (r.ok) success(r); else { btn.disabled=false; btn.textContent='Try again'; } }
+        catch { btn.disabled=false; btn.textContent='Try again'; }
+      };
+    }
+    function success(r){ document.getElementById('view').innerHTML = `<div class="ok-screen">
+      <div class="big"><svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg></div>
+      <h2>Card saved</h2><p class="muted" style="margin-top:8px">Your ${esc(r.brand||'card')} ending in ${esc(r.last4||'')} is on file. Thank you!</p></div>`; }
+    load();
+  </script>
+</body>
+</html>

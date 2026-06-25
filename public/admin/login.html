@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sign in · OARFlow</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/assets/app/app.css" />
+  <style>
+    body { display: grid; place-items: center; min-height: 100vh; background:
+      radial-gradient(1200px 600px at 70% -10%, #d6f0e2 0%, transparent 55%),
+      radial-gradient(900px 500px at -10% 110%, #dbeafe 0%, transparent 50%), var(--bg); }
+    .auth { width: 100%; max-width: 410px; padding: 20px; }
+    .auth .logo { width: 52px; height: 52px; border-radius: 15px; background: linear-gradient(135deg, var(--brand), #34d399); display:grid; place-items:center; color:#fff; font-weight:800; font-size:24px; margin: 0 auto 18px; box-shadow: var(--shadow); }
+    .auth h1 { text-align:center; font-size: 23px; }
+    .auth p.sub { text-align:center; color: var(--muted); margin: 6px 0 24px; }
+    .auth .card { padding: 26px; }
+    .err { background: var(--danger-tint); color: var(--danger); padding: 10px 14px; border-radius: 10px; font-size: 13px; font-weight: 600; margin-bottom: 16px; }
+    .foot { text-align:center; color: var(--muted-2); font-size: 12px; margin-top: 18px; }
+    @media (max-width: 480px){ .auth { padding: 14px; } .auth .card { padding: 20px; } .auth h1 { font-size: 21px; } }
+  </style>
+</head>
+<body>
+  <div class="auth">
+    <div class="logo">P</div>
+    <h1>Welcome back</h1>
+    <p class="sub">Sign in to your OARFlow dashboard</p>
+    <div class="card card-pad">
+      <div id="err" class="err hidden"></div>
+      <form id="loginForm">
+        <div class="field">
+          <label for="username">Username</label>
+          <input id="username" type="text" autocomplete="username" required autofocus />
+        </div>
+        <div class="field">
+          <label for="password">Password</label>
+          <input id="password" type="password" autocomplete="current-password" required />
+        </div>
+        <div class="field hidden" id="totpField">
+          <label for="totp">Authentication code</label>
+          <input id="totp" type="text" inputmode="numeric" autocomplete="one-time-code" placeholder="123456" />
+          <span class="hint">Enter the 6-digit code from your authenticator app.</span>
+        </div>
+        <button class="btn btn-primary btn-block btn-lg" type="submit" id="submitBtn">Sign in</button>
+      </form>
+    </div>
+    <div class="foot">Protected by OARFlow · Booking, scheduling &amp; invoicing</div>
+  </div>
+
+  <script>
+    const form = document.getElementById('loginForm');
+    const errEl = document.getElementById('err');
+    const totpField = document.getElementById('totpField');
+    const btn = document.getElementById('submitBtn');
+    let needTotp = false;
+
+    function showErr(msg) { errEl.textContent = msg; errEl.classList.remove('hidden'); }
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      errEl.classList.add('hidden');
+      btn.disabled = true; btn.textContent = 'Signing in…';
+      const payload = {
+        username: document.getElementById('username').value.trim(),
+        password: document.getElementById('password').value,
+      };
+      if (needTotp) payload.totpCode = document.getElementById('totp').value.trim();
+      try {
+        const res = await fetch('/api/admin/auth/login', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin', body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (data.requiresTotp) {
+          needTotp = true; totpField.classList.remove('hidden');
+          document.getElementById('totp').focus();
+          if (data.error) showErr(data.error);
+          btn.disabled = false; btn.textContent = 'Verify & sign in';
+          return;
+        }
+        if (!res.ok || !data.ok) { showErr(data.error || 'Sign in failed.'); btn.disabled = false; btn.textContent = 'Sign in'; return; }
+        const next = new URLSearchParams(location.search).get('next') || '/admin/';
+        location.href = next;
+      } catch (err) {
+        showErr('Network error. Please try again.');
+        btn.disabled = false; btn.textContent = 'Sign in';
+      }
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>My account</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Poppins:wght@600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/assets/app/app.css" />
+  <style>
+    :root { --navy:#0a2740; }
+    body { background: linear-gradient(180deg, var(--brand-tint-2), var(--bg) 240px); }
+    h1,h2,h3,#company { font-family:'Poppins',var(--font); letter-spacing:-0.01em; }
+    .wrap { max-width: 720px; margin: 0 auto; padding: 30px 18px 80px; }
+    .pf-head { display:flex; align-items:center; gap:13px; margin-bottom: 22px; }
+    .pf-head .logo { width:46px;height:46px;border-radius:13px;background:linear-gradient(135deg,var(--brand),color-mix(in srgb,var(--brand) 55%,#86efac));display:grid;place-items:center;color:#fff;font-weight:800;font-size:20px; }
+    .sec { margin-top:22px; }
+    .sec h3 { font-size:15px; margin-bottom:10px; }
+    .row-item { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:12px 0; border-bottom:1px solid var(--line-2); }
+    .row-item:last-child { border-bottom:none; }
+    .pill-when { font-weight:700; }
+    .empty-sm { color:var(--muted); font-size:14px; padding:6px 0; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="pf-head"><div class="logo" id="logo">·</div><div><h1 id="company" style="font-size:20px">My account</h1><p class="muted small" id="sub" style="margin:2px 0 0"></p></div></div>
+    <div id="view"><div class="loading-page"><span class="spinner"></span></div></div>
+  </div>
+  <script>
+    const esc = (s)=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const qp = new URLSearchParams(location.search);
+    const token = qp.get('token');
+    let CUR='USD';
+    const money=(c)=>{try{return new Intl.NumberFormat('en-US',{style:'currency',currency:CUR}).format((c||0)/100);}catch{return '$'+((c||0)/100).toFixed(2);}};
+    const dt=(iso)=>iso?new Date(iso).toLocaleString('en-US',{weekday:'short',month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}):'';
+    const dd=(iso)=>iso?new Date(iso).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):'';
+
+    async function load(){
+      if (!token) return login();
+      let d; try { d=await (await fetch(`/api/portal/me?token=${encodeURIComponent(token)}`)).json(); } catch { d={ok:false}; }
+      if (!d.ok) return login(d.error);
+      const b=d.tenant.branding||{}; if(b.primaryColor) document.documentElement.style.setProperty('--brand', b.primaryColor);
+      document.getElementById('logo').textContent=(b.logoText||d.tenant.name||'O')[0];
+      document.getElementById('company').textContent=b.logoText||d.tenant.name;
+      document.getElementById('sub').textContent=`Welcome back, ${d.customer.name}`;
+      render(d);
+    }
+
+    function login(err){
+      document.getElementById('sub').textContent='';
+      document.getElementById('view').innerHTML=`<div class="card card-pad" style="max-width:420px">
+        <h3 style="margin-bottom:6px">Sign in to your account</h3>
+        <p class="muted small" style="margin-bottom:14px">Enter your email and we'll send you a secure link — no password needed.</p>
+        ${err?`<p class="small" style="color:var(--danger);margin-bottom:10px">${esc(err)}</p>`:''}
+        <div class="field"><input id="em" type="email" placeholder="you@email.com" autocomplete="email"></div>
+        <button class="btn btn-primary btn-block" id="send">Email me a link</button>
+        <div id="sent" class="small muted" style="margin-top:12px"></div></div>`;
+      document.getElementById('send').onclick=async()=>{
+        const email=document.getElementById('em').value.trim(); if(!email) return;
+        const btn=document.getElementById('send'); btn.disabled=true; btn.textContent='Sending…';
+        let r; try{ r=await (await fetch('/api/portal/request-link',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email})})).json(); }catch{ r={ok:false}; }
+        document.getElementById('sent').innerHTML = `If an account exists for ${esc(email)}, a sign-in link is on its way.` + (r&&r.devLink?` <a href="${esc(r.devLink)}">Open (dev)</a>`:'');
+        btn.disabled=false; btn.textContent='Email me a link';
+      };
+    }
+
+    function render(d){
+      CUR=(d.invoices[0]&&d.invoices[0].currency)||'USD';
+      const upcoming = d.upcoming.length? d.upcoming.map(a=>`<div class="row-item"><div><div class="pill-when">${esc(a.service_name||'Appointment')}</div><div class="tiny muted">${a.scheduled_start?dt(a.scheduled_start):'Time to be confirmed'}${a.service_address?' · '+esc(a.service_address):''}</div></div><span class="badge no-dot" style="background:${(a.service_color||'#1f8a3d')}1a;color:${a.service_color||'#1f8a3d'}">${esc(a.status)}</span></div>`).join('') : '<div class="empty-sm">No upcoming visits. <a href="'+esc(d.tenant.bookUrl)+'">Book a service →</a></div>';
+      const invs = d.invoices.length? d.invoices.map(i=>`<div class="row-item"><div><div class="pill-when">${esc(i.number)}</div><div class="tiny muted">${dd(i.createdAt)} · ${esc(i.status)}</div></div><div style="text-align:right"><div class="mono">${money(i.balanceCents>0?i.balanceCents:i.totalCents)}</div>${i.payUrl?`<a class="btn btn-primary btn-sm" href="${esc(i.payUrl)}" style="margin-top:4px">Pay now</a>`:'<span class="tiny muted">Paid</span>'}</div></div>`).join('') : '<div class="empty-sm">No invoices.</div>';
+      const ests = d.estimates.length? `<div class="sec"><h3>Estimates to review</h3><div class="card card-pad">${d.estimates.map(e=>`<div class="row-item"><div><div class="pill-when">${esc(e.number)}</div><div class="tiny muted">${money(e.totalCents)}${e.validUntil?' · good through '+dd(e.validUntil):''}</div></div><a class="btn btn-primary btn-sm" href="${esc(e.approveUrl)}">Review &amp; approve</a></div>`).join('')}</div></div>` : '';
+      const cards = d.cards.available? `<div class="sec"><h3>Payment methods</h3><div class="card card-pad">${d.paymentMethods.length? d.paymentMethods.map(p=>`<div class="row-item"><span>${esc(p.brand||'card')} ••${esc(p.last4||'')} <span class="tiny muted">exp ${p.exp_month}/${String(p.exp_year).slice(-2)}</span>${p.is_default?' <span class="badge ok no-dot">Default</span>':''}</span></div>`).join('') : '<div class="empty-sm">No card on file.</div>'}<button class="btn btn-secondary btn-sm" id="addCard" style="margin-top:10px">${d.paymentMethods.length?'Add another card':'Add a card on file'}</button></div></div>` : '';
+      document.getElementById('view').innerHTML = `
+        <div class="row wrap" style="gap:8px;margin-bottom:6px"><a class="btn btn-primary" href="${esc(d.tenant.bookUrl)}">Book a service</a></div>
+        <div class="sec"><h3>Upcoming visits</h3><div class="card card-pad">${upcoming}</div></div>
+        ${ests}
+        <div class="sec"><h3>Invoices</h3><div class="card card-pad">${invs}</div></div>
+        ${cards}`;
+      const ac=document.getElementById('addCard');
+      if (ac) ac.onclick=async()=>{ try{ const r=await (await fetch('/api/portal/card-link',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token})})).json(); if(r.url) location.href=r.url; }catch{} };
+    }
+    load();
+  </script>
+</body>
+</html>

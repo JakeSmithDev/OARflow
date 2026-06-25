@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Pay invoice</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Poppins:wght@600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/assets/app/app.css" />
+  <style>
+    :root { --navy:#0a2740; }
+    body { background: linear-gradient(180deg, var(--brand-tint-2), var(--bg) 220px); }
+    h1,h2,#company { font-family:'Poppins',var(--font); letter-spacing:-0.01em; }
+    #company { color: var(--navy); }
+    .wrap { max-width: 520px; margin: 0 auto; padding: 36px 18px 80px; }
+    .bk-head { display:flex; align-items:center; gap:13px; margin-bottom: 22px; }
+    .bk-head .logo { width:46px;height:46px;border-radius:13px;background:linear-gradient(135deg,var(--brand),color-mix(in srgb,var(--brand) 55%,#86efac));display:grid;place-items:center;color:#fff;font-weight:800;font-size:20px;box-shadow:inset 0 0 0 1px rgba(255,255,255,.18); }
+    .totline { display:flex; justify-content:space-between; padding:5px 0; }
+    .totline.grand { border-top:1px solid var(--line); margin-top:8px; padding-top:12px; font-weight:800; font-size:19px; }
+    .ok-screen { text-align:center; padding: 30px 10px; }
+    .ok-screen .big { width:70px;height:70px;border-radius:50%;background:var(--ok-tint);color:var(--ok);display:grid;place-items:center;margin:0 auto 16px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="bk-head"><div class="logo" id="logo">·</div><div><h1 id="company" style="font-size:20px">Invoice</h1><p class="muted small" id="sub" style="margin:2px 0 0"></p></div></div>
+    <div id="view"><div class="loading-page"><span class="spinner"></span></div></div>
+  </div>
+  <script>
+    const esc = (s)=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const qp = new URLSearchParams(location.search);
+    const id = qp.get('invoice'); const token = qp.get('token');
+    let CUR = 'USD';
+    const money = (c)=>{ try{return new Intl.NumberFormat('en-US',{style:'currency',currency:CUR}).format((c||0)/100);}catch{return '$'+((c||0)/100).toFixed(2);} };
+
+    async function load() {
+      if (!id || !token) { document.getElementById('view').innerHTML = `<div class="card card-pad center">Invalid link.</div>`; return; }
+      let d;
+      try { d = await (await fetch(`/api/pay/${id}?token=${encodeURIComponent(token)}`)).json(); } catch { d = {ok:false}; }
+      if (!d.ok) { document.getElementById('view').innerHTML = `<div class="card card-pad center">${esc(d.error||'Invoice not found.')}</div>`; return; }
+      CUR = d.invoice.currency || 'USD';
+      const b = d.tenant.branding||{};
+      if (b.primaryColor) document.documentElement.style.setProperty('--brand', b.primaryColor);
+      document.getElementById('logo').textContent = (b.logoText||d.tenant.name||'O')[0];
+      document.getElementById('company').textContent = b.logoText || d.tenant.name;
+      document.getElementById('sub').textContent = `Invoice ${d.invoice.number}`;
+      const i = d.invoice;
+      if (d.voided || i.status==='void') { document.getElementById('view').innerHTML = `<div class="card card-pad center muted">This invoice has been canceled and is no longer payable. Please contact ${esc(d.tenant.name)} with any questions.</div>`; return; }
+      if (qp.get('paid') || i.status==='paid') return success(i);
+      const li = (i.lineItems||[]).map(x=>`<div class="totline"><span>${esc(x.label)}${x.quantity>1?` ×${x.quantity}`:''}</span><span class="mono">${money(x.amount_cents)}</span></div>`).join('');
+      document.getElementById('view').innerHTML = `<div class="card card-pad">
+        ${li}<hr class="divider" style="margin:8px 0">
+        <div class="totline"><span class="muted">Subtotal</span><span class="mono">${money(i.subtotalCents)}</span></div>
+        ${i.discountCents?`<div class="totline"><span class="muted">Discount</span><span class="mono">−${money(i.discountCents)}</span></div>`:''}
+        ${i.taxCents?`<div class="totline"><span class="muted">Tax</span><span class="mono">${money(i.taxCents)}</span></div>`:''}
+        ${i.amountPaidCents?`<div class="totline"><span class="muted">Paid</span><span class="mono">−${money(i.amountPaidCents)}</span></div>`:''}
+        <div class="totline grand"><span>Balance due</span><span class="mono">${money(i.balanceCents)}</span></div>
+      </div>
+      ${i.notes?`<p class="muted small" style="margin-top:12px">${esc(i.notes)}</p>`:''}
+      <div style="margin-top:18px">${d.stripeEnabled
+        ? `<button class="btn btn-primary btn-lg btn-block" id="pay">Pay ${money(i.balanceCents)} securely</button><p class="tiny muted center" style="margin-top:10px">Payments processed securely by Stripe.</p>`
+        : `<div class="card card-pad center muted">To pay this invoice, please contact ${esc(d.tenant.name)}.</div>`}</div>`;
+      const payBtn = document.getElementById('pay');
+      if (payBtn) payBtn.onclick = async () => {
+        payBtn.disabled=true; payBtn.textContent='Redirecting…';
+        try { const r = await (await fetch(`/api/pay/${id}/checkout`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token})})).json();
+          if (r.ok && r.url) location.href = r.url; else { alert(r.error||'Could not start checkout.'); payBtn.disabled=false; payBtn.textContent='Try again'; } }
+        catch { payBtn.disabled=false; payBtn.textContent='Try again'; }
+      };
+    }
+    function success(i){ document.getElementById('view').innerHTML = `<div class="ok-screen">
+      <div class="big"><svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg></div>
+      <h2>Payment received</h2><p class="muted" style="margin-top:8px">Thank you! Invoice ${esc(i.number)} is paid in full.</p></div>`; }
+    load();
+  </script>
+</body>
+</html>

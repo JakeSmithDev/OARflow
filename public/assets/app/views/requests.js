@@ -1,0 +1,56 @@
+// Auto-generated SPA view module. Registers itself via OF.page() on import.
+const OF = window.OF;
+
+    async function load(root) {
+      const d = await OF.get('/api/admin/appointments?status=requested&limit=100');
+      const rows = d.appointments;
+      if (!rows.length) { root.innerHTML = `<div class="card"><div class="empty"><div class="ic">${OF.icon('check',22)}</div><p>No pending requests. You're all caught up. 🎉</p></div></div>`; return; }
+      root.innerHTML = `<div class="stack">` + rows.map(a => {
+        const slots = (a.requested_slots||[]);
+        return `<div class="card card-pad" data-id="${a.id}">
+          <div class="row between" style="margin-bottom:6px"><div><span class="cell-strong" style="font-size:16px">${OF.escape(a.customer_name)}</span>
+            <span class="badge no-dot" style="margin-left:8px;background:${a.service_color}1a;color:${a.service_color}">${OF.escape(a.service_name||'Service')}</span></div>
+            <span class="tiny muted">Requested ${OF.date(a.created_at)}</span></div>
+          <div class="small muted" style="margin-bottom:10px">${OF.escape(a.service_address||'')}${a.customer_phone?` · ${OF.escape(a.customer_phone)}`:''}${a.customer_email?` · ${OF.escape(a.customer_email)}`:''}</div>
+          ${a.notes?`<p class="small" style="background:var(--surface-2);padding:8px 12px;border-radius:8px;margin:0 0 12px">${OF.escape(a.notes)}</p>`:''}
+          <div class="muted tiny" style="margin-bottom:8px;text-transform:uppercase;letter-spacing:.04em;font-weight:700">Proposed times — pick one to confirm</div>
+          <div class="row wrap" style="gap:8px">
+            ${slots.map((s,i)=>`<button class="chip slotpick" data-id="${a.id}" data-i="${i}">${OF.date(s.start)} · ${OF.time(s.start)}</button>`).join('')}
+          </div>
+          <div class="row" style="margin-top:14px;gap:8px">
+            <button class="btn btn-primary btn-sm confirmBtn" data-id="${a.id}" disabled>${OF.icon('check',15)} Confirm selected</button>
+            <button class="btn btn-danger-soft btn-sm declineBtn" data-id="${a.id}">Decline</button>
+            <a class="btn btn-ghost btn-sm" href="/admin/appointments?id=${a.id}">Details</a>
+          </div></div>`;
+      }).join('') + `</div>`;
+
+      const picks = {};
+      root.querySelectorAll('.slotpick').forEach(b=>b.onclick=()=>{
+        const id=b.dataset.id;
+        root.querySelectorAll(`.slotpick[data-id="${id}"]`).forEach(x=>x.classList.remove('active'));
+        b.classList.add('active'); picks[id]=+b.dataset.i;
+        root.querySelector(`.confirmBtn[data-id="${id}"]`).disabled=false;
+      });
+      root.querySelectorAll('.confirmBtn').forEach(b=>b.onclick=async()=>{
+        const id=b.dataset.id; if(picks[id]==null) return;
+        b.disabled=true; b.textContent='Confirming…';
+        const send=(force)=>OF.post(`/api/admin/appointments/${id}/confirm`,{slotIndex:picks[id],notify:true,force});
+        try { await send(false); OF.toast('Confirmed & customer notified','ok'); load(root); }
+        catch(e){
+          const warn = e.code==='SCHEDULE_WARN' || e.code==='SLOT_FULL';
+          if(warn && await OF.confirm({title:'Heads up',body:`<p class="muted">${OF.escape(e.message)}</p>`,confirmText:'Confirm anyway'})){
+            try{ await send(true); OF.toast('Confirmed & customer notified','ok'); load(root); return; }catch(e2){ OF.toast(e2.message,'error'); }
+          } else if(!warn){ OF.toast(e.message,'error'); }
+          b.disabled=false; b.textContent='Confirm selected';
+        }
+      });
+      root.querySelectorAll('.declineBtn').forEach(b=>b.onclick=async()=>{
+        const id=b.dataset.id;
+        if(!(await OF.confirm({title:'Decline request?',body:'<p class="muted">This cancels the request. The customer can be notified.</p>',confirmText:'Decline',danger:true}))) return;
+        await OF.patch('/api/admin/appointments/'+id,{status:'canceled',notify:true}); OF.toast('Request declined','ok'); load(root);
+      });
+    }
+
+    OF.page({ active:'requests', title:'Requests', subtitle:'Booking requests awaiting your confirmation',
+      render: async (root) => { await load(root); } });
+  
