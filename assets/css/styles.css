@@ -185,11 +185,9 @@ h3 { font-size: 1.3rem; }
   background-size: 22px 22px; opacity: .5;
 }
 .hero .container { position: relative; z-index: 2; }
-.hero-grid { display: grid; gap: 40px; align-items: center; padding: clamp(48px,7vw,90px) 0; }
-@media (min-width: 940px){ .hero-grid { grid-template-columns: 1.05fr .95fr; gap: 56px; } }
+.hero-grid { display: grid; align-items: center; max-width: 760px; padding: clamp(48px,7vw,90px) 0; }
 @media (max-width: 939px){
   .hero-grid { gap: 0; padding: clamp(44px,12vw,72px) 0; }
-  .hero-art { display: none; }
 }
 .hero h1 { color: #fff; }
 .hero h1 .hl { color: #8fe3a6; }

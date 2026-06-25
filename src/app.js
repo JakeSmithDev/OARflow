@@ -120,7 +120,13 @@ export function createApp() {
 
   // --- Static assets + marketing site (served from /public) ---------------
   app.get('/favicon.ico', (req, res) => res.redirect(301, '/assets/img/favicon.svg'));
-  app.use(express.static(PUBLIC_DIR, { extensions: ['html'], maxAge: '1h' }));
+  app.use(express.static(PUBLIC_DIR, {
+    extensions: ['html'],
+    maxAge: '1h',
+    setHeaders(res, filePath) {
+      if (filePath.endsWith('.html')) res.set('Cache-Control', 'no-cache');
+    },
+  }));
 
   // --- HTML shell fallbacks for deep links --------------------------------
   // Admin deep links (e.g. /admin/customers?id=5) resolve to section shells via
