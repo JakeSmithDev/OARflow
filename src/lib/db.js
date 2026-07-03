@@ -19,9 +19,17 @@ function shouldUseSsl(connectionString) {
   return true;
 }
 
+// DATE columns (valid_until, due_date, service_date, next_run_date, …) hold
+// calendar dates with no timezone. Both drivers default to parsing them into
+// JS Date objects at some midnight (node-postgres: server-local; PGlite: UTC),
+// which shifts the calendar day depending on the process timezone. Return the
+// raw 'YYYY-MM-DD' string instead — every consumer already handles strings.
+const DATE_OID = 1082;
+
 async function createPgBackend() {
   const pg = await import('pg');
-  const { Pool } = pg.default ?? pg;
+  const { Pool, types } = pg.default ?? pg;
+  types.setTypeParser(DATE_OID, (v) => v);
   const pool = new Pool({
     connectionString: config.databaseUrl,
     ssl: shouldUseSsl(config.databaseUrl) ? { rejectUnauthorized: false } : false,
@@ -58,7 +66,8 @@ async function createPgBackend() {
 async function createPgliteBackend() {
   const { PGlite } = await import('@electric-sql/pglite');
   const dir = config.pgliteDir === 'memory://' ? undefined : config.pgliteDir;
-  const db = dir ? new PGlite(dir) : new PGlite();
+  const options = { parsers: { [DATE_OID]: (v) => v } };
+  const db = dir ? new PGlite(dir, options) : new PGlite(options);
   await db.waitReady;
 
   // PGlite is a single in-process connection. Serialize all operations through

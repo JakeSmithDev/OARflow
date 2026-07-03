@@ -189,6 +189,19 @@ async function main() {
     assert.ok(data.estimate.converted_invoice_id, 'should have spawned an invoice');
   });
   await check('accepted estimate cannot be edited', async () => { const { status } = await call('/api/admin/estimates/' + estId, { method: 'PATCH', body: { discountCents: 0 } }); assert.equal(status, 400); });
+  await check('estimate valid_until round-trips as the exact calendar date (DATE parser regression)', async () => {
+    // Regression guard: DATE columns must come back as raw 'YYYY-MM-DD' strings,
+    // not driver-midnight Date objects that shift a day depending on process TZ.
+    const validUntil = ymd(new Date(Date.now() + 10 * 86400000));
+    const { data } = await call('/api/admin/estimates', { method: 'POST', body: { customerId: 1, lineItems: [{ label: 'Date check', unit_amount_cents: 100 }], validUntil } });
+    const raw = data.estimate.valid_until;
+    assert.equal(String(raw).slice(0, 10), validUntil, `valid_until mismatch: wrote ${validUntil}, read ${raw}`);
+    // A valid-through-today estimate must NOT be expired, and it must be accepted server-side.
+    const today = ymd(new Date());
+    const edge = await call('/api/admin/estimates', { method: 'POST', body: { customerId: 1, lineItems: [{ label: 'Edge', unit_amount_cents: 100 }], validUntil: today } });
+    const pub = await call(`/api/quotes/${edge.data.estimate.id}?token=${edge.data.estimate.access_token}`, { auth: false });
+    assert.equal(pub.data.estimate.expired, false, `estimate valid through today (${today}) reported expired`);
+  });
   await check('convert is idempotent (same invoice id)', async () => {
     const before = (await call('/api/admin/estimates/' + estId)).data.estimate.converted_invoice_id;
     const { data } = await call(`/api/admin/estimates/${estId}/convert`, { method: 'POST' });

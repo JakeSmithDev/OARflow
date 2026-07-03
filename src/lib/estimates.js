@@ -7,15 +7,20 @@ import { nextEstimateNumber } from './tenants.js';
 import { computeTotals, createInvoice } from './invoices.js';
 import { addDays, ymdInTimeZone } from './dates.js';
 
-export function estimateValidUntilYmd(value, timeZone = 'UTC') {
+// DATE columns arrive as raw 'YYYY-MM-DD' strings (see the DATE type parser in
+// db.js), so no timezone reinterpretation is needed here. The Date branch is a
+// defensive fallback only: drivers construct DATE Dates at process-local
+// midnight, so local components recover the intended calendar day.
+export function estimateValidUntilYmd(value) {
   if (!value) return '';
   if (typeof value === 'string') return value.slice(0, 10);
   const d = new Date(value);
-  return Number.isNaN(d.getTime()) ? '' : ymdInTimeZone(d, timeZone);
+  if (Number.isNaN(d.getTime())) return '';
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
 export function estimateExpired(tenant, estimate, now = new Date()) {
-  const validUntil = estimateValidUntilYmd(estimate?.valid_until, tenant.timezone);
+  const validUntil = estimateValidUntilYmd(estimate?.valid_until);
   return Boolean(validUntil && ymdInTimeZone(now, tenant.timezone) > validUntil);
 }
 

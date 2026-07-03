@@ -83,7 +83,7 @@ router.post('/:id/send', asyncHandler(async (req, res) => {
     CUSTOMER_NAME: e.customer_name, COMPANY_NAME: req.tenant.settings.branding.logoText || req.tenant.name,
     ESTIMATE_NUMBER: e.number, ESTIMATE_TOTAL: formatCents(e.total_cents, req.tenant.currency),
     ESTIMATE_SUMMARY: summaryHtml(req.tenant, e), ACCEPT_URL: acceptUrl, TERMS: e.terms || '',
-    VALID_UNTIL: estimateValidUntilYmd(e.valid_until, req.tenant.timezone),
+    VALID_UNTIL: estimateValidUntilYmd(e.valid_until),
   }, { type: 'estimate', id });
   await logAudit({ tenantId: req.tenant.id, adminUsername: req.admin.username, action: 'estimate_send', entityType: 'estimate', entityId: id });
   emitEvent('estimate.sent', { tenantId: req.tenant.id, estimateId: id, customerId: e.customer_id }).catch(() => {});
