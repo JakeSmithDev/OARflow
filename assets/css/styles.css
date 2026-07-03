@@ -304,7 +304,9 @@ h3 { font-size: 1.3rem; }
 .plan ul { display: grid; gap: 12px; margin: 22px 0 26px; }
 .plan ul li { display: flex; gap: 10px; align-items: flex-start; font-size: .96rem; color: var(--ink); }
 .plan ul li svg { width: 19px; height: 19px; color: var(--green); flex: none; margin-top: 3px; }
-.plan .btn { margin-top: auto; }
+.plan > .btn, .plan-actions { margin-top: auto; }
+.plan-actions { display: grid; gap: 10px; }
+.plan-actions .btn { margin-top: 0; }
 
 /* ---------------------------- Reviews ------------------------------ */
 .review-card { display: flex; flex-direction: column; gap: 16px; }
