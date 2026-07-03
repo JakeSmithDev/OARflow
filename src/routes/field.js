@@ -1,7 +1,7 @@
 // Technician field app API (public; per-technician field_token auth). Every
 // endpoint resolves the tech by token, then verifies the job is assigned to them.
 import express from 'express';
-import { asyncHandler, badRequest, notFound, toInt } from '../lib/http.js';
+import { asyncHandler, badRequest, notFound, toInt, unauthorized } from '../lib/http.js';
 import { query, queryOne } from '../lib/db.js';
 import { getTenantById } from '../lib/tenants.js';
 import { technicianByFieldToken, technicianJobs, isAssigned } from '../lib/technicians.js';
@@ -23,20 +23,24 @@ const limitAction = rateLimit({ endpoint: 'field_post', windowMinutes: 10, maxCo
 async function auth(req) {
   const token = String(req.query.token || (req.body || {}).token || '');
   const tech = await technicianByFieldToken(token);
-  if (!tech) return null;
+  if (!tech) return { unauthorized: true };
   const tenant = await getTenantById(tech.tenant_id);
-  return tenant ? { tenant, tech } : null;
+  return tenant ? { tenant, tech } : { unauthorized: true };
 }
 async function authJob(req) {
-  const ctx = await auth(req); if (!ctx) return null;
+  const ctx = await auth(req); if (ctx.unauthorized) return ctx;
   const apptId = toInt(req.params.id);
   if (!(await isAssigned(ctx.tenant, ctx.tech.id, apptId))) return { ...ctx, forbidden: true };
   return { ...ctx, apptId };
 }
 
+function invalidFieldLink(res) {
+  return unauthorized(res, 'This field link is no longer valid.');
+}
+
 router.get('/me', limitView, asyncHandler(async (req, res) => {
   const ctx = await auth(req);
-  if (!ctx) return notFound(res, 'This field link is no longer valid.');
+  if (ctx.unauthorized) return invalidFieldLink(res);
   const day = /^\d{4}-\d{2}-\d{2}$/.test(req.query.date || '') ? req.query.date : ymdInTimeZone(new Date(), ctx.tenant.timezone);
   const from = zonedWallTimeToUtc(day, '00:00', ctx.tenant.timezone).toISOString();
   const to = new Date(zonedWallTimeToUtc(day, '00:00', ctx.tenant.timezone).getTime() + 86_400_000).toISOString();
@@ -52,7 +56,7 @@ router.get('/me', limitView, asyncHandler(async (req, res) => {
 
 router.get('/jobs/:id', limitView, asyncHandler(async (req, res) => {
   const ctx = await authJob(req);
-  if (!ctx) return notFound(res, 'Invalid link.');
+  if (ctx.unauthorized) return invalidFieldLink(res);
   if (ctx.forbidden) return notFound(res, 'This job is not assigned to you.');
   const a = await queryOne(
     `SELECT a.*, c.name AS customer_name, c.phone AS customer_phone, c.email AS customer_email, s.name AS service_name
@@ -68,7 +72,8 @@ router.get('/jobs/:id', limitView, asyncHandler(async (req, res) => {
 // Log a chemical/material application from the field (snapshots the applicator).
 router.post('/jobs/:id/applications', limitAction, asyncHandler(async (req, res) => {
   const ctx = await authJob(req);
-  if (!ctx || ctx.forbidden) return notFound(res);
+  if (ctx.unauthorized) return invalidFieldLink(res);
+  if (ctx.forbidden) return notFound(res);
   const body = { ...(req.body || {}), technicianId: ctx.tech.id, applicatorName: ctx.tech.name, applicatorLicense: ctx.tech.license_no };
   const r = await recordApplication(ctx.tenant, ctx.apptId, body, `tech:${ctx.tech.id}`);
   if (!r.ok) return badRequest(res, r.error);
@@ -77,14 +82,16 @@ router.post('/jobs/:id/applications', limitAction, asyncHandler(async (req, res)
 
 router.post('/jobs/:id/on-my-way', limitAction, asyncHandler(async (req, res) => {
   const ctx = await authJob(req);
-  if (!ctx || ctx.forbidden) return notFound(res);
+  if (ctx.unauthorized) return invalidFieldLink(res);
+  if (ctx.forbidden) return notFound(res);
   const r = await sendAppointmentSms(ctx.tenant, ctx.apptId, 'onMyWay', { ETA: (req.body || {}).eta || '' }).catch(() => ({ ok: false }));
   res.json({ ok: true, texted: r.ok !== false });
 }));
 
 router.post('/jobs/:id/status', limitAction, asyncHandler(async (req, res) => {
   const ctx = await authJob(req);
-  if (!ctx || ctx.forbidden) return notFound(res);
+  if (ctx.unauthorized) return invalidFieldLink(res);
+  if (ctx.forbidden) return notFound(res);
   const status = (req.body || {}).status;
   if (!['scheduled', 'completed', 'no_show'].includes(status)) return badRequest(res, 'Invalid status.');
   const updated = await queryOne(
@@ -99,7 +106,8 @@ router.post('/jobs/:id/status', limitAction, asyncHandler(async (req, res) => {
 
 router.post('/jobs/:id/photos', limitAction, asyncHandler(async (req, res) => {
   const ctx = await authJob(req);
-  if (!ctx || ctx.forbidden) return notFound(res);
+  if (ctx.unauthorized) return invalidFieldLink(res);
+  if (ctx.forbidden) return notFound(res);
   const dec = decodeUpload(req.body || {}, { allow: IMAGE_TYPES });
   if (dec.error) return badRequest(res, dec.error);
   const appt = await queryOne('SELECT customer_id FROM appointments WHERE id=$1 AND tenant_id=$2', [ctx.apptId, ctx.tenant.id]);
@@ -112,7 +120,8 @@ router.post('/jobs/:id/photos', limitAction, asyncHandler(async (req, res) => {
 
 router.post('/jobs/:id/signature', limitAction, asyncHandler(async (req, res) => {
   const ctx = await authJob(req);
-  if (!ctx || ctx.forbidden) return notFound(res);
+  if (ctx.unauthorized) return invalidFieldLink(res);
+  if (ctx.forbidden) return notFound(res);
   const dec = decodeUpload(req.body || {}, { allow: ['image/png'] });
   if (dec.error) return badRequest(res, dec.error);
   const file = await saveFile(ctx.tenant, {

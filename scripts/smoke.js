@@ -341,7 +341,7 @@ async function main() {
     assert.ok(data.ok); assert.equal(data.technician.name, 'Marco Diaz');
     assert.ok(data.jobs.some((j) => j.id === assignApptId), 'assigned job appears on that day');
   });
-  await check('field rejects a bad token', async () => { assert.equal((await call('/api/field/me?token=nope', { auth: false })).status, 404); });
+  await check('field rejects a bad token', async () => { assert.equal((await call('/api/field/me?token=nope', { auth: false })).status, 401); });
   await check('field tech uploads a photo + captures signature', async () => {
     const up = await call(`/api/field/jobs/${assignApptId}/photos`, { method: 'POST', auth: false, body: { token: fieldToken, filename: 'site.png', contentType: 'image/png', dataBase64: PNG1x1 } });
     assert.ok(up.data.ok, JSON.stringify(up.data));
@@ -852,7 +852,7 @@ async function main() {
     const t1 = new URL((await call(`/api/admin/technicians/${techId}/field-link`, { method: 'POST' })).data.url).searchParams.get('token');
     const t2 = new URL((await call(`/api/admin/technicians/${techId}/field-link`, { method: 'POST' })).data.url).searchParams.get('token');
     assert.notEqual(t1, t2);
-    assert.equal((await call('/api/field/me?token=' + t1, { auth: false })).status, 404, 'old token invalidated');
+    assert.equal((await call('/api/field/me?token=' + t1, { auth: false })).status, 401, 'old token invalidated');
     assert.equal((await call('/api/field/me?token=' + t2, { auth: false })).status, 200, 'new token valid');
   });
   await check('[codex] webhook rejects non-http scheme (SSRF guard)', async () => {
