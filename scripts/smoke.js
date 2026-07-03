@@ -8,12 +8,16 @@ process.env.PORT = process.env.SMOKE_PORT || '4555';
 process.env.BASE_URL = `http://localhost:${process.env.PORT}`;
 
 const http = await import('node:http');
+const fs = await import('node:fs/promises');
+const path = await import('node:path');
 const assert = (await import('node:assert')).strict;
+const { fileURLToPath } = await import('node:url');
 const { runMigrations } = await import('./migrate.js');
 const { runSeed } = await import('./seed.js');
 const { createApp } = await import('../src/app.js');
 const { closeDb } = await import('../src/lib/db.js');
 
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const base = process.env.BASE_URL;
 let cookie = '';
 let passed = 0; const failures = [];
@@ -34,6 +38,42 @@ async function check(name, fn) {
 }
 const ymd = (d) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
 
+async function collectFiles(dir, prefix = '') {
+  const entries = await fs.readdir(dir, { withFileTypes: true });
+  const files = [];
+  for (const entry of entries) {
+    const rel = path.posix.join(prefix, entry.name);
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) files.push(...await collectFiles(full, rel));
+    else if (entry.isFile()) files.push(rel);
+  }
+  return files;
+}
+
+async function checkRootMirrors() {
+  const mirrors = new Set([
+    'index.html',
+    'about.html',
+    'contact.html',
+    'services.html',
+    'privacy.html',
+    'robots.txt',
+    'sitemap.xml',
+    'assets/img/apple-touch-icon.png',
+  ]);
+  for (const file of await collectFiles(path.join(repoRoot, 'assets'))) {
+    mirrors.add(path.posix.join('assets', file));
+  }
+  for (const rel of mirrors) {
+    const parts = rel.split('/');
+    const [rootBytes, publicBytes] = await Promise.all([
+      fs.readFile(path.join(repoRoot, ...parts)),
+      fs.readFile(path.join(repoRoot, 'public', ...parts)),
+    ]);
+    assert.equal(Buffer.compare(rootBytes, publicBytes), 0, `${rel} differs from public/${rel}`);
+  }
+}
+
 async function main() {
   console.log('Setting up in-memory DB…');
   await runMigrations({ quiet: true });
@@ -41,6 +81,8 @@ async function main() {
   const server = http.createServer(createApp());
   await new Promise((r) => server.listen(Number(process.env.PORT), r));
   console.log(`\nRunning smoke tests against ${base}\n`);
+
+  await check('root/public mirrored files match', checkRootMirrors);
 
   // --- Public booking ---
   let svcInstant; let svcRequest; let token;
