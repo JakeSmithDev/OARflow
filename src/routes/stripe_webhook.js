@@ -106,6 +106,7 @@ router.post('/', async (req, res) => {
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error('webhook handling error', err.message);
+    return res.status(500).json({ error: 'handler_failed' });
   }
   res.json({ received: true });
 });
