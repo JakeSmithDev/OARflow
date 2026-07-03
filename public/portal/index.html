@@ -30,6 +30,7 @@
     const esc = (s)=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     const qp = new URLSearchParams(location.search);
     const token = qp.get('token');
+    const slug = qp.get('t') || 'default';
     let CUR='USD', TZ='America/New_York';
     const money=(c)=>{try{return new Intl.NumberFormat('en-US',{style:'currency',currency:CUR}).format((c||0)/100);}catch{return '$'+((c||0)/100).toFixed(2);}};
     const dt=(iso)=>iso?new Intl.DateTimeFormat('en-US',{timeZone:TZ,weekday:'short',month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}).format(new Date(iso)):'';
@@ -37,7 +38,7 @@
 
     async function load(){
       if (!token) return login();
-      let d; try { d=await (await fetch(`/api/portal/me?token=${encodeURIComponent(token)}`)).json(); } catch { d={ok:false}; }
+      let d; try { d=await (await fetch(`/api/portal/me?token=${encodeURIComponent(token)}&t=${encodeURIComponent(slug)}`)).json(); } catch { d={ok:false}; }
       if (!d.ok) return login(d.error);
       TZ=d.tenant.timezone||TZ;
       const b=d.tenant.branding||{}; if(b.primaryColor) document.documentElement.style.setProperty('--brand', b.primaryColor);
@@ -59,7 +60,7 @@
       document.getElementById('send').onclick=async()=>{
         const email=document.getElementById('em').value.trim(); if(!email) return;
         const btn=document.getElementById('send'); btn.disabled=true; btn.textContent='Sending…';
-        let r; try{ r=await (await fetch('/api/portal/request-link',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email})})).json(); }catch{ r={ok:false}; }
+        let r; try{ r=await (await fetch('/api/portal/request-link',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,t:slug})})).json(); }catch{ r={ok:false}; }
         document.getElementById('sent').innerHTML = `If an account exists for ${esc(email)}, a sign-in link is on its way.` + (r&&r.devLink?` <a href="${esc(r.devLink)}">Open (dev)</a>`:'');
         btn.disabled=false; btn.textContent='Email me a link';
       };
@@ -81,7 +82,7 @@
         <div class="sec"><h3>Invoices</h3><div class="card card-pad">${invs}</div></div>
         ${cards}`;
       const ac=document.getElementById('addCard');
-      if (ac) ac.onclick=async()=>{ try{ const r=await (await fetch('/api/portal/card-link',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token})})).json(); if(r.url) location.href=r.url; }catch{} };
+      if (ac) ac.onclick=async()=>{ try{ const r=await (await fetch('/api/portal/card-link',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token,t:slug})})).json(); if(r.url) location.href=r.url; }catch{} };
     }
     load();
   </script>

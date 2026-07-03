@@ -107,7 +107,7 @@ router.post('/:id/portal-link', asyncHandler(async (req, res) => {
   const c = await loadCustomer(req); if (!c) return notFound(res);
   const { ensurePortalToken, portalUrl } = await import('../../lib/portal.js');
   const token = await ensurePortalToken(req.tenant, c.id);
-  res.json({ ok: true, url: portalUrl(token) });
+  res.json({ ok: true, url: portalUrl(token, req.tenant) });
 }));
 
 // Generate (or reuse) a tokenized hosted save-card link to text/email a customer.

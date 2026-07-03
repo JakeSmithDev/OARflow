@@ -17,12 +17,15 @@ export async function ensurePortalToken(tenant, customerId) {
   return token;
 }
 
-export async function customerByPortalToken(token) {
-  if (!token) return null;
-  return queryOne('SELECT * FROM customers WHERE portal_token=$1', [token]);
+export async function customerByPortalToken(tenant, token) {
+  if (!tenant || !token) return null;
+  return queryOne('SELECT * FROM customers WHERE tenant_id=$1 AND portal_token=$2', [tenant.id, token]);
 }
 
-export function portalUrl(token) { return `${config.baseUrl}/portal?token=${token}`; }
+export function portalUrl(token, tenant) {
+  const slug = tenant?.slug ? `&t=${encodeURIComponent(tenant.slug)}` : '';
+  return `${config.baseUrl}/portal?token=${encodeURIComponent(token)}${slug}`;
+}
 
 /** Everything the portal page renders for one customer. */
 export async function portalData(tenant, customer) {
@@ -66,7 +69,7 @@ export async function portalData(tenant, customer) {
   const paymentMethods = await listPaymentMethods(tenant, customer.id);
 
   return {
-    tenant: { name: tenant.name, timezone: tenant.timezone, branding: tenant.settings.branding, bookUrl: `${config.baseUrl}/book` },
+    tenant: { name: tenant.name, timezone: tenant.timezone, branding: tenant.settings.branding, bookUrl: `${config.baseUrl}/book?t=${encodeURIComponent(tenant.slug)}` },
     customer: { name: customer.name, email: customer.email, phone: customer.phone },
     upcoming, past, invoices, estimates,
     cards: cardsStatus(tenant), paymentMethods,

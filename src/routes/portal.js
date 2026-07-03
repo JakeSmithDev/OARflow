@@ -3,13 +3,18 @@ import express from 'express';
 import { asyncHandler, badRequest, notFound, getClientIp } from '../lib/http.js';
 import { consumeRateLimit } from '../lib/rate_limit.js';
 import { query, queryOne } from '../lib/db.js';
-import { getTenantById, getDefaultTenant } from '../lib/tenants.js';
+import { getDefaultTenant, getTenantBySlug } from '../lib/tenants.js';
 import { ensurePortalToken, customerByPortalToken, portalUrl, portalData } from '../lib/portal.js';
 import { randomToken } from '../lib/crypto.js';
 import { sendTemplated } from '../lib/email_templates.js';
 import { config } from '../config.js';
 
 const router = express.Router();
+
+async function resolveTenant(slug) {
+  if (!slug || slug === 'default' || slug === '_') return getDefaultTenant();
+  return getTenantBySlug(slug);
+}
 
 // Request a magic link by email. Always returns ok (never leaks whether an email
 // exists). In dev we include the link directly so the flow is testable.
@@ -18,11 +23,11 @@ router.post('/request-link', asyncHandler(async (req, res) => {
   if (!email) return badRequest(res, 'Enter your email.');
   const rl = await consumeRateLimit({ ip: getClientIp(req), endpoint: 'portal_link', windowMinutes: 10, maxCount: 8 });
   if (!rl.allowed) return res.json({ ok: true }); // soft-limit, never leak existence
-  const tenant = await getDefaultTenant();
+  const tenant = await resolveTenant((req.body || {}).t || req.query.t);
   const customer = tenant && await queryOne('SELECT * FROM customers WHERE tenant_id=$1 AND lower(email)=$2', [tenant.id, email]);
   if (!tenant || !customer) return res.json({ ok: true });
   const token = await ensurePortalToken(tenant, customer.id);
-  const url = portalUrl(token);
+  const url = portalUrl(token, tenant);
   await sendTemplated(tenant, 'portal_link', customer.email, {
     CUSTOMER_NAME: customer.name, COMPANY_NAME: tenant.settings.branding.logoText || tenant.name, PORTAL_URL: url,
   }, { type: 'customer', id: customer.id }).catch(() => {});
@@ -31,10 +36,10 @@ router.post('/request-link', asyncHandler(async (req, res) => {
 
 async function loadCustomer(req) {
   const token = String(req.query.token || (req.body || {}).token || '');
-  const customer = await customerByPortalToken(token);
-  if (!customer) return null;
-  const tenant = await getTenantById(customer.tenant_id);
-  return tenant ? { tenant, customer } : null;
+  const tenant = await resolveTenant(req.query.t || (req.body || {}).t);
+  if (!tenant) return null;
+  const customer = await customerByPortalToken(tenant, token);
+  return customer ? { tenant, customer } : null;
 }
 
 router.get('/me', asyncHandler(async (req, res) => {

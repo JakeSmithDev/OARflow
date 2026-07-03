@@ -34,6 +34,10 @@ function publicService(tenant, s) {
   };
 }
 
+function manageUrl(tenant, token) {
+  return `${config.baseUrl}/book?appt=${encodeURIComponent(token)}&t=${encodeURIComponent(tenant.slug)}`;
+}
+
 // --- Bootstrap ------------------------------------------------------------
 router.get('/:slug/bootstrap', asyncHandler(async (req, res) => {
   const tenant = await resolveTenant(req.params.slug);
@@ -138,7 +142,7 @@ router.post('/:slug/book', asyncHandler(async (req, res) => {
         ['When', `${formatDateLabel(new Date(slot.start), tenant.timezone)} · ${formatTimeLabel(new Date(slot.start), tenant.timezone)}`],
         ['Address', customer.address || ''],
       ]),
-      MANAGE_URL: `${config.baseUrl}/book?appt=${appt.access_token}`,
+      MANAGE_URL: manageUrl(tenant, appt.access_token),
     }, { type: 'appointment', id: appt.id }).catch(() => {});
 
     emitEvent('appointment.scheduled', { tenantId: tenant.id, appointmentId: appt.id, customerId, source: 'online' }).catch(() => {});
@@ -176,7 +180,7 @@ router.post('/:slug/book', asyncHandler(async (req, res) => {
     `<li>${formatDateLabel(new Date(s.start), tenant.timezone)} · ${formatTimeLabel(new Date(s.start), tenant.timezone)}</li>`).join('') + '</ul>';
   await sendTemplated(tenant, 'request_received', customer.email, {
     CUSTOMER_NAME: customer.name, COMPANY_NAME: company, SERVICE_NAME: service.name,
-    REQUESTED_SLOTS: slotsHtml, MANAGE_URL: `${config.baseUrl}/book?appt=${appt.access_token}`,
+    REQUESTED_SLOTS: slotsHtml, MANAGE_URL: manageUrl(tenant, appt.access_token),
   }, { type: 'appointment', id: appt.id }).catch(() => {});
 
   emitEvent('appointment.requested', { tenantId: tenant.id, appointmentId: appt.id, customerId, source: 'online' }).catch(() => {});

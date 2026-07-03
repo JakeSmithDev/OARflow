@@ -277,19 +277,21 @@
       else payload.slot = { start: state.slot.start, end: state.slot.end };
       try {
         const r = await api(`/api/public/${slug}/book`, { method:'POST', body: payload });
-        showSuccess(r.status);
+        showSuccess(r.status, r.token);
       } catch(e){ btn.disabled=false; btn.textContent='Try again'; alert(e.message); }
     }
 
-    function showSuccess(status) {
+    function showSuccess(status, token) {
       $('#steps').innerHTML='';
       const requested = status==='requested';
+      const manageHref = token ? `/book?appt=${encodeURIComponent(token)}&t=${encodeURIComponent(slug)}` : '';
       $('#view').innerHTML = `<div class="ok-screen">
         <div class="big"><svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg></div>
         <h2>${requested?'Request received!':'You\'re booked!'}</h2>
         <p class="muted" style="max-width:420px;margin:10px auto 0">${requested?(CFG.booking.confirmationMessage||'We\'ll confirm one of your preferred times by email shortly.'):'A confirmation email is on its way. We look forward to seeing you!'}</p>
         <div class="navbtns" style="justify-content:center">
-          <a class="btn btn-primary btn-lg" href="/">Back to homepage</a>
+          ${manageHref?`<a class="btn btn-primary btn-lg" href="${esc(manageHref)}">View or manage this booking</a>`:''}
+          <a class="btn btn-secondary btn-lg" href="/">Back to homepage</a>
           <a class="btn btn-secondary btn-lg" href="/services.html">Browse our services</a>
         </div>
       </div>`;
