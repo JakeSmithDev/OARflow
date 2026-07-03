@@ -97,4 +97,5 @@ const OF = window.OF;
 
       await loadKpis();
       await run();
+      await loadAccounting();
     } });
