@@ -34,16 +34,18 @@
   <div class="wrap"><div id="view"><div class="loading-page"><span class="spinner"></span></div></div></div>
   <script>
     const esc=(s)=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-    const token=new URLSearchParams(location.search).get('token');
+    const token=new URLSearchParams(location.search).get('token') || (()=>{try{return localStorage.getItem('oarflow_field_token')}catch{return null}})() || '';
     if(token) try{ localStorage.setItem('oarflow_field_token', token); }catch{}
     const tfmt=(iso)=>iso?new Date(iso).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}):'—';
     let DATA=null;
-    const api=(p,opts={})=>fetch('/api/field'+p,{...opts,headers:{'Content-Type':'application/json',...(opts.headers||{})}}).then(r=>r.json());
+    const api=(p,opts={})=>fetch('/api/field'+p,{...opts,headers:{'Content-Type':'application/json',...(opts.headers||{})}}).then(async r=>{ const d=await r.json().catch(()=>({})); d.httpStatus=r.status; if(!r.ok && d.ok!==false)d.ok=false; return d; });
+    const openLinkMsg=()=>'<div class="card card-pad">Open the link your office sent you to see your jobs.</div>';
 
     async function loadDay(){
       document.getElementById('back').style.display='none';
-      if(!token){ document.getElementById('view').innerHTML='<div class="card card-pad">Open the link your office sent you to see your jobs.</div>'; return; }
+      if(!token){ document.getElementById('view').innerHTML=openLinkMsg(); return; }
       let d; try{ d=await api(`/me?token=${encodeURIComponent(token)}`); }catch{ d={ok:false}; }
+      if(d.httpStatus===401){ try{ localStorage.removeItem('oarflow_field_token'); }catch{} document.getElementById('view').innerHTML=openLinkMsg(); return; }
       if(!d.ok){ document.getElementById('view').innerHTML=`<div class="card card-pad">${esc(d.error||'This link is no longer valid.')}</div>`; return; }
       DATA=d;
       const b=d.tenant.branding||{}; if(b.primaryColor) document.documentElement.style.setProperty('--brand',b.primaryColor);
