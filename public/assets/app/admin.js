@@ -60,7 +60,10 @@
     scheduled: ['info', 'Scheduled'], requested: ['warn', 'Requested'], completed: ['ok', 'Completed'],
     canceled: ['neutral', 'Canceled'], no_show: ['danger', 'No-show'],
     draft: ['neutral', 'Draft'], sent: ['info', 'Sent'], partial: ['warn', 'Partial'], paid: ['ok', 'Paid'], void: ['neutral', 'Void'],
-    active: ['ok', 'Active'], paused: ['warn', 'Paused'], pending: ['warn', 'Pending'], done: ['ok', 'Done'], snoozed: ['neutral', 'Snoozed'],
+    accepted: ['ok', 'Accepted'], declined: ['danger', 'Declined'], converted: ['purple', 'Converted'], signed: ['ok', 'Signed'], responded: ['ok', 'Responded'],
+    active: ['ok', 'Active'], paused: ['warn', 'Paused'], pending: ['warn', 'Pending'], done: ['ok', 'Done'], snoozed: ['neutral', 'Snoozed'], accrued: ['warn', 'Accrued'],
+    received: ['info', 'Received'], delivered: ['ok', 'Delivered'], queued: ['neutral', 'Queued'], failed: ['danger', 'Failed'], suppressed: ['warn', 'Suppressed'],
+    missed: ['warn', 'Missed'], voicemail: ['warn', 'Voicemail'], transferred: ['purple', 'Transferred'],
   };
   OF.statusBadge = (status) => {
     const [cls, label] = STATUS[status] || ['neutral', status];
@@ -235,6 +238,12 @@
   function readCache() { try { return JSON.parse(sessionStorage.getItem(CACHE_KEY) || 'null'); } catch { return null; } }
   function writeCache(o) { try { sessionStorage.setItem(CACHE_KEY, JSON.stringify(o)); } catch { /* */ } }
   OF.clearCache = () => { try { sessionStorage.removeItem(CACHE_KEY); } catch { /* */ } };
+  function shellSignature(session, tenant) {
+    return JSON.stringify({
+      user: session ? { id: session.userId, username: session.username, displayName: session.displayName, role: session.role, capabilities: session.capabilities || [] } : null,
+      tenant: tenant ? { id: tenant.id, slug: tenant.slug, name: tenant.name, timezone: tenant.timezone, currency: tenant.currency, branding: tenant.branding || {} } : null,
+    });
+  }
 
   function applyCounts(counts) {
     document.querySelectorAll('.badge-count[data-count]').forEach((el) => {
@@ -360,10 +369,11 @@
     let s;
     try { s = await api('/api/admin/auth/session'); }
     catch { OF.clearCache(); location.href = '/admin/login?next=' + encodeURIComponent(location.pathname + location.search); return; }
+    const cachedShell = cached && cached.tenant ? shellSignature(cached.session, cached.tenant) : null;
     OF.session = s.user; OF.tenant = s.tenant;
     const counts = (cached && cached.counts) || {};
     writeCache({ session: s.user, tenant: s.tenant, counts });
-    if (!(cached && cached.tenant)) { root.innerHTML = renderShell(active, counts); bindShell(); }
+    if (!(cached && cached.tenant) || cachedShell !== shellSignature(s.user, s.tenant)) { root.innerHTML = renderShell(active, counts); bindShell(); }
     api('/api/admin/dashboard/counts').then((r) => { const c = r.counts || {}; applyCounts(c); writeCache({ session: OF.session, tenant: OF.tenant, counts: c }); }).catch(() => {});
     document.addEventListener('click', onDocClick);
     window.addEventListener('popstate', renderRoute);

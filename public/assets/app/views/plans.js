@@ -40,7 +40,10 @@ const OF = window.OF;
       document.querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>planModal(DATA.plans.find(p=>p.id==b.dataset.edit)));
       document.querySelectorAll('[data-enroll]').forEach(b=>b.onclick=()=>enrollModal(+b.dataset.enroll));
       document.getElementById('runDue').onclick=async()=>{ const r=await OF.post('/api/admin/plans/generate-due'); OF.toast(`Generated ${r.appointments} visit(s), ${r.invoices} invoice(s)`,'ok'); refresh(root); };
-      document.querySelectorAll('[data-sub]').forEach(b=>b.onclick=async()=>{ await OF.patch('/api/admin/plans/subscriptions/'+b.dataset.sub,{status:b.dataset.act}); OF.toast('Updated','ok'); refresh(root); });
+      document.querySelectorAll('[data-sub]').forEach(b=>b.onclick=async()=>{
+        if(b.dataset.act==='canceled' && !(await OF.confirm({title:'Cancel subscription?',body:'<p class="muted">This stops future recurring visits and billing for this plan.</p>',confirmText:'Cancel subscription',danger:true}))) return;
+        await OF.patch('/api/admin/plans/subscriptions/'+b.dataset.sub,{status:b.dataset.act}); OF.toast('Updated','ok'); refresh(root);
+      });
     }
 
     function planModal(plan) {

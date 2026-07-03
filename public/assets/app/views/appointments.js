@@ -31,7 +31,7 @@ const OF = window.OF;
       const d = await OF.get('/api/admin/appointments?' + params);
       const c = d.counts;
       document.getElementById('chips').innerHTML =
-        chip('all','All',c.all)+chip('requested','Requested',c.requested||0)+chip('scheduled','Scheduled',c.scheduled||0)+chip('completed','Completed',c.completed||0)+chip('canceled','Canceled',c.canceled||0);
+        chip('all','All',c.all)+chip('requested','Requested',c.requested||0)+chip('scheduled','Scheduled',c.scheduled||0)+chip('completed','Completed',c.completed||0)+chip('no_show','No-show',c.no_show||0)+chip('canceled','Canceled',c.canceled||0);
       document.querySelectorAll('#chips .chip').forEach(b=>b.onclick=()=>{ state.status=b.dataset.status; refresh(); });
       const rows = d.appointments;
       document.getElementById('list').innerHTML = rows.length ? `<div class="table-wrap"><table class="tbl">
@@ -39,7 +39,7 @@ const OF = window.OF;
         <tbody>${rows.map(a=>`<tr class="clickable" data-id="${a.id}">
           <td class="nowrap">${a.scheduled_start?`<span class="cell-strong">${OF.date(a.scheduled_start)}</span><div class="tiny muted">${OF.time(a.scheduled_start)}</div>`:`<span class="muted">${a.status==='requested'?'Requested':'—'}</span>`}</td>
           <td><div class="cell-strong">${OF.escape(a.customer_name)}</div><div class="tiny muted">${OF.escape(a.service_address||a.customer_email||'')}</div></td>
-          <td>${a.service_name?`<span class="badge no-dot" style="background:${a.service_color}1a;color:${a.service_color}">${OF.escape(a.service_name)}</span>`:'—'}</td>
+          <td>${a.service_name?`<span class="badge no-dot" style="background:${OF.color(a.service_color)}1a;color:${OF.color(a.service_color)}">${OF.escape(a.service_name)}</span>`:'—'}</td>
           <td>${OF.statusBadge(a.status)}</td>
           <td class="right mono">${OF.money(a.price_cents)}</td></tr>`).join('')}</tbody></table></div>`
         : `<div class="empty"><div class="ic">${OF.icon('appointments',22)}</div><p>No appointments found.</p></div>`;
@@ -149,7 +149,7 @@ const OF = window.OF;
         <div class="modal-foot"><button class="btn btn-secondary" data-close>Cancel</button><button class="btn btn-primary" id="saveAssign">Save</button></div>`);
       function renderList() {
         m.q('#techList').innerHTML = TECHS.map(t => `<label class="row between" style="gap:10px;padding:8px 0;border-bottom:1px solid var(--line-2);cursor:pointer">
-          <span class="row" style="gap:10px"><input type="checkbox" class="tk" data-id="${t.id}" ${sel.has(t.id) ? 'checked' : ''} style="width:auto"><span class="badge no-dot" style="background:${t.color}1a;color:${t.color}">${OF.escape(t.name)}</span></span>
+          <span class="row" style="gap:10px"><input type="checkbox" class="tk" data-id="${t.id}" ${sel.has(t.id) ? 'checked' : ''} style="width:auto"><span class="badge no-dot" style="background:${OF.color(t.color)}1a;color:${OF.color(t.color)}">${OF.escape(t.name)}</span></span>
           <label class="row tiny muted" style="gap:5px;cursor:pointer"><input type="radio" name="lead" class="ld" data-id="${t.id}" ${lead === t.id ? 'checked' : ''} ${sel.has(t.id) ? '' : 'disabled'} style="width:auto"> lead</label></label>`).join('') || '<p class="muted small">No technicians yet. Add one below.</p>';
         m.el.querySelectorAll('.tk').forEach(c => c.onchange = () => { const id = +c.dataset.id; if (c.checked) sel.add(id); else { sel.delete(id); if (lead === id) lead = null; } renderList(); });
         m.el.querySelectorAll('.ld').forEach(r => r.onchange = () => { lead = +r.dataset.id; });

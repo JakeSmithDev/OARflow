@@ -55,7 +55,7 @@ const OF = window.OF;
 
     function renderTabs(root){
       root.innerHTML = `<div class="tabbar"><button data-tab="queue" class="${tab==='queue'?'active':''}">Queue</button><button data-tab="rules" class="${tab==='rules'?'active':''}">Automations</button></div><div id="tabbody"></div>`;
-      root.querySelectorAll('[data-tab]').forEach(b=>b.onclick=async()=>{tab=b.dataset.tab;renderTabs(root);tab==='queue'?renderQueue(root):renderRules(root);});
+      root.querySelectorAll('[data-tab]').forEach(b=>b.onclick=async()=>{tab=b.dataset.tab;renderTabs(root);});
       tab==='queue'?renderQueue(root):renderRules(root);
     }
 

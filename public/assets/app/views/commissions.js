@@ -26,11 +26,12 @@ const OF = window.OF;
 
     function renderEntries(entries) {
       document.getElementById('entries').innerHTML = `<div class="row between" style="margin-bottom:10px"><h3 style="margin:0">Accrued commissions</h3>
-        <div class="row" style="gap:8px"><select id="f_status"><option value="all">All</option><option value="accrued" ${state.status === 'accrued' ? 'selected' : ''}>Unpaid</option><option value="paid" ${state.status === 'paid' ? 'selected' : ''}>Paid</option></select><button class="btn btn-secondary btn-sm" id="csv">Export CSV</button></div></div>
+        <div class="row" style="gap:8px"><select id="f_status"><option value="all" ${state.status === 'all' ? 'selected' : ''}>All</option><option value="accrued" ${state.status === 'accrued' ? 'selected' : ''}>Unpaid</option><option value="paid" ${state.status === 'paid' ? 'selected' : ''}>Paid</option></select><select id="f_tech"><option value="">All technicians</option>${TECHS.map((t) => `<option value="${t.id}" ${String(state.technicianId) === String(t.id) ? 'selected' : ''}>${OF.escape(t.name)}</option>`).join('')}</select><button class="btn btn-secondary btn-sm" id="csv">Export CSV</button></div></div>
         ${entries.length ? `<div class="table-wrap"><table class="tbl"><thead><tr><th>Date</th><th>Technician</th><th>Basis</th><th class="right">On</th><th class="right">Commission</th><th>Status</th></tr></thead>
-        <tbody>${entries.map((e) => `<tr><td class="tiny muted">${OF.date(e.accrued_at)}</td><td>${OF.escape(e.technician_name)}</td><td>${OF.escape(e.basis)}</td><td class="right mono">${OF.money(e.basis_cents)}</td><td class="right mono">${OF.money(e.amount_cents)}</td><td>${OF.statusBadge(e.status === 'paid' ? 'paid' : 'sent')}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted small">No commissions accrued yet.</p>'}`;
+        <tbody>${entries.map((e) => `<tr><td class="tiny muted">${OF.date(e.accrued_at)}</td><td>${OF.escape(e.technician_name)}</td><td>${OF.escape(e.basis)}</td><td class="right mono">${OF.money(e.basis_cents)}</td><td class="right mono">${OF.money(e.amount_cents)}</td><td>${OF.statusBadge(e.status)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted small">No commissions accrued yet.</p>'}`;
       document.getElementById('f_status').onchange = (e) => { state.status = e.target.value; refresh(); };
-      document.getElementById('csv').onclick = () => window.open(`/api/admin/commissions/export.csv?status=${state.status}`, '_blank');
+      document.getElementById('f_tech').onchange = (e) => { state.technicianId = e.target.value; refresh(); };
+      document.getElementById('csv').onclick = () => { const qs = new URLSearchParams({ status: state.status }); if (state.technicianId) qs.set('technicianId', state.technicianId); window.open(`/api/admin/commissions/export.csv?${qs}`, '_blank'); };
     }
 
     function ruleModal(id, r = {}) {

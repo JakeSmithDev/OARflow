@@ -20,8 +20,8 @@ const OF = window.OF;
     ];
 
     const today = new Date();
-    const iso = (d) => d.toISOString().slice(0, 10);
-    const range = { from: iso(new Date(today.getFullYear(), 0, 1)), to: iso(today) };
+    const iso = (d) => new Intl.DateTimeFormat('en-CA', { timeZone: OF.tenant.timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+    const range = { from: iso(today).slice(0, 4) + '-01-01', to: iso(today) };
 
     async function refresh() {
       const [pr, techs] = await Promise.all([OF.get('/api/admin/compliance/products?all=1'), OF.get('/api/admin/technicians?all=1')]);

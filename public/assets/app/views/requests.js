@@ -7,9 +7,10 @@ const OF = window.OF;
       if (!rows.length) { root.innerHTML = `<div class="card"><div class="empty"><div class="ic">${OF.icon('check',22)}</div><p>No pending requests. You're all caught up. 🎉</p></div></div>`; return; }
       root.innerHTML = `<div class="stack">` + rows.map(a => {
         const slots = (a.requested_slots||[]);
+        const color = OF.color(a.service_color);
         return `<div class="card card-pad" data-id="${a.id}">
           <div class="row between" style="margin-bottom:6px"><div><span class="cell-strong" style="font-size:16px">${OF.escape(a.customer_name)}</span>
-            <span class="badge no-dot" style="margin-left:8px;background:${a.service_color}1a;color:${a.service_color}">${OF.escape(a.service_name||'Service')}</span></div>
+            <span class="badge no-dot" style="margin-left:8px;background:${color}1a;color:${color}">${OF.escape(a.service_name||'Service')}</span></div>
             <span class="tiny muted">Requested ${OF.date(a.created_at)}</span></div>
           <div class="small muted" style="margin-bottom:10px">${OF.escape(a.service_address||'')}${a.customer_phone?` · ${OF.escape(a.customer_phone)}`:''}${a.customer_email?` · ${OF.escape(a.customer_email)}`:''}</div>
           ${a.notes?`<p class="small" style="background:var(--surface-2);padding:8px 12px;border-radius:8px;margin:0 0 12px">${OF.escape(a.notes)}</p>`:''}

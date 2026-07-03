@@ -7,16 +7,17 @@ const OF = window.OF;
     }
     function apptRow(a) {
       const addr = a.service_address ? `<div class="tiny muted">${OF.icon('pin',12)} ${OF.escape(a.service_address)}</div>` : '';
+      const color = OF.color(a.service_color);
       return `<tr class="clickable" onclick="OF.go('/admin/appointments?id=${a.id}')">
         <td class="nowrap"><span class="cell-strong">${OF.time(a.scheduled_start)}</span></td>
         <td><div class="cell-strong">${OF.escape(a.customer_name)}</div>${addr}</td>
-        <td>${a.service_name ? `<span class="badge no-dot" style="background:${a.service_color}1a;color:${a.service_color}">${OF.escape(a.service_name)}</span>` : '—'}</td>
+        <td>${a.service_name ? `<span class="badge no-dot" style="background:${color}1a;color:${color}">${OF.escape(a.service_name)}</span>` : '—'}</td>
         <td class="right">${OF.statusBadge(a.status)}</td></tr>`;
     }
 
     OF.page({
       active: 'dashboard', title: 'Dashboard',
-      subtitle: new Intl.DateTimeFormat('en-US', { weekday:'long', month:'long', day:'numeric' }).format(new Date()),
+      subtitle: new Intl.DateTimeFormat('en-US', { timeZone: OF.tenant.timezone, weekday:'long', month:'long', day:'numeric' }).format(new Date()),
       render: async (root, ctx) => {
         ctx.setActions(`<a class="btn btn-secondary btn-sm" href="/book" target="_blank">${OF.icon('cal',15)} View booking page</a>
           <a class="btn btn-primary btn-sm" href="/admin/appointments?new=1">${OF.icon('plus',15)} New appointment</a>`);

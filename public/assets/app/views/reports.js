@@ -3,8 +3,10 @@
 const OF = window.OF;
 
     const today = new Date();
-    const iso = (d) => d.toISOString().slice(0, 10);
-    const state = { key: 'revenue_by_month', from: iso(new Date(today.getFullYear(), today.getMonth() - 5, 1)), to: iso(today), reports: [] };
+    const iso = (d) => new Intl.DateTimeFormat('en-CA', { timeZone: OF.tenant.timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+    const utcYmd = (d) => new Intl.DateTimeFormat('en-CA', { timeZone: 'UTC', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+    const monthStartYmd = (base, monthsBack) => { const [y,m] = iso(base).split('-').map(Number); return utcYmd(new Date(Date.UTC(y, m - 1 - monthsBack, 1))); };
+    const state = { key: 'revenue_by_month', from: monthStartYmd(today, 5), to: iso(today), reports: [] };
 
     function money(c) { return OF.money(c); }
     function fmt(v, type) { return type === 'money' ? money(v) : (type === 'number' ? Number(v).toLocaleString() : OF.escape(String(v ?? ''))); }
@@ -85,12 +87,12 @@ const OF = window.OF;
       const apply = async () => { state.from = document.getElementById('from').value; state.to = document.getElementById('to').value; await loadKpis(); await run(); await loadAccounting(); };
       document.getElementById('applyBtn').onclick = apply;
       document.querySelectorAll('[data-range]').forEach((b) => b.onclick = () => {
-        const now = new Date(); let from = new Date();
-        if (b.dataset.range === '30d') from = new Date(now - 30 * 864e5);
-        else if (b.dataset.range === '90d') from = new Date(now - 90 * 864e5);
-        else if (b.dataset.range === '12m') from = new Date(now.getFullYear(), now.getMonth() - 11, 1);
-        else if (b.dataset.range === 'YTD') from = new Date(now.getFullYear(), 0, 1);
-        document.getElementById('from').value = iso(from); document.getElementById('to').value = iso(now); apply();
+        const now = new Date(); let from = iso(now);
+        if (b.dataset.range === '30d') from = iso(new Date(now - 30 * 864e5));
+        else if (b.dataset.range === '90d') from = iso(new Date(now - 90 * 864e5));
+        else if (b.dataset.range === '12m') from = monthStartYmd(now, 11);
+        else if (b.dataset.range === 'YTD') from = iso(now).slice(0, 4) + '-01-01';
+        document.getElementById('from').value = from; document.getElementById('to').value = iso(now); apply();
       });
       document.getElementById('csvBtn').onclick = () => { window.open(`/api/admin/reports/${state.key}.csv?from=${state.from}&to=${state.to}`, '_blank'); };
       document.getElementById('printBtn').onclick = () => window.print();
