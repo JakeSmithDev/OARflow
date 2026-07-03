@@ -81,7 +81,8 @@
         }
         if (!res.ok || !data.ok) { showErr(data.error || 'Sign in failed.'); btn.disabled = false; btn.textContent = 'Sign in'; return; }
         const next = new URLSearchParams(location.search).get('next') || '/admin/';
-        location.href = next;
+        const safeNext = next.startsWith('/admin') && !next.startsWith('//') && !next.includes('\\') ? next : '/admin/';
+        location.href = safeNext;
       } catch (err) {
         showErr('Network error. Please try again.');
         btn.disabled = false; btn.textContent = 'Sign in';
