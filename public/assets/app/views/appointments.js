@@ -70,7 +70,7 @@ const OF = window.OF;
             ${a.notes?`<div><span class="muted small">Customer notes</span><p style="margin:4px 0 0">${OF.escape(a.notes)}</p></div>`:''}
           </div>
           ${isReq?`<div class="card card-pad" style="margin-bottom:16px"><h4 style="margin-bottom:10px">Confirm a time</h4>
-            ${slots.length?slots.map((s,i)=>`<label class="row" style="gap:10px;padding:8px 0;cursor:pointer"><input type="radio" name="slot" value="${i}" style="width:auto"><b>${OF.dateTime(s.start)}</b></label>`).join(''):'<p class="muted small">No proposed times.</p>'}
+            ${slots.length?slots.map((s,i)=>`<label class="row" style="gap:10px;padding:8px 0;cursor:pointer"><input type="radio" name="slot" value="${i}" style="width:auto"><b>${OF.dateTime(s.start)}</b></label>`).join(''):`<p class="muted small">No proposed times.</p><div class="grid cols-2"><div class="field"><label>Date</label><input type="date" id="confirmDate"></div><div class="field"><label>Time</label><input type="time" id="confirmTime"></div></div>`}
             <button class="btn btn-primary btn-block" id="confirmBtn" style="margin-top:10px">Confirm appointment</button></div>`:''}
           ${a.status!=='canceled'?`<div class="card card-pad" style="margin-bottom:16px"><div class="row between" style="margin-bottom:8px"><h4 style="margin:0">Assigned crew</h4><button class="btn btn-ghost btn-xs" id="assignBtn">Assign</button></div>
             <div id="crewBox" class="row wrap" style="gap:6px">${crew.length?crew.map(techChip).join(''):'<span class="muted small">No one assigned yet.</span>'}</div></div>`:''}
@@ -118,7 +118,14 @@ const OF = window.OF;
         dr.q('#filesBox').innerHTML=filesHtml(jobFiles); bindFiles(); OF.toast('Uploaded ✓','ok'); e.target.value='';
       });
       dr.q('#saveNotes')?.addEventListener('click', async()=>{ await OF.patch('/api/admin/appointments/'+id,{internalNotes:dr.q('#internalNotes').value}); OF.toast('Notes saved','ok'); });
-      dr.q('#confirmBtn')?.addEventListener('click', async()=>{ const sel=dr.el.querySelector('input[name=slot]:checked'); if(!sel) return OF.toast('Pick a time first','error'); if(await doForce(force=>OF.post(`/api/admin/appointments/${id}/confirm`,{slotIndex:+sel.value,notify:true,force}))){ OF.toast('Confirmed & customer notified','ok'); reload(); } });
+      dr.q('#confirmBtn')?.addEventListener('click', async()=>{
+        const sel=dr.el.querySelector('input[name=slot]:checked');
+        const date=dr.q('#confirmDate')?.value;
+        const time=dr.q('#confirmTime')?.value;
+        if(slots.length&&!sel) return OF.toast('Pick a time first','error');
+        if(!slots.length&&(!date||!time)) return OF.toast('Pick date & time','error');
+        if(await doForce(force=>OF.post(`/api/admin/appointments/${id}/confirm`,slots.length?{slotIndex:+sel.value,notify:true,force}:{date,time,notify:true,force}))){ OF.toast('Confirmed & customer notified','ok'); reload(); }
+      });
       dr.q('#rescheduleBtn')?.addEventListener('click', async()=>{ const date=dr.q('#rDate').value,time=dr.q('#rTime').value; if(!date||!time) return OF.toast('Pick date & time','error'); if(await doForce(force=>OF.patch('/api/admin/appointments/'+id,{date,time,notify:true,force}))){ OF.toast('Rescheduled','ok'); reload(); } });
       dr.q('#remindBtn')?.addEventListener('click', async()=>{ try{ await OF.post(`/api/admin/appointments/${id}/send-reminder`); OF.toast('Reminder sent','ok'); reload(); }catch(e){ OF.toast(e.message,'error'); } });
       dr.q('#omwBtn')?.addEventListener('click', async()=>{ const eta=prompt('Optional ETA (e.g. "in about 20 minutes"):')||''; try{ await OF.post(`/api/admin/appointments/${id}/on-my-way`,{eta}); OF.toast('On-my-way text sent','ok'); }catch(e){ OF.toast(e.message,'error'); } });

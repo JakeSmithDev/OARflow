@@ -17,8 +17,9 @@ const OF = window.OF;
           <div class="row wrap" style="gap:8px">
             ${slots.map((s,i)=>`<button class="chip slotpick" data-id="${a.id}" data-i="${i}">${OF.date(s.start)} · ${OF.time(s.start)}</button>`).join('')}
           </div>
+          ${slots.length?'':`<div class="grid cols-2" style="margin-top:10px"><div class="field" style="margin:0"><label>Date</label><input type="date" class="manual_date" data-id="${a.id}"></div><div class="field" style="margin:0"><label>Time</label><input type="time" class="manual_time" data-id="${a.id}"></div></div>`}
           <div class="row" style="margin-top:14px;gap:8px">
-            <button class="btn btn-primary btn-sm confirmBtn" data-id="${a.id}" disabled>${OF.icon('check',15)} Confirm selected</button>
+            <button class="btn btn-primary btn-sm confirmBtn" data-id="${a.id}" data-label="${slots.length?'Confirm selected':'Confirm time'}" disabled>${OF.icon('check',15)} ${slots.length?'Confirm selected':'Confirm time'}</button>
             <button class="btn btn-danger-soft btn-sm declineBtn" data-id="${a.id}">Decline</button>
             <a class="btn btn-ghost btn-sm" href="/admin/appointments?id=${a.id}">Details</a>
           </div></div>`;
@@ -31,17 +32,27 @@ const OF = window.OF;
         b.classList.add('active'); picks[id]=+b.dataset.i;
         root.querySelector(`.confirmBtn[data-id="${id}"]`).disabled=false;
       });
+      root.querySelectorAll('.manual_date,.manual_time').forEach(inp=>inp.oninput=()=>{
+        const id=inp.dataset.id;
+        const date=root.querySelector(`.manual_date[data-id="${id}"]`).value;
+        const time=root.querySelector(`.manual_time[data-id="${id}"]`).value;
+        root.querySelector(`.confirmBtn[data-id="${id}"]`).disabled=!(date&&time);
+      });
       root.querySelectorAll('.confirmBtn').forEach(b=>b.onclick=async()=>{
-        const id=b.dataset.id; if(picks[id]==null) return;
+        const id=b.dataset.id;
+        const date=root.querySelector(`.manual_date[data-id="${id}"]`)?.value;
+        const time=root.querySelector(`.manual_time[data-id="${id}"]`)?.value;
+        const hasManual=date&&time;
+        if(picks[id]==null && !hasManual) return;
         b.disabled=true; b.textContent='Confirming…';
-        const send=(force)=>OF.post(`/api/admin/appointments/${id}/confirm`,{slotIndex:picks[id],notify:true,force});
+        const send=(force)=>OF.post(`/api/admin/appointments/${id}/confirm`,picks[id]!=null?{slotIndex:picks[id],notify:true,force}:{date,time,notify:true,force});
         try { await send(false); OF.toast('Confirmed & customer notified','ok'); load(root); }
         catch(e){
           const warn = e.code==='SCHEDULE_WARN' || e.code==='SLOT_FULL';
           if(warn && await OF.confirm({title:'Heads up',body:`<p class="muted">${OF.escape(e.message)}</p>`,confirmText:'Confirm anyway'})){
             try{ await send(true); OF.toast('Confirmed & customer notified','ok'); load(root); return; }catch(e2){ OF.toast(e2.message,'error'); }
           } else if(!warn){ OF.toast(e.message,'error'); }
-          b.disabled=false; b.textContent='Confirm selected';
+          b.disabled=false; b.textContent=b.dataset.label||'Confirm selected';
         }
       });
       root.querySelectorAll('.declineBtn').forEach(b=>b.onclick=async()=>{
