@@ -99,6 +99,14 @@ async function main() {
     const { data } = await call(`/api/public/default/availability?serviceId=${svcInstant.id}&date=${date}`, { auth: false });
     assert.ok(data.ok); openSlot = data.slots.find((s) => s.available); assert.ok(openSlot, 'has an open slot');
   });
+  await check('month availability returns detailed service days', async () => {
+    const [year, month] = date.split('-').map(Number);
+    const { data } = await call(`/api/public/default/month?year=${year}&month=${month}&serviceId=${svcInstant.id}`, { auth: false });
+    assert.ok(data.ok);
+    assert.equal(typeof data.days[date].open, 'boolean');
+    assert.equal(typeof data.days[date].available, 'boolean');
+    assert.equal(typeof data.days[date].full, 'boolean');
+  });
   await check('instant booking confirms immediately', async () => {
     const { data } = await call('/api/public/default/book', { auth: false, method: 'POST', body: { serviceId: svcInstant.id, slot: { start: openSlot.start, end: openSlot.end }, customer: { name: 'Smoke Tester', email: 'smoke@example.com', phone: '4105550000', address: '1 Test St' } } });
     assert.equal(data.status, 'scheduled'); assert.ok(data.token);

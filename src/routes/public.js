@@ -8,7 +8,7 @@ import { getTenantBySlug, getDefaultTenant } from '../lib/tenants.js';
 import { computeDayAvailability, dateWithinBookingWindow, monthOpenDays } from '../lib/availability.js';
 import {
   getService, listActiveServices, effectiveBookingMode, findOrCreateCustomer,
-  fetchDayConflicts, createAppointment, bookInstant, slotCapacity,
+  fetchDayConflicts, fetchRangeConflicts, dayConflictsFromRange, createAppointment, bookInstant, slotCapacity,
 } from '../lib/appointments.js';
 import { queryOne, query } from '../lib/db.js';
 import { sendTemplated, detailsTable, htmlEscape } from '../lib/email_templates.js';
@@ -134,10 +134,11 @@ router.get('/:slug/month', limitCalendarLookup, asyncHandler(async (req, res) =>
   if (!tenant) return notFound(res);
   const year = Number(req.query.year); const month = Number(req.query.month);
   if (!year || !month) return badRequest(res, 'year and month required.');
-  const { rows } = await query('SELECT service_date, is_closed, hours_json FROM schedule_overrides WHERE tenant_id=$1', [tenant.id]);
-  const overrides = {};
-  for (const r of rows) overrides[ymdInTimeZone(new Date(r.service_date), 'UTC')] = r;
-  const days = monthOpenDays(tenant, year, month, overrides);
+  const monthKey = String(month).padStart(2, '0');
+  const firstYmd = `${year}-${monthKey}-01`;
+  const nextMonthYmd = month === 12 ? `${year + 1}-01-01` : `${year}-${String(month + 1).padStart(2, '0')}-01`;
+  const rangeConflicts = await fetchRangeConflicts(tenant, firstYmd, nextMonthYmd);
+  const days = monthOpenDays(tenant, year, month, rangeConflicts.overridesByDate);
   const serviceId = Number(req.query.serviceId);
   if (serviceId) {
     const service = await getService(tenant.id, serviceId);
@@ -148,7 +149,7 @@ router.get('/:slug/month', limitCalendarLookup, asyncHandler(async (req, res) =>
         detailed[ymd] = { open: false, available: false, full: false };
         continue;
       }
-      const conf = await fetchDayConflicts(tenant, ymd);
+      const conf = dayConflictsFromRange(tenant, ymd, rangeConflicts);
       const slots = computeDayAvailability({ tenant, service, dateYmd: ymd, ...conf });
       const available = slots.some((s) => s.available);
       detailed[ymd] = { open: true, available, full: !available };

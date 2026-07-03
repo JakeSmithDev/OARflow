@@ -1,7 +1,7 @@
 // Shared helpers for services, customers, and appointment creation/booking.
 import { query, queryOne, withTx, backendKind } from './db.js';
 import { randomToken } from './crypto.js';
-import { zonedWallTimeToUtc } from './dates.js';
+import { ymdInTimeZone, zonedWallTimeToUtc } from './dates.js';
 
 export async function getService(tenantId, id) {
   return queryOne('SELECT * FROM service_types WHERE tenant_id=$1 AND id=$2', [tenantId, id]);
@@ -74,6 +74,55 @@ export async function fetchDayConflicts(tenant, dateYmd) {
     [tenant.id, dateYmd],
   );
   return { appointments: appts.rows, blackouts: blackouts.rows, override };
+}
+
+function dateRowYmd(value) {
+  if (typeof value === 'string') return value.slice(0, 10);
+  return ymdInTimeZone(new Date(value), 'UTC');
+}
+
+function rangesOverlap(startA, endA, startB, endB) {
+  return startA < endB && startB < endA;
+}
+
+/** Range-scoped conflict data for month calendar availability. */
+export async function fetchRangeConflicts(tenant, startYmd, endYmdExclusive) {
+  const tz = tenant.timezone;
+  const rangeStart = zonedWallTimeToUtc(startYmd, '00:00', tz).toISOString();
+  const rangeEnd = zonedWallTimeToUtc(endYmdExclusive, '00:00', tz).toISOString();
+  const [appts, blackouts, overrides] = await Promise.all([
+    query(
+      `SELECT scheduled_start, scheduled_end FROM appointments
+        WHERE tenant_id=$1 AND status IN ('scheduled','completed')
+          AND scheduled_start < $3 AND scheduled_end > $2`,
+      [tenant.id, rangeStart, rangeEnd],
+    ),
+    query(
+      `SELECT starts_at, ends_at FROM blackouts
+        WHERE tenant_id=$1 AND starts_at < $3 AND ends_at > $2`,
+      [tenant.id, rangeStart, rangeEnd],
+    ),
+    query(
+      `SELECT * FROM schedule_overrides
+        WHERE tenant_id=$1 AND service_date >= $2 AND service_date < $3`,
+      [tenant.id, startYmd, endYmdExclusive],
+    ),
+  ]);
+  const overridesByDate = {};
+  for (const r of overrides.rows) overridesByDate[dateRowYmd(r.service_date)] = r;
+  return { appointments: appts.rows, blackouts: blackouts.rows, overridesByDate };
+}
+
+export function dayConflictsFromRange(tenant, dateYmd, range) {
+  const dayStart = zonedWallTimeToUtc(dateYmd, '00:00', tenant.timezone);
+  const dayEnd = new Date(dayStart.getTime() + 86_400_000);
+  const startMs = dayStart.getTime();
+  const endMs = dayEnd.getTime();
+  return {
+    appointments: (range.appointments || []).filter((a) => rangesOverlap(new Date(a.scheduled_start).getTime(), new Date(a.scheduled_end).getTime(), startMs, endMs)),
+    blackouts: (range.blackouts || []).filter((b) => rangesOverlap(new Date(b.starts_at).getTime(), new Date(b.ends_at).getTime(), startMs, endMs)),
+    override: range.overridesByDate?.[dateYmd] || null,
+  };
 }
 
 /** Per-slot capacity for a date (override wins, else tenant default). */
@@ -151,4 +200,7 @@ export async function createAppointment(tenantId, data) {
   return row;
 }
 
-export default { getService, listActiveServices, effectiveBookingMode, findOrCreateCustomer, fetchDayConflicts, createAppointment };
+export default {
+  getService, listActiveServices, effectiveBookingMode, findOrCreateCustomer,
+  fetchDayConflicts, fetchRangeConflicts, dayConflictsFromRange, createAppointment,
+};
