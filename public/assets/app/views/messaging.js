@@ -28,13 +28,15 @@ async function openThread(host, id) {
   msgs.innerHTML = d.messages.map(bubble).join('') || '<p class="muted small center">No messages yet.</p>';
   msgs.scrollTop = msgs.scrollHeight;
   const comp = pane.querySelector('#composer');
+  const sendBtn = pane.querySelector('#sendMsg');
   const send = async () => {
+    if (comp.disabled) return;
     const body = comp.value.trim(); if (!body) return;
-    comp.value = ''; comp.disabled = true;
+    comp.disabled = true; sendBtn.disabled = true;
     try { await OF.post('/api/admin/messaging/send', { conversationId: id, body }); await openThread(host, id); }
-    catch (e) { OF.toast(e.message, 'error'); comp.disabled = false; }
+    catch (e) { OF.toast(e.message, 'error'); comp.disabled = false; sendBtn.disabled = false; comp.focus(); }
   };
-  pane.querySelector('#sendMsg').onclick = send;
+  sendBtn.onclick = send;
   comp.addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
   comp.focus();
 }
