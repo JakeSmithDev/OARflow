@@ -27,6 +27,8 @@
     .thumbs { display:grid; grid-template-columns:repeat(auto-fill,minmax(78px,1fr)); gap:8px; margin-top:10px; }
     .thumbs img { width:100%; aspect-ratio:1; object-fit:cover; border-radius:10px; border:1px solid var(--line); }
     .back { background:none;border:none;color:#fff;font-weight:700;cursor:pointer;padding:0;margin-bottom:8px;opacity:.9; }
+    .inline-error { display:none; margin-top:10px; padding:10px 12px; border-radius:10px; background:var(--danger-tint); color:var(--danger); font-size:13px; }
+    .inline-error .btn { margin-left:8px; }
   </style>
 </head>
 <body>
@@ -40,13 +42,44 @@
     let DATA=null;
     const api=(p,opts={})=>fetch('/api/field'+p,{...opts,headers:{'Content-Type':'application/json',...(opts.headers||{})}}).then(async r=>{ const d=await r.json().catch(()=>({})); d.httpStatus=r.status; if(!r.ok && d.ok!==false)d.ok=false; return d; });
     const openLinkMsg=()=>'<div class="card card-pad">Open the link your office sent you to see your jobs.</div>';
+    const msg=(err,fallback)=>err?.message||err?.error||fallback;
+    function showRetry(message,retry){
+      document.getElementById('view').innerHTML=`<div class="card card-pad"><p style="margin:0 0 12px">${esc(message)}</p><button class="btn btn-primary btn-sm" id="retryView">Retry</button></div>`;
+      document.getElementById('retryView').onclick=retry;
+    }
+    function showInline(id,message,retry){
+      const el=document.getElementById(id); if(!el)return;
+      el.style.display='block';
+      el.innerHTML=`${esc(message)}${retry?` <button class="btn btn-secondary btn-xs" id="${id}Retry">Retry</button>`:''}`;
+      if(retry) document.getElementById(`${id}Retry`).onclick=retry;
+    }
+    function clearInline(id){ const el=document.getElementById(id); if(el){ el.style.display='none'; el.textContent=''; } }
+    async function requireOk(path,opts,fallback){
+      let r; try{ r=await api(path,opts); }catch{ throw new Error(fallback); }
+      if(!r.ok) throw new Error(r.error||fallback);
+      return r;
+    }
+    function readDataUrl(file){ return new Promise((resolve,reject)=>{ const fr=new FileReader(); fr.onload=()=>resolve(fr.result); fr.onerror=()=>reject(new Error('Could not read the photo.')); fr.readAsDataURL(file); }); }
+    function loadImage(src){ return new Promise((resolve,reject)=>{ const img=new Image(); img.onload=()=>resolve(img); img.onerror=()=>reject(new Error('Could not resize this photo.')); img.src=src; }); }
+    async function downscalePhoto(file){
+      const original=await readDataUrl(file);
+      if(!/^image\/(jpeg|jpg|png|webp)$/i.test(file.type||'')) return { dataBase64:original, contentType:file.type||'image/jpeg', filename:file.name||'photo' };
+      const img=await loadImage(original);
+      const longest=Math.max(img.width,img.height)||1;
+      const scale=Math.min(1,2000/longest);
+      const canvas=document.createElement('canvas');
+      canvas.width=Math.max(1,Math.round(img.width*scale)); canvas.height=Math.max(1,Math.round(img.height*scale));
+      canvas.getContext('2d').drawImage(img,0,0,canvas.width,canvas.height);
+      const base=(file.name||'photo').replace(/\.[^.]+$/,'')||'photo';
+      return { dataBase64:canvas.toDataURL('image/jpeg',0.8), contentType:'image/jpeg', filename:`${base}.jpg` };
+    }
 
     async function loadDay(){
       document.getElementById('back').style.display='none';
       if(!token){ document.getElementById('view').innerHTML=openLinkMsg(); return; }
-      let d; try{ d=await api(`/me?token=${encodeURIComponent(token)}`); }catch{ d={ok:false}; }
+      let d; try{ d=await api(`/me?token=${encodeURIComponent(token)}`); }catch{ showRetry('Could not load jobs. Check your connection and try again.', loadDay); return; }
       if(d.httpStatus===401){ try{ localStorage.removeItem('oarflow_field_token'); }catch{} document.getElementById('view').innerHTML=openLinkMsg(); return; }
-      if(!d.ok){ document.getElementById('view').innerHTML=`<div class="card card-pad">${esc(d.error||'This link is no longer valid.')}</div>`; return; }
+      if(!d.ok){ showRetry(d.error||'Could not load jobs.', loadDay); return; }
       DATA=d;
       const b=d.tenant.branding||{}; if(b.primaryColor) document.documentElement.style.setProperty('--brand',b.primaryColor);
       document.getElementById('title').textContent=`Hi, ${d.technician.name.split(' ')[0]}`;
@@ -62,8 +95,8 @@
     async function openJob(id){
       document.getElementById('view').innerHTML='<div class="loading-page"><span class="spinner"></span></div>';
       document.getElementById('back').style.display='inline';
-      const d=await api(`/jobs/${id}?token=${encodeURIComponent(token)}`);
-      if(!d.ok){ document.getElementById('view').innerHTML=`<div class="card card-pad">${esc(d.error||'Not found')}</div>`; return; }
+      let d; try{ d=await requireOk(`/jobs/${id}?token=${encodeURIComponent(token)}`,{},'Could not load this job.'); }
+      catch(err){ showRetry(msg(err,'Could not load this job.'),()=>openJob(id)); return; }
       const j=d.job;
       const maps=j.service_address?`https://maps.google.com/?q=${encodeURIComponent(j.service_address)}`:null;
       const photos=(d.files||[]).filter(f=>f.contentType&&f.contentType.startsWith('image/')&&f.kind!=='signature');
@@ -82,9 +115,11 @@
         <button class="big-btn b-soft" id="omw">🚚 Text customer "On my way"</button>
         <button class="big-btn b-ok" id="done">✓ Mark job complete</button>
         <button class="big-btn b-warn" id="noshow">Customer wasn't home</button>
+        <div class="inline-error" id="jobErr"></div>
         <div class="card card-pad" style="margin-top:14px">
           <div class="row between"><strong>Photos</strong><label class="btn btn-secondary btn-sm" style="cursor:pointer">Add<input type="file" id="ph" accept="image/*" capture="environment" multiple hidden></label></div>
           <div class="thumbs" id="thumbs">${photos.map(p=>`<a href="${p.url}" target="_blank" rel="noopener"><img src="${p.url}"></a>`).join('')||'<span class="muted small">No photos yet.</span>'}</div>
+          <div class="inline-error" id="photoErr"></div>
         </div>
         ${(d.devices||[]).length?`<div class="card card-pad" style="margin-top:14px"><strong>Devices &amp; stations</strong>
           <div style="margin-top:8px">${d.devices.map(dv=>`<a href="/device?d=${dv.qr_token}" class="row between" style="padding:9px 0;border-bottom:1px solid var(--line-2);text-decoration:none;color:inherit"><span>${esc(dv.label)}<div class="tiny muted">${esc(dv.device_type)}${dv.last_status?' · last: '+esc(dv.last_status):''}</div></span><span class="muted">›</span></a>`).join('')}</div>
@@ -95,19 +130,42 @@
           ${(d.products||[]).length?`<div style="margin-top:10px"><select id="matProd" style="width:100%">${d.products.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select>
             <input id="matPest" placeholder="Target pest (optional)" style="margin-top:8px">
             <button class="btn btn-secondary btn-sm" id="matAdd" style="margin-top:8px">Log material</button></div>`:'<p class="muted small" style="margin-top:8px">No products in the catalog yet.</p>'}
+          <div class="inline-error" id="matErr"></div>
         </div>
         <div class="card card-pad" style="margin-top:14px">
           <strong>Customer signature</strong>
           <canvas class="sig" id="sig" style="margin-top:8px"></canvas>
           <div class="field" style="margin-top:8px"><input id="signName" placeholder="Signed by (name)"></div>
           <div class="seg"><a id="clearSig" style="cursor:pointer">Clear</a><button class="btn btn-primary btn-sm" id="saveSig" style="flex:1">Save signature</button></div>
+          <div class="inline-error" id="sigErr"></div>
         </div>`;
-      document.getElementById('omw').onclick=async(e)=>{ e.target.disabled=true; const eta=prompt('ETA to share? (optional)')||''; const r=await api(`/jobs/${id}/on-my-way`,{method:'POST',body:JSON.stringify({token,eta})}); e.target.textContent=r.texted?'✓ Sent':'Sent (SMS off)'; setTimeout(()=>{e.target.disabled=false;e.target.textContent='🚚 Text customer "On my way"';},2500); };
-      document.getElementById('done').onclick=async(e)=>{ if(!confirm('Mark this job complete?'))return; e.target.disabled=true; await api(`/jobs/${id}/status`,{method:'POST',body:JSON.stringify({token,status:'completed'})}); loadDay(); };
-      document.getElementById('noshow').onclick=async(e)=>{ if(!confirm('Mark as customer not home?'))return; await api(`/jobs/${id}/status`,{method:'POST',body:JSON.stringify({token,status:'no_show'})}); loadDay(); };
-      document.getElementById('ph').onchange=async(e)=>{ for(const file of [...e.target.files]){ const dataBase64=await new Promise(r=>{const fr=new FileReader();fr.onload=()=>r(fr.result);fr.readAsDataURL(file);}); const res=await api(`/jobs/${id}/photos`,{method:'POST',body:JSON.stringify({token,filename:file.name,contentType:file.type,dataBase64})}); if(res.ok){ const t=document.getElementById('thumbs'); if(t.querySelector('.muted'))t.innerHTML=''; t.insertAdjacentHTML('afterbegin',`<a href="${res.file.url}" target="_blank" rel="noopener"><img src="${res.file.url}"></a>`); } } e.target.value=''; };
+      document.getElementById('omw').onclick=async(e)=>{ const btn=e.target; const label='🚚 Text customer "On my way"'; clearInline('jobErr'); btn.disabled=true; const eta=prompt('ETA to share? (optional)')||''; try{ const r=await requireOk(`/jobs/${id}/on-my-way`,{method:'POST',body:JSON.stringify({token,eta})},'Could not send the on-my-way text.'); btn.textContent=r.texted?'✓ Sent':'Sent (SMS off)'; setTimeout(()=>{btn.disabled=false;btn.textContent=label;},2500); }catch(err){ btn.disabled=false; btn.textContent=label; showInline('jobErr',msg(err,'Could not send the on-my-way text.'),()=>btn.click()); } };
+      async function markStatus(btn,status,confirmText){
+        if(!confirm(confirmText))return;
+        clearInline('jobErr'); const label=btn.textContent; btn.disabled=true;
+        try{ await requireOk(`/jobs/${id}/status`,{method:'POST',body:JSON.stringify({token,status})},'Could not update the job status.'); loadDay(); }
+        catch(err){ btn.disabled=false; btn.textContent=label; showInline('jobErr',msg(err,'Could not update the job status.'),()=>markStatus(btn,status,confirmText)); }
+      }
+      document.getElementById('done').onclick=(e)=>markStatus(e.target,'completed','Mark this job complete?');
+      document.getElementById('noshow').onclick=(e)=>markStatus(e.target,'no_show','Mark as customer not home?');
+      async function uploadPhotos(files){
+        clearInline('photoErr');
+        const input=document.getElementById('ph'); const label=input.closest('label'); const failed=[];
+        label.style.pointerEvents='none'; label.style.opacity='.55';
+        for(const file of files){
+          try{
+            const photo=await downscalePhoto(file);
+            const res=await requireOk(`/jobs/${id}/photos`,{method:'POST',body:JSON.stringify({token,filename:photo.filename,contentType:photo.contentType,dataBase64:photo.dataBase64})},'Could not upload this photo.');
+            const t=document.getElementById('thumbs'); if(t.querySelector('.muted'))t.innerHTML='';
+            t.insertAdjacentHTML('afterbegin',`<a href="${esc(res.file.url)}" target="_blank" rel="noopener"><img src="${esc(res.file.url)}"></a>`);
+          }catch(err){ failed.push(file); showInline('photoErr',`${file.name||'Photo'}: ${msg(err,'Could not upload this photo.')}`); }
+        }
+        label.style.pointerEvents=''; label.style.opacity='';
+        if(failed.length) showInline('photoErr',`${failed.length} photo${failed.length===1?'':'s'} could not be uploaded.`,()=>uploadPhotos(failed));
+      }
+      document.getElementById('ph').onchange=async(e)=>{ const files=[...e.target.files]; e.target.value=''; if(files.length) await uploadPhotos(files); };
       const matAdd=document.getElementById('matAdd');
-      if(matAdd) matAdd.onclick=async()=>{ const productId=+document.getElementById('matProd').value; const r=await api(`/jobs/${id}/applications`,{method:'POST',body:JSON.stringify({token,productId,targetPest:document.getElementById('matPest').value})}); if(r.ok){ const ml=document.getElementById('matList'); if(ml.querySelector('.muted')&&ml.children.length===1)ml.innerHTML=''; ml.insertAdjacentHTML('beforeend',`<div class="muted small" style="padding:4px 0">${esc(r.application.product_name)}${r.application.target_pest?' · '+esc(r.application.target_pest):''}</div>`); document.getElementById('matPest').value=''; } };
+      if(matAdd) matAdd.onclick=async()=>{ const label=matAdd.textContent; clearInline('matErr'); matAdd.disabled=true; const productId=+document.getElementById('matProd').value; try{ const r=await requireOk(`/jobs/${id}/applications`,{method:'POST',body:JSON.stringify({token,productId,targetPest:document.getElementById('matPest').value})},'Could not log that material.'); const ml=document.getElementById('matList'); if(ml.querySelector('.muted')&&ml.children.length===1)ml.innerHTML=''; ml.insertAdjacentHTML('beforeend',`<div class="muted small" style="padding:4px 0">${esc(r.application.product_name)}${r.application.target_pest?' · '+esc(r.application.target_pest):''}</div>`); document.getElementById('matPest').value=''; }catch(err){ showInline('matErr',msg(err,'Could not log that material.'),()=>matAdd.click()); }finally{ matAdd.disabled=false; matAdd.textContent=label; } };
       setupSig(id);
     }
 
@@ -123,7 +181,15 @@
       cv.addEventListener('mousedown',start); cv.addEventListener('mousemove',move); window.addEventListener('mouseup',end);
       cv.addEventListener('touchstart',start,{passive:false}); cv.addEventListener('touchmove',move,{passive:false}); cv.addEventListener('touchend',end);
       document.getElementById('clearSig').onclick=()=>{ ctx.clearRect(0,0,cv.width,cv.height); dirty=false; };
-      document.getElementById('saveSig').onclick=async()=>{ if(!dirty)return alert('Please capture a signature first.'); const dataBase64=cv.toDataURL('image/png'); const r=await api(`/jobs/${id}/signature`,{method:'POST',body:JSON.stringify({token,name:document.getElementById('signName').value,dataBase64})}); if(r.ok) alert('Signature saved ✓'); };
+      document.getElementById('saveSig').onclick=async(e)=>{
+        if(!dirty)return alert('Please capture a signature first.');
+        const btn=e.target; const label=btn.textContent; clearInline('sigErr'); btn.disabled=true; btn.textContent='Saving…';
+        try{
+          const dataBase64=cv.toDataURL('image/png');
+          await requireOk(`/jobs/${id}/signature`,{method:'POST',body:JSON.stringify({token,name:document.getElementById('signName').value,dataBase64})},'Could not save the signature.');
+          btn.textContent='Saved ✓'; setTimeout(()=>{btn.disabled=false;btn.textContent=label;},1800);
+        }catch(err){ btn.disabled=false; btn.textContent=label; showInline('sigErr',msg(err,'Could not save the signature.'),()=>btn.click()); }
+      };
     }
 
     document.getElementById('back').onclick=loadDay;
