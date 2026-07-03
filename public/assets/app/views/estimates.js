@@ -137,7 +137,17 @@ const OF = window.OF;
           let est;
           if (editId) { est=(await OF.patch('/api/admin/estimates/'+editId,payload)).estimate; }
           else { est=(await OF.post('/api/admin/estimates',payload)).estimate; }
-          if (send) { await OF.post(`/api/admin/estimates/${est.id}/send`); OF.toast('Estimate saved & sent','ok'); }
+          if (send) {
+            try { await OF.post(`/api/admin/estimates/${est.id}/send`); OF.toast('Estimate saved & sent','ok'); }
+            catch (sendErr) {
+              if (!editId) {
+                m.close(); await refresh(); openDrawer(est.id);
+                OF.toast(`Saved as draft — send failed: ${sendErr.message}`,'error');
+                return;
+              }
+              throw sendErr;
+            }
+          }
           else OF.toast('Estimate saved','ok');
           m.close(); refresh();
         } catch(err){ OF.toast(err.message,'error'); }

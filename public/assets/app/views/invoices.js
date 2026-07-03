@@ -153,7 +153,17 @@ const OF = window.OF;
           let inv;
           if (editId) { inv=(await OF.patch('/api/admin/invoices/'+editId,payload)).invoice; }
           else { inv=(await OF.post('/api/admin/invoices',payload)).invoice; }
-          if (send) { await OF.post(`/api/admin/invoices/${inv.id}/send`); OF.toast('Invoice saved & sent','ok'); }
+          if (send) {
+            try { await OF.post(`/api/admin/invoices/${inv.id}/send`); OF.toast('Invoice saved & sent','ok'); }
+            catch (sendErr) {
+              if (!editId) {
+                m.close(); await refresh(); openDrawer(inv.id);
+                OF.toast(`Saved as draft — send failed: ${sendErr.message}`,'error');
+                return;
+              }
+              throw sendErr;
+            }
+          }
           else OF.toast('Invoice saved','ok');
           m.close(); refresh();
         } catch(e){ OF.toast(e.message,'error'); }

@@ -87,7 +87,18 @@ const OF = window.OF;
       async function go(send) {
         if (!cust.id) return OF.toast('Select a customer', 'error');
         const templateId = +m.q('#s_tpl').value; if (!templateId) return OF.toast('Create a template first', 'error');
-        try { const r = await OF.post('/api/admin/documents', { customerId: cust.id, templateId, title: m.q('#s_title').value.trim() || undefined }); if (send) await OF.post(`/api/admin/documents/${r.document.id}/send`); OF.toast(send ? 'Document sent' : 'Draft created', 'ok'); m.close(); state.tab = 'sent'; renderTabs(); refreshSent(); } catch (e) { OF.toast(e.message, 'error'); }
+        try {
+          const r = await OF.post('/api/admin/documents', { customerId: cust.id, templateId, title: m.q('#s_title').value.trim() || undefined });
+          if (send) {
+            try { await OF.post(`/api/admin/documents/${r.document.id}/send`); OF.toast('Document sent', 'ok'); }
+            catch (sendErr) {
+              m.close(); state.tab = 'sent'; renderTabs(); await refreshSent(); openDoc(r.document.id);
+              OF.toast(`Saved as draft — send failed: ${sendErr.message}`, 'error');
+              return;
+            }
+          } else OF.toast('Draft created', 'ok');
+          m.close(); state.tab = 'sent'; renderTabs(); refreshSent();
+        } catch (e) { OF.toast(e.message, 'error'); }
       }
       m.q('#s_create').onclick = () => go(false);
       m.q('#s_send').onclick = () => go(true);
