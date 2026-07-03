@@ -5,9 +5,10 @@
 // We never store a PAN — only Stripe's tokenized payment_method id + last4/brand,
 // plus an immutable authorization snapshot for card-on-file compliance.
 import crypto from 'node:crypto';
-import { query, queryOne } from './db.js';
+import { query, queryOne, withTx } from './db.js';
 import { getStripe, isConfigured, publishableKey } from './stripe.js';
 import { recordPayment, balanceCents } from './invoices.js';
+import { logAudit } from './audit.js';
 import { config } from '../config.js';
 
 export function cardsConfigured(tenant) { return isConfigured(tenant); }
@@ -119,6 +120,39 @@ export async function removePaymentMethod(tenant, customerId, pmId) {
   return { ok: true };
 }
 
+async function lockedChargeAmount(tenant, invoiceId, requestedAmountCents) {
+  return withTx(async (cx) => {
+    const invRow = await cx.query('SELECT * FROM invoices WHERE tenant_id=$1 AND id=$2 FOR UPDATE', [tenant.id, invoiceId]);
+    if (!invRow.rows.length) return { ok: false, notFound: true, error: 'Invoice not found.' };
+    const fresh = invRow.rows[0];
+    if (fresh.status === 'void') return { ok: false, invoice: fresh, error: 'This invoice is void.' };
+    const bal = balanceCents(fresh);
+    if (bal <= 0) return { ok: false, invoice: fresh, error: 'This invoice has no balance due.' };
+    const requested = requestedAmountCents == null ? bal : Math.round(Number(requestedAmountCents));
+    if (!Number.isFinite(requested) || requested <= 0) return { ok: false, invoice: fresh, error: 'Enter a positive charge amount.' };
+    return { ok: true, invoice: fresh, amountCents: Math.min(requested, bal), balanceCents: bal };
+  });
+}
+
+async function refundCapturedPaymentIntent(stripe, tenant, pi, { invoiceId, createdBy, reason }) {
+  try {
+    const refund = await stripe.refunds.create({ payment_intent: pi.id });
+    await logAudit({
+      tenantId: tenant.id, adminUsername: createdBy, action: 'card_on_file_refund_after_recording_failure',
+      entityType: 'invoice', entityId: invoiceId,
+      details: { paymentIntent: pi.id, refundId: refund.id, amount: pi.amount_received ?? pi.amount, reason },
+    });
+    return { ok: true, refund };
+  } catch (err) {
+    await logAudit({
+      tenantId: tenant.id, adminUsername: createdBy, action: 'card_on_file_refund_failed_after_recording_failure',
+      entityType: 'invoice', entityId: invoiceId,
+      details: { paymentIntent: pi.id, amount: pi.amount_received ?? pi.amount, reason, error: err?.raw?.message || err.message },
+    });
+    return { ok: false, error: err?.raw?.message || err.message || 'refund_failed' };
+  }
+}
+
 /**
  * Charge an invoice to a saved card. Requires a stored authorization. Records
  * the payment in the same ledger as every other payment (idempotent on the
@@ -128,10 +162,10 @@ export async function chargeInvoiceOnFile(tenant, invoice, { paymentMethodId, am
   const st = cardsStatus(tenant);
   if (!st.available) return { ok: false, notConfigured: true };
   if (invoice.status === 'void') return { ok: false, error: 'This invoice is void.' };
-  const bal = balanceCents(invoice);
-  if (bal <= 0) return { ok: false, error: 'This invoice has no balance due.' };
-  const amount = Math.min(Math.round(amountCents || bal), bal);
-  const pm = await queryOne("SELECT * FROM payment_methods WHERE tenant_id=$1 AND customer_id=$2 AND id=$3 AND status='active'", [tenant.id, invoice.customer_id, paymentMethodId]);
+  const locked = await lockedChargeAmount(tenant, invoice.id, amountCents);
+  if (!locked.ok) return { ok: false, notFound: locked.notFound, error: locked.error };
+  const amount = locked.amountCents;
+  const pm = await queryOne("SELECT * FROM payment_methods WHERE tenant_id=$1 AND customer_id=$2 AND id=$3 AND status='active'", [tenant.id, locked.invoice.customer_id, paymentMethodId]);
   if (!pm) return { ok: false, error: 'No saved card found for this customer.' };
   if (!pm.consent_at) return { ok: false, error: 'This card has no stored authorization.' };
 
@@ -155,7 +189,32 @@ export async function chargeInvoiceOnFile(tenant, invoice, { paymentMethodId, am
   }
   if (pi.status !== 'succeeded') return { ok: false, error: `Charge ${pi.status}. The customer may need to authorize this card.`, requiresAction: pi.status === 'requires_action' };
   // externalRef = PaymentIntent id so the webhook can't double-count.
-  const r = await recordPayment(tenant, invoice.id, { amountCents: pi.amount_received ?? amount, method: 'card_on_file', stripeRef: pi.id, externalRef: pi.id, note: `Card on file ••${pm.last4 || ''}`, createdBy });
+  let r;
+  try {
+    r = await recordPayment(tenant, invoice.id, { amountCents: pi.amount_received ?? amount, method: 'card_on_file', stripeRef: pi.id, externalRef: pi.id, note: `Card on file ••${pm.last4 || ''}`, createdBy });
+  } catch (err) {
+    const refund = await refundCapturedPaymentIntent(stripe, tenant, pi, { invoiceId: invoice.id, createdBy, reason: err.message || 'record_payment_failed' });
+    return {
+      ok: false,
+      paymentIntentId: pi.id,
+      refunded: refund.ok,
+      error: refund.ok
+        ? 'The charge could not be recorded on the invoice. The Stripe charge was refunded.'
+        : `The charge could not be recorded on the invoice. Automatic refund failed: ${refund.error}`,
+    };
+  }
+  if (r.rejected || r.notFound) {
+    const refund = await refundCapturedPaymentIntent(stripe, tenant, pi, { invoiceId: invoice.id, createdBy, reason: r.rejected || 'not_found' });
+    const message = r.rejected === 'overpay'
+      ? 'The invoice was paid before this charge could be recorded.'
+      : 'The charge could not be recorded on the invoice.';
+    return {
+      ok: false,
+      paymentIntentId: pi.id,
+      refunded: refund.ok,
+      error: refund.ok ? `${message} The Stripe charge was refunded.` : `${message} Automatic refund failed: ${refund.error}`,
+    };
+  }
   return { ok: true, mock: false, invoice: r.invoice, amountCents: pi.amount_received ?? amount };
 }
 
