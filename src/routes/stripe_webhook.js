@@ -11,7 +11,7 @@ import { getTenantById } from '../lib/tenants.js';
 import { constructEvent, stripeSecret } from '../lib/stripe.js';
 import { recordPayment } from '../lib/invoices.js';
 import { attachFromSetupIntent } from '../lib/payments.js';
-import { queryOne } from '../lib/db.js';
+import { query, queryOne } from '../lib/db.js';
 import { activateSubscriptionFromCheckout, handleStripeInvoicePaid, syncStripeSubscriptionStatus } from '../lib/recurring.js';
 import { emitEvent } from '../lib/events.js';
 
@@ -22,6 +22,20 @@ async function emitInvoicePaidIfInserted(tenantId, invoiceId, result) {
   if (!result?.duplicate && result?.invoice?.status === 'paid') {
     await emitEvent('invoice.paid', { tenantId, invoiceId, customerId: result.invoice.customer_id });
   }
+}
+
+function tenantWebhookExpected(tenant) {
+  const stripe = tenant?.settings?.integrations?.stripe || {};
+  return Boolean(stripe.secretKey || stripe.webhookSecret);
+}
+
+async function recordVerificationFailure(tenantId, message) {
+  // eslint-disable-next-line no-console
+  console.error(`stripe webhook verification failed for tenant ${tenantId || 'unknown'}: ${message}`);
+  await query(
+    'INSERT INTO job_runs (tenant_id, workflow, event_name, status, error) VALUES ($1,$2,$3,$4,$5)',
+    [tenantId || null, 'stripe_webhook', 'stripe.webhook', 'error', message],
+  ).catch(() => {});
 }
 
 async function resolveTenantId(obj) {
@@ -45,13 +59,24 @@ router.post('/', async (req, res) => {
   const tenant = tenantId ? await getTenantById(tenantId).catch(() => null) : null;
 
   let event = null;
+  let tenantVerifyError = null;
   if (tenant && stripeSecret(tenant)) {
-    try { event = constructEvent(tenant, req.body, sig); } catch { event = null; }
+    try { event = constructEvent(tenant, req.body, sig); } catch (err) { tenantVerifyError = err; }
   }
   if (!event) {
-    if (!config.stripe.secretKey || !config.stripe.webhookSecret) return res.json({ received: true, ignored: true });
+    if (!config.stripe.secretKey || !config.stripe.webhookSecret) {
+      if (tenantVerifyError || (tenant && tenantWebhookExpected(tenant))) {
+        const message = tenantVerifyError?.message || 'Stripe webhook signing secret is not configured.';
+        await recordVerificationFailure(tenantId, message);
+        return res.status(400).send(`Webhook signature error: ${message}`);
+      }
+      return res.json({ received: true, ignored: true });
+    }
     try { event = constructEvent(null, req.body, sig); }
-    catch (err) { return res.status(400).send(`Webhook signature error: ${err.message}`); }
+    catch (err) {
+      await recordVerificationFailure(tenantId, err.message);
+      return res.status(400).send(`Webhook signature error: ${err.message}`);
+    }
   }
   if (!event) return res.status(400).send('Unverified webhook');
 
