@@ -68,6 +68,21 @@
     reveals.forEach(function (el) { el.classList.add("in"); });
   }
 
+  /* ---------- Analytics events ---------- */
+  window.plausible = window.plausible || function () {
+    (window.plausible.q = window.plausible.q || []).push(arguments);
+  };
+  document.addEventListener("click", function (event) {
+    var link = event.target.closest ? event.target.closest('a[href^="tel:"]') : null;
+    if (!link || typeof window.plausible !== "function") return;
+    window.plausible("Phone Call", {
+      props: {
+        href: link.getAttribute("href") || "",
+        path: window.location.pathname || "/",
+      },
+    });
+  });
+
   /* ---------- Contact / quote form ---------- */
   var form = document.querySelector("#quote-form");
   if (form) {
