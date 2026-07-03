@@ -20,7 +20,7 @@
   /* Neutrals */
   --ink:         #122031;
   --slate:       #51677c;
-  --slate-300:   #8499ac;
+  --slate-300:   #5f7488;
   --line:        #e2eaf1;
   --bg:          #ffffff;
   --bg-soft:     #f3f8fc;
@@ -417,7 +417,7 @@ h3 { font-size: 1.3rem; }
 .footer-contact li { display: flex; gap: 11px; align-items: flex-start; font-size: .95rem; margin-bottom: 12px; }
 .footer-contact svg { width: 18px; height: 18px; color: #8fe3a6; flex: none; margin-top: 3px; }
 .footer-contact a { color: rgba(255,255,255,.85); }
-.footer-bottom { border-top: 1px solid rgba(255,255,255,.12); padding: 22px 0; display: flex; flex-wrap: wrap; gap: 10px 24px; justify-content: space-between; align-items: center; font-size: .86rem; color: rgba(255,255,255,.55); }
+.footer-bottom { border-top: 1px solid rgba(255,255,255,.12); padding: 22px 0; display: flex; flex-wrap: wrap; gap: 10px 24px; justify-content: space-between; align-items: center; font-size: .86rem; color: rgba(255,255,255,.72); }
 .footer-bottom .lic { display: inline-flex; align-items: center; gap: 8px; }
 .footer-bottom .lic svg { width: 16px; height: 16px; color: #8fe3a6; }
 
