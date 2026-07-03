@@ -300,11 +300,16 @@
     const content = document.getElementById('content');
     if (!content) return;
     document.getElementById('pageActions').innerHTML = '';
-    content.innerHTML = '<div class="loading-page"><span class="spinner"></span></div>';
     const seq = ++routeSeq;
+    const loading = '<div class="loading-page"><span class="spinner"></span></div>';
+    content.innerHTML = loading;
     if (!OF._views[route.view]) {
       try { await import(`/assets/app/views/${route.file}.js`); }
-      catch (e) { content.innerHTML = `<div class="empty"><div class="ic">${OF.icon('bell', 22)}</div><p>Couldn't load this page.</p></div>`; return; }
+      catch (e) {
+        if (seq !== routeSeq) return;
+        content.innerHTML = `<div class="empty"><div class="ic">${OF.icon('bell', 22)}</div><p>Couldn't load this page.</p></div>`;
+        return;
+      }
     }
     if (seq !== routeSeq) return; // superseded by a newer navigation
     const cfg = OF._views[route.view];
@@ -314,9 +319,16 @@
     document.title = (cfg.title ? cfg.title + ' · ' : '') + (OF.tenant?.name || 'OARFlow');
     window.scrollTo(0, 0);
     document.getElementById('sidebar')?.classList.remove('open');
+    const viewRoot = document.createElement('div');
+    viewRoot.className = 'view-root';
+    viewRoot.innerHTML = loading;
+    content.replaceChildren(viewRoot);
     try {
-      await cfg.render(content, { session: OF.session, tenant: OF.tenant, setActions: OF.setActions });
+      await cfg.render(viewRoot, { session: OF.session, tenant: OF.tenant, setActions: OF.setActions });
+      if (seq !== routeSeq) { viewRoot.remove(); return; }
+      if (viewRoot.parentNode !== content) content.replaceChildren(viewRoot);
     } catch (err) {
+      if (seq !== routeSeq) { viewRoot.remove(); return; }
       content.innerHTML = `<div class="empty"><div class="ic">${OF.icon('bell', 22)}</div><p>${OF.escape(err.message)}</p></div>`;
     }
   }
