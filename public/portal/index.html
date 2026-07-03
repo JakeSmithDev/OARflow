@@ -30,15 +30,16 @@
     const esc = (s)=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     const qp = new URLSearchParams(location.search);
     const token = qp.get('token');
-    let CUR='USD';
+    let CUR='USD', TZ='America/New_York';
     const money=(c)=>{try{return new Intl.NumberFormat('en-US',{style:'currency',currency:CUR}).format((c||0)/100);}catch{return '$'+((c||0)/100).toFixed(2);}};
-    const dt=(iso)=>iso?new Date(iso).toLocaleString('en-US',{weekday:'short',month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}):'';
-    const dd=(iso)=>iso?new Date(iso).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):'';
+    const dt=(iso)=>iso?new Intl.DateTimeFormat('en-US',{timeZone:TZ,weekday:'short',month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}).format(new Date(iso)):'';
+    const dd=(iso)=>iso?new Intl.DateTimeFormat('en-US',{timeZone:TZ,month:'short',day:'numeric',year:'numeric'}).format(new Date(iso)):'';
 
     async function load(){
       if (!token) return login();
       let d; try { d=await (await fetch(`/api/portal/me?token=${encodeURIComponent(token)}`)).json(); } catch { d={ok:false}; }
       if (!d.ok) return login(d.error);
+      TZ=d.tenant.timezone||TZ;
       const b=d.tenant.branding||{}; if(b.primaryColor) document.documentElement.style.setProperty('--brand', b.primaryColor);
       document.getElementById('logo').textContent=(b.logoText||d.tenant.name||'O')[0];
       document.getElementById('company').textContent=b.logoText||d.tenant.name;
@@ -66,13 +67,16 @@
 
     function render(d){
       CUR=(d.invoices[0]&&d.invoices[0].currency)||'USD';
-      const upcoming = d.upcoming.length? d.upcoming.map(a=>`<div class="row-item"><div><div class="pill-when">${esc(a.service_name||'Appointment')}</div><div class="tiny muted">${a.scheduled_start?dt(a.scheduled_start):'Time to be confirmed'}${a.service_address?' · '+esc(a.service_address):''}</div></div><span class="badge no-dot" style="background:${(a.service_color||'#1f8a3d')}1a;color:${a.service_color||'#1f8a3d'}">${esc(a.status)}</span></div>`).join('') : '<div class="empty-sm">No upcoming visits. <a href="'+esc(d.tenant.bookUrl)+'">Book a service →</a></div>';
-      const invs = d.invoices.length? d.invoices.map(i=>`<div class="row-item"><div><div class="pill-when">${esc(i.number)}</div><div class="tiny muted">${dd(i.createdAt)} · ${esc(i.status)}</div></div><div style="text-align:right"><div class="mono">${money(i.balanceCents>0?i.balanceCents:i.totalCents)}</div>${i.payUrl?`<a class="btn btn-primary btn-sm" href="${esc(i.payUrl)}" style="margin-top:4px">Pay now</a>`:'<span class="tiny muted">Paid</span>'}</div></div>`).join('') : '<div class="empty-sm">No invoices.</div>';
+      const visits=(items,empty)=>items.length? items.map(a=>`<div class="row-item"><div><div class="pill-when">${esc(a.service_name||'Appointment')}</div><div class="tiny muted">${a.scheduled_start?dt(a.scheduled_start):'Time to be confirmed'}${a.service_address?' · '+esc(a.service_address):''}</div></div><span class="badge no-dot" style="background:${(a.service_color||'#1f8a3d')}1a;color:${a.service_color||'#1f8a3d'}">${esc(a.status)}</span></div>`).join('') : `<div class="empty-sm">${empty}</div>`;
+      const upcoming = visits(d.upcoming, 'No upcoming visits. <a href="'+esc(d.tenant.bookUrl)+'">Book a service →</a>');
+      const past = (d.past||[]).length? `<div class="sec"><h3>Past visits</h3><div class="card card-pad">${visits(d.past,'')}</div></div>` : '';
+      const invs = d.invoices.length? d.invoices.map(i=>{ const label=i.status==='paid'&&i.balanceCents<=0?'Paid':(i.status||'Open'); return `<div class="row-item"><div><div class="pill-when">${esc(i.number)}</div><div class="tiny muted">${dd(i.createdAt)} · ${esc(i.status)}</div></div><div style="text-align:right"><div class="mono">${money(i.balanceCents>0?i.balanceCents:i.totalCents)}</div>${i.payUrl?`<a class="btn btn-primary btn-sm" href="${esc(i.payUrl)}" style="margin-top:4px">Pay now</a>`:`<span class="tiny muted">${esc(label)}</span>`}</div></div>`; }).join('') : '<div class="empty-sm">No invoices.</div>';
       const ests = d.estimates.length? `<div class="sec"><h3>Estimates to review</h3><div class="card card-pad">${d.estimates.map(e=>`<div class="row-item"><div><div class="pill-when">${esc(e.number)}</div><div class="tiny muted">${money(e.totalCents)}${e.validUntil?' · good through '+dd(e.validUntil):''}</div></div><a class="btn btn-primary btn-sm" href="${esc(e.approveUrl)}">Review &amp; approve</a></div>`).join('')}</div></div>` : '';
       const cards = d.cards.available? `<div class="sec"><h3>Payment methods</h3><div class="card card-pad">${d.paymentMethods.length? d.paymentMethods.map(p=>`<div class="row-item"><span>${esc(p.brand||'card')} ••${esc(p.last4||'')} <span class="tiny muted">exp ${p.exp_month}/${String(p.exp_year).slice(-2)}</span>${p.is_default?' <span class="badge ok no-dot">Default</span>':''}</span></div>`).join('') : '<div class="empty-sm">No card on file.</div>'}<button class="btn btn-secondary btn-sm" id="addCard" style="margin-top:10px">${d.paymentMethods.length?'Add another card':'Add a card on file'}</button></div></div>` : '';
       document.getElementById('view').innerHTML = `
         <div class="row wrap" style="gap:8px;margin-bottom:6px"><a class="btn btn-primary" href="${esc(d.tenant.bookUrl)}">Book a service</a></div>
         <div class="sec"><h3>Upcoming visits</h3><div class="card card-pad">${upcoming}</div></div>
+        ${past}
         ${ests}
         <div class="sec"><h3>Invoices</h3><div class="card card-pad">${invs}</div></div>
         ${cards}`;

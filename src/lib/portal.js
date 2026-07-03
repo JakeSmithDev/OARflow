@@ -35,19 +35,20 @@ export async function portalData(tenant, customer) {
   );
   const now = Date.now();
   const upcoming = []; const past = [];
+  const terminalStatuses = new Set(['completed', 'canceled', 'no_show']);
   for (const a of appts.rows) {
     const when = a.scheduled_start ? new Date(a.scheduled_start).getTime() : null;
-    (when && when >= now ? upcoming : past).push(a);
+    ((when && when >= now) || (!when && !terminalStatuses.has(a.status)) ? upcoming : past).push(a);
   }
   upcoming.reverse();
 
   const invRows = await query(
-    `SELECT id, number, status, total_cents, amount_paid_cents, created_at, sent_at, access_token
-       FROM invoices WHERE tenant_id=$1 AND customer_id=$2 AND status <> 'void' ORDER BY id DESC LIMIT 50`,
+    `SELECT id, number, status, currency, total_cents, amount_paid_cents, created_at, sent_at, access_token
+       FROM invoices WHERE tenant_id=$1 AND customer_id=$2 AND status NOT IN ('void','draft') ORDER BY id DESC LIMIT 50`,
     [tenant.id, customer.id],
   );
   const invoices = invRows.rows.map((i) => ({
-    id: i.id, number: i.number, status: i.status, totalCents: i.total_cents, balanceCents: balanceCents(i),
+    id: i.id, number: i.number, status: i.status, currency: i.currency, totalCents: i.total_cents, balanceCents: balanceCents(i),
     createdAt: i.created_at, sentAt: i.sent_at,
     payUrl: balanceCents(i) > 0 && i.status !== 'draft' ? `${config.baseUrl}/pay?invoice=${i.id}&token=${i.access_token}` : null,
   }));
@@ -65,7 +66,7 @@ export async function portalData(tenant, customer) {
   const paymentMethods = await listPaymentMethods(tenant, customer.id);
 
   return {
-    tenant: { name: tenant.name, branding: tenant.settings.branding, bookUrl: `${config.baseUrl}/book` },
+    tenant: { name: tenant.name, timezone: tenant.timezone, branding: tenant.settings.branding, bookUrl: `${config.baseUrl}/book` },
     customer: { name: customer.name, email: customer.email, phone: customer.phone },
     upcoming, past, invoices, estimates,
     cards: cardsStatus(tenant), paymentMethods,
