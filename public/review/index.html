@@ -70,7 +70,7 @@
       document.getElementById('view').innerHTML = `<div class="ok-screen">
         <div class="big"><svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg></div>
         <h2>${already?'Thanks again!':'Thank you!'}</h2>
-        <p class="muted" style="margin-top:8px">${rating>=4||already?'We\\'d be grateful if you shared your experience publicly:':'Thanks for the honest feedback — we\\'ll use it to do better. If you\\'d like, you can also post publicly:'}</p>
+        <p class="muted" style="margin-top:8px">${rating>=4||already?'We\'d be grateful if you shared your experience publicly:':'Thanks for the honest feedback — we\'ll use it to do better. If you\'d like, you can also post publicly:'}</p>
         ${links?`<div class="plat">${links}</div>`:''}</div>`;
       document.querySelectorAll('[data-plat]').forEach(a=>a.addEventListener('click',()=>{ navigator.sendBeacon?.('/api/reviews/click', new Blob([JSON.stringify({token, platform:a.dataset.plat})],{type:'application/json'})); }));
     }
