@@ -7,6 +7,7 @@ import { queryOne } from '../lib/db.js';
 import { getTenantById } from '../lib/tenants.js';
 import { createSetupIntent, attachFromSetupIntent, attachMockCard, cardsStatus } from '../lib/payments.js';
 import { rateLimit } from '../lib/rate_limit.js';
+import { safeEqual } from '../lib/crypto.js';
 
 const router = express.Router();
 const limitSetupIntent = rateLimit({ endpoint: 'save_card_get', windowMinutes: 10, maxCount: 5 });
@@ -14,7 +15,7 @@ const limitSaveCard = rateLimit({ endpoint: 'save_card_post', windowMinutes: 10,
 
 async function load(id, token) {
   const c = await queryOne('SELECT * FROM customers WHERE id=$1', [id]);
-  if (!c || !c.card_token || c.card_token !== token) return null;
+  if (!c || !c.card_token || !safeEqual(c.card_token, token)) return null;
   return c;
 }
 

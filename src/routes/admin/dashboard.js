@@ -4,6 +4,7 @@ import { requireAdmin } from '../../lib/auth.js';
 import { asyncHandler } from '../../lib/http.js';
 import { query } from '../../lib/db.js';
 import { zonedWallTimeToUtc, todayYmd, addDays, ymdInTimeZone } from '../../lib/dates.js';
+import { hasCapability } from '../../lib/permissions.js';
 
 const router = express.Router();
 router.use(requireAdmin());
@@ -56,6 +57,7 @@ router.get('/counts', asyncHandler(async (req, res) => {
 router.get('/', asyncHandler(async (req, res) => {
   const tenantId = req.tenant.id;
   const tz = req.tenant.timezone;
+  const canViewReports = hasCapability(req.admin, 'reports.view');
   const { dayStart, dayEnd, weekEnd, monthStart } = boundaries(tz);
 
   const today = await query(
@@ -72,14 +74,17 @@ router.get('/', asyncHandler(async (req, res) => {
     `${APPT_SELECT} WHERE a.tenant_id=$1 AND a.status='requested' ORDER BY a.created_at LIMIT 6`,
     [tenantId],
   );
-  const outstanding = await query(
-    `SELECT i.id, i.number, i.total_cents, i.amount_paid_cents, i.status, i.sent_at, i.due_date,
-            c.name AS customer_name
-       FROM invoices i JOIN customers c ON c.id = i.customer_id
-      WHERE i.tenant_id=$1 AND i.status IN ('sent','partial')
-      ORDER BY i.sent_at NULLS LAST LIMIT 6`,
-    [tenantId],
-  );
+  let outstanding = { rows: [] };
+  if (canViewReports) {
+    outstanding = await query(
+      `SELECT i.id, i.number, i.total_cents, i.amount_paid_cents, i.status, i.sent_at, i.due_date,
+              c.name AS customer_name
+         FROM invoices i JOIN customers c ON c.id = i.customer_id
+        WHERE i.tenant_id=$1 AND i.status IN ('sent','partial')
+        ORDER BY i.sent_at NULLS LAST LIMIT 6`,
+      [tenantId],
+    );
+  }
   const followups = await query(
     `SELECT f.id, f.title, f.type, f.channel, f.due_at, f.status, c.name AS customer_name
        FROM follow_ups f LEFT JOIN customers c ON c.id = f.customer_id
@@ -87,18 +92,24 @@ router.get('/', asyncHandler(async (req, res) => {
     [tenantId],
   );
 
-  const outstandingTotal = await query(
-    "SELECT COALESCE(SUM(total_cents - amount_paid_cents),0)::bigint AS c FROM invoices WHERE tenant_id=$1 AND status IN ('sent','partial')",
-    [tenantId],
-  );
-  const revenueMtd = await query(
-    "SELECT COALESCE(SUM(amount_cents),0)::bigint AS c FROM financial_events WHERE tenant_id=$1 AND event_type='payment' AND created_at >= $2",
-    [tenantId, monthStart.toISOString()],
-  );
-  const subs = await query(
-    "SELECT interval, interval_count, price_cents FROM subscriptions WHERE tenant_id=$1 AND status='active'",
-    [tenantId],
-  );
+  const outstandingTotal = canViewReports
+    ? await query(
+      "SELECT COALESCE(SUM(total_cents - amount_paid_cents),0)::bigint AS c FROM invoices WHERE tenant_id=$1 AND status IN ('sent','partial')",
+      [tenantId],
+    )
+    : { rows: [{ c: 0 }] };
+  const revenueMtd = canViewReports
+    ? await query(
+      "SELECT COALESCE(SUM(amount_cents),0)::bigint AS c FROM financial_events WHERE tenant_id=$1 AND event_type='payment' AND created_at >= $2",
+      [tenantId, monthStart.toISOString()],
+    )
+    : { rows: [{ c: 0 }] };
+  const subs = canViewReports
+    ? await query(
+      "SELECT interval, interval_count, price_cents FROM subscriptions WHERE tenant_id=$1 AND status='active'",
+      [tenantId],
+    )
+    : { rows: [] };
   let mrr = 0;
   for (const s of subs.rows) mrr += monthlyCents(s.interval, s.interval_count, s.price_cents);
 
@@ -111,6 +122,7 @@ router.get('/', asyncHandler(async (req, res) => {
       arrCents: mrr * 12,
       activeSubs: subs.rows.length,
       todayCount: today.rows.length,
+      financialVisible: canViewReports,
     },
     counts: await navCounts(tenantId, tz),
     today: today.rows,

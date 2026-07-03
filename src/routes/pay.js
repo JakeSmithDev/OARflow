@@ -6,6 +6,7 @@ import { getTenantById } from '../lib/tenants.js';
 import { balanceCents } from '../lib/invoices.js';
 import { isConfigured as stripeConfigured, createInvoiceCheckout } from '../lib/stripe.js';
 import { rateLimit } from '../lib/rate_limit.js';
+import { safeEqual } from '../lib/crypto.js';
 import { config } from '../config.js';
 
 const router = express.Router();
@@ -17,7 +18,7 @@ async function loadInvoice(id, token) {
     `SELECT i.*, c.name AS customer_name, c.email AS customer_email FROM invoices i JOIN customers c ON c.id=i.customer_id WHERE i.id=$1`,
     [id],
   );
-  if (!inv || inv.access_token !== token) return null;
+  if (!inv || !safeEqual(inv.access_token, token)) return null;
   return inv;
 }
 

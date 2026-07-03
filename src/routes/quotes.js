@@ -6,6 +6,7 @@ import { getTenantById } from '../lib/tenants.js';
 import { acceptEstimate, convertToInvoice, estimateExpired } from '../lib/estimates.js';
 import { emitEvent } from '../lib/events.js';
 import { rateLimit } from '../lib/rate_limit.js';
+import { safeEqual } from '../lib/crypto.js';
 
 const router = express.Router();
 const limitView = rateLimit({ endpoint: 'quote_get', windowMinutes: 10, maxCount: 60 });
@@ -13,7 +14,7 @@ const limitAction = rateLimit({ endpoint: 'quote_post', windowMinutes: 10, maxCo
 
 async function load(id, token) {
   const e = await queryOne('SELECT * FROM estimates WHERE id=$1', [id]);
-  if (!e || e.access_token !== token) return null;
+  if (!e || !safeEqual(e.access_token, token)) return null;
   return e;
 }
 

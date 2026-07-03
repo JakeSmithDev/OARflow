@@ -36,7 +36,7 @@ export function serverError(res, err, context = 'request') {
 /** Coerce a value to a positive integer or return null. */
 export function toInt(value) {
   const n = Number.parseInt(value, 10);
-  return Number.isFinite(n) ? n : null;
+  return Number.isFinite(n) && n >= 0 ? n : null;
 }
 
 /** Parse "12.50" / 12.5 dollars into integer cents. */

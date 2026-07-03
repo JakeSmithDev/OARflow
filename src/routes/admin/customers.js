@@ -30,10 +30,10 @@ router.get('/', asyncHandler(async (req, res) => {
   params.push(limit); params.push(offset);
   const rows = await query(
     `SELECT c.id, c.name, c.email, c.phone, c.address, c.city, c.state, c.created_at,
-            (SELECT count(*) FROM appointments a WHERE a.customer_id=c.id)::int AS appt_count,
-            (SELECT COALESCE(SUM(amount_cents),0) FROM financial_events fe WHERE fe.customer_id=c.id AND fe.event_type='payment')::bigint AS ltv_cents,
-            (SELECT COALESCE(SUM(total_cents-amount_paid_cents),0) FROM invoices i WHERE i.customer_id=c.id AND i.status IN ('sent','partial'))::bigint AS balance_cents,
-            (SELECT count(*) FROM subscriptions su WHERE su.customer_id=c.id AND su.status='active')::int AS active_subs
+            (SELECT count(*) FROM appointments a WHERE a.tenant_id=c.tenant_id AND a.customer_id=c.id)::int AS appt_count,
+            (SELECT COALESCE(SUM(amount_cents),0) FROM financial_events fe WHERE fe.tenant_id=c.tenant_id AND fe.customer_id=c.id AND fe.event_type='payment')::bigint AS ltv_cents,
+            (SELECT COALESCE(SUM(total_cents-amount_paid_cents),0) FROM invoices i WHERE i.tenant_id=c.tenant_id AND i.customer_id=c.id AND i.status IN ('sent','partial'))::bigint AS balance_cents,
+            (SELECT count(*) FROM subscriptions su WHERE su.tenant_id=c.tenant_id AND su.customer_id=c.id AND su.status='active')::int AS active_subs
        FROM customers c WHERE ${where.join(' AND ')}
       ORDER BY c.name LIMIT $${params.length - 1} OFFSET $${params.length}`,
     params,
@@ -66,8 +66,8 @@ router.get('/:id', asyncHandler(async (req, res) => {
     "SELECT id, title, due_at, status, channel FROM follow_ups WHERE tenant_id=$1 AND customer_id=$2 AND status='pending' ORDER BY due_at",
     [tenantId, id],
   );
-  const ltv = await queryOne("SELECT COALESCE(SUM(amount_cents),0)::bigint c FROM financial_events WHERE customer_id=$1 AND event_type='payment'", [id]);
-  const balance = await queryOne("SELECT COALESCE(SUM(total_cents-amount_paid_cents),0)::bigint c FROM invoices WHERE customer_id=$1 AND status IN ('sent','partial')", [id]);
+  const ltv = await queryOne("SELECT COALESCE(SUM(amount_cents),0)::bigint c FROM financial_events WHERE tenant_id=$1 AND customer_id=$2 AND event_type='payment'", [tenantId, id]);
+  const balance = await queryOne("SELECT COALESCE(SUM(total_cents-amount_paid_cents),0)::bigint c FROM invoices WHERE tenant_id=$1 AND customer_id=$2 AND status IN ('sent','partial')", [tenantId, id]);
   const paymentMethods = await listPaymentMethods(req.tenant, id);
   res.json({
     ok: true, customer: c,

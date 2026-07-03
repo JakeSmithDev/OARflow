@@ -86,8 +86,8 @@ router.get('/:id', asyncHandler(async (req, res) => {
   );
   if (!inv) return notFound(res);
   const events = await query(
-    'SELECT id, event_type, amount_cents, method, note, created_at, created_by FROM financial_events WHERE invoice_id=$1 ORDER BY created_at',
-    [id],
+    'SELECT id, event_type, amount_cents, method, note, created_at, created_by FROM financial_events WHERE tenant_id=$1 AND invoice_id=$2 ORDER BY created_at',
+    [req.tenant.id, id],
   );
   const savedCards = await listPaymentMethods(req.tenant, inv.customer_id);
   res.json({ ok: true, invoice: inv, events: events.rows, balanceCents: balanceCents(inv), payUrl: `${config.baseUrl}/pay?invoice=${inv.id}&token=${inv.access_token}`, stripeEnabled: stripeConfigured(req.tenant), savedCards, cards: cardsStatus(req.tenant) });

@@ -12,7 +12,7 @@ import { scheduleForCompletion } from '../../lib/follow_ups.js';
 import { sendAppointmentReminder } from '../../lib/reminders.js';
 import { emitEvent } from '../../lib/events.js';
 import { sendTemplated, detailsTable } from '../../lib/email_templates.js';
-import { requirePermission, requireWrite } from '../../lib/permissions.js';
+import { hasCapability, requirePermission, requireWrite } from '../../lib/permissions.js';
 import { setAssignments, getAssignments, assignmentsForAppointments } from '../../lib/technicians.js';
 import { saveFile, listFiles, getFile, deleteFile, signedUrl } from '../../lib/storage.js';
 import { decodeUpload } from '../../lib/uploads.js';
@@ -31,6 +31,10 @@ const SELECT = `
     FROM appointments a
     JOIN customers c ON c.id=a.customer_id
     LEFT JOIN service_types s ON s.id=a.service_type_id`;
+
+function redactAppointment(req, appt) {
+  return hasCapability(req.admin, 'appointments.manage') ? appt : { ...appt, internal_notes: null };
+}
 
 // Resolve a UTC start/end from {start ISO} or {date,time} + service duration.
 function resolveTimes(tenant, body, durationMin) {
@@ -99,7 +103,7 @@ router.get('/', asyncHandler(async (req, res) => {
   );
   const countMap = { all: 0 };
   for (const r of counts.rows) { countMap[r.status] = r.n; countMap.all += r.n; }
-  res.json({ ok: true, appointments: rows.rows, counts: countMap });
+  res.json({ ok: true, appointments: rows.rows.map((a) => redactAppointment(req, a)), counts: countMap });
 }));
 
 // --- Calendar range (schedule view). Accepts either ISO from/to, or a single
@@ -129,7 +133,7 @@ router.get('/calendar', asyncHandler(async (req, res) => {
   for (const a of rows.rows) a.technicians = assignMap[a.id] || [];
   res.json({
     ok: true,
-    appointments: rows.rows,
+    appointments: rows.rows.map((a) => redactAppointment(req, a)),
     capacity: req.tenant.settings.availability.capacityPerSlot || 1,
     overrides: overrides.rows,
     blackouts: blackouts.rows,
@@ -155,7 +159,7 @@ router.get('/:id', asyncHandler(async (req, res) => {
   );
   const technicians = await getAssignments(req.tenant, a.id);
   const files = await listFiles(req.tenant, 'appointment', a.id);
-  res.json({ ok: true, appointment: a, invoices: invoices.rows, technicians, files });
+  res.json({ ok: true, appointment: redactAppointment(req, a), invoices: invoices.rows, technicians, files });
 }));
 
 // --- Job photos / files ---------------------------------------------------
