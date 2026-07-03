@@ -28,7 +28,7 @@
   </div>
   <script>
     const esc = (s)=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-    const hexColor=(s,fallback='#1f8a3d')=>/^#[0-9a-fA-F]{3}$|^#[0-9a-fA-F]{6}$/.test(String(s||'').trim())?String(s).trim().toLowerCase():fallback;
+    const hexColor=(s,fallback='#1f8a3d')=>{ const v=String(s||'').trim(); if(/^#[0-9a-fA-F]{3}$/.test(v))return '#'+v.slice(1).split('').map(x=>x+x).join('').toLowerCase(); return /^#[0-9a-fA-F]{6}$/.test(v)?v.toLowerCase():fallback; };
     const qp = new URLSearchParams(location.search);
     const token = qp.get('token');
     const slug = qp.get('t') || 'default';

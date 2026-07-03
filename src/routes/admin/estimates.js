@@ -4,7 +4,7 @@ import { requireAdmin } from '../../lib/auth.js';
 import { requireWrite } from '../../lib/permissions.js';
 import { asyncHandler, badRequest, notFound, toInt } from '../../lib/http.js';
 import { query, queryOne } from '../../lib/db.js';
-import { createEstimate, updateEstimate, convertToInvoice, declineEstimate } from '../../lib/estimates.js';
+import { createEstimate, updateEstimate, convertToInvoice, declineEstimate, estimateValidUntilYmd } from '../../lib/estimates.js';
 import { sendTemplated, htmlEscape } from '../../lib/email_templates.js';
 import { ownsId } from '../../lib/ownership.js';
 import { logAudit } from '../../lib/audit.js';
@@ -83,7 +83,7 @@ router.post('/:id/send', asyncHandler(async (req, res) => {
     CUSTOMER_NAME: e.customer_name, COMPANY_NAME: req.tenant.settings.branding.logoText || req.tenant.name,
     ESTIMATE_NUMBER: e.number, ESTIMATE_TOTAL: formatCents(e.total_cents, req.tenant.currency),
     ESTIMATE_SUMMARY: summaryHtml(req.tenant, e), ACCEPT_URL: acceptUrl, TERMS: e.terms || '',
-    VALID_UNTIL: e.valid_until ? String(e.valid_until).slice(0, 10) : '',
+    VALID_UNTIL: estimateValidUntilYmd(e.valid_until, req.tenant.timezone),
   }, { type: 'estimate', id });
   await logAudit({ tenantId: req.tenant.id, adminUsername: req.admin.username, action: 'estimate_send', entityType: 'estimate', entityId: id });
   emitEvent('estimate.sent', { tenantId: req.tenant.id, estimateId: id, customerId: e.customer_id }).catch(() => {});

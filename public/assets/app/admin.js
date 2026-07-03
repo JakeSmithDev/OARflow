@@ -37,7 +37,12 @@
   OF.val = (id) => document.getElementById(id)?.value;
   // Sanitize a color before interpolating into a style string (XSS guard for any
   // legacy non-hex data; new writes are validated to hex server-side).
-  OF.color = (c, fallback = 'var(--brand)') => (/^#[0-9a-fA-F]{3}$|^#[0-9a-fA-F]{6}$/.test(String(c || '')) ? c : fallback);
+  OF.color = (c, fallback = 'var(--brand)') => {
+    const v = String(c || '').trim();
+    if (/^#[0-9a-fA-F]{3}$/.test(v)) return '#' + v.slice(1).split('').map((x) => x + x).join('').toLowerCase();
+    if (/^#[0-9a-fA-F]{6}$/.test(v)) return v.toLowerCase();
+    return fallback;
+  };
 
   // --- Formatting ---------------------------------------------------------
   OF.money = (cents, opts = {}) => {
@@ -72,7 +77,17 @@
     if (!input || !results) return;
     let selected = null;
     const close = () => { results.style.display = 'none'; };
-    input.addEventListener('input', OF.debounce(async () => {
+    let observer = null;
+    let cleaned = false;
+    const onDocumentClick = (e) => { if (!results.contains(e.target) && e.target !== input) close(); };
+    const cleanup = () => {
+      if (cleaned) return;
+      cleaned = true;
+      document.removeEventListener('click', onDocumentClick);
+      observer?.disconnect();
+      close();
+    };
+    const onInput = OF.debounce(async () => {
       selected = null;
       onType && onType(input.value);
       const q = input.value.trim();
@@ -93,9 +108,17 @@
         close();
         onSelect && onSelect(selected);
       }));
-    }, 250));
-    document.addEventListener('click', (e) => { if (!results.contains(e.target) && e.target !== input) close(); });
-    return { get selected() { return selected; }, clear() { selected = null; close(); } };
+    }, 250);
+    input.addEventListener('input', onInput);
+    document.addEventListener('click', onDocumentClick);
+    if ('MutationObserver' in window) {
+      observer = new MutationObserver(() => {
+        if (!document.body.contains(input) && !document.body.contains(results)) cleanup();
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
+    }
+    OF.onCleanup(cleanup);
+    return { get selected() { return selected; }, clear() { selected = null; close(); }, cleanup };
   };
 
   const STATUS = {

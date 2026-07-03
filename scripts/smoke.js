@@ -207,6 +207,12 @@ async function main() {
     assert.ok(data.paymentMethods.length >= 1); assert.equal(data.cards.available, true); assert.equal(data.cards.mock, true);
     assert.equal(data.paymentMethods.find((p) => p.id === pmId).consent_source, 'in_person');
   });
+  await check('[fix] invalid default card does not clear current default', async () => {
+    const bad = await call('/api/admin/customers/1/payment-methods/999999/default', { method: 'POST' });
+    assert.equal(bad.status, 404);
+    const { data } = await call('/api/admin/customers/1/payment-methods');
+    assert.equal(data.paymentMethods.find((p) => p.id === pmId)?.is_default, true);
+  });
   let cofInv;
   await check('charge invoice to card on file marks it paid', async () => {
     cofInv = (await call('/api/admin/invoices', { method: 'POST', body: { customerId: 1, lineItems: [{ label: 'Quarterly Service', unit_amount_cents: 8900 }] } })).data.invoice;
@@ -828,6 +834,14 @@ async function main() {
     assert.equal(b2.status, 409);
   });
   const db = await import('../src/lib/db.js');
+  await check('[fix] requests badge includes public reschedules', async () => {
+    const before = (await call('/api/admin/dashboard/counts')).data.counts.requests;
+    await db.query(
+      "INSERT INTO follow_ups (tenant_id, customer_id, type, title, channel, due_at, status, created_by) VALUES (1,1,'task','Reschedule request smoke','task',now(),'pending','public_reschedule')",
+    );
+    const after = (await call('/api/admin/dashboard/counts')).data.counts.requests;
+    assert.equal(after, before + 1);
+  });
   await check('[fix] cross-tenant: foreign customer rejected on invoice create', async () => {
     const t2 = await db.queryOne("INSERT INTO tenants (slug,name) VALUES ('rival','Rival Co') RETURNING id");
     const c2 = await db.queryOne('INSERT INTO customers (tenant_id,name) VALUES ($1,\'Rival Cust\') RETURNING id', [t2.id]);

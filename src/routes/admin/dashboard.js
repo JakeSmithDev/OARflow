@@ -42,12 +42,16 @@ const APPT_SELECT = `
 async function navCounts(tenantId, tz) {
   const { dayEnd } = boundaries(tz);
   const reqs = await query("SELECT count(*)::int n FROM appointments WHERE tenant_id=$1 AND status='requested'", [tenantId]);
+  const reschedules = await query(
+    "SELECT count(*)::int n FROM follow_ups WHERE tenant_id=$1 AND status='pending' AND created_by='public_reschedule'",
+    [tenantId],
+  );
   const fus = await query(
     "SELECT count(*)::int n FROM follow_ups WHERE tenant_id=$1 AND status='pending' AND due_at <= $2",
     [tenantId, dayEnd.toISOString()],
   );
   const sms = await query("SELECT COALESCE(SUM(unread_count),0)::int n FROM sms_conversations WHERE tenant_id=$1", [tenantId]).catch(() => ({ rows: [{ n: 0 }] }));
-  return { requests: reqs.rows[0].n, followups: fus.rows[0].n, sms: sms.rows[0].n };
+  return { requests: reqs.rows[0].n + reschedules.rows[0].n, followups: fus.rows[0].n, sms: sms.rows[0].n };
 }
 
 router.get('/counts', asyncHandler(async (req, res) => {

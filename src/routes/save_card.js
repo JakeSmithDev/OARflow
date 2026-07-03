@@ -10,7 +10,7 @@ import { rateLimit } from '../lib/rate_limit.js';
 import { safeEqual } from '../lib/crypto.js';
 
 const router = express.Router();
-const limitSetupIntent = rateLimit({ endpoint: 'save_card_get', windowMinutes: 10, maxCount: 5 });
+const limitSetupIntent = rateLimit({ endpoint: 'save_card_get', windowMinutes: 10, maxCount: 20 });
 const limitSaveCard = rateLimit({ endpoint: 'save_card_post', windowMinutes: 10, maxCount: 10 });
 
 async function load(id, token) {

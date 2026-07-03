@@ -18,7 +18,7 @@ import { rateLimit } from '../lib/rate_limit.js';
 
 const router = express.Router();
 const limitView = rateLimit({ endpoint: 'field_get', windowMinutes: 10, maxCount: 180 });
-const limitAction = rateLimit({ endpoint: 'field_post', windowMinutes: 10, maxCount: 80 });
+const limitAction = rateLimit({ endpoint: 'field_post', windowMinutes: 10, maxCount: 300 });
 
 async function auth(req) {
   const token = String(req.query.token || (req.body || {}).token || '');

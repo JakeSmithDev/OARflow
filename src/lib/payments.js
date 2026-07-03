@@ -108,8 +108,19 @@ export async function listPaymentMethods(tenant, customerId) {
 }
 
 export async function setDefaultPaymentMethod(tenant, customerId, pmId) {
-  await query("UPDATE payment_methods SET is_default=FALSE WHERE tenant_id=$1 AND customer_id=$2 AND status='active'", [tenant.id, customerId]);
-  return queryOne("UPDATE payment_methods SET is_default=TRUE, updated_at=now() WHERE tenant_id=$1 AND customer_id=$2 AND id=$3 AND status='active' RETURNING *", [tenant.id, customerId, pmId]);
+  return withTx(async (cx) => {
+    const current = await cx.query(
+      "SELECT * FROM payment_methods WHERE tenant_id=$1 AND customer_id=$2 AND id=$3 AND status='active' FOR UPDATE",
+      [tenant.id, customerId, pmId],
+    );
+    if (!current.rows.length) return null;
+    await cx.query("UPDATE payment_methods SET is_default=FALSE WHERE tenant_id=$1 AND customer_id=$2 AND status='active'", [tenant.id, customerId]);
+    const updated = await cx.query(
+      "UPDATE payment_methods SET is_default=TRUE, updated_at=now() WHERE tenant_id=$1 AND customer_id=$2 AND id=$3 AND status='active' RETURNING *",
+      [tenant.id, customerId, pmId],
+    );
+    return updated.rows[0] || null;
+  });
 }
 
 export async function removePaymentMethod(tenant, customerId, pmId) {

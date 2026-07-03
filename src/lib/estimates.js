@@ -7,15 +7,15 @@ import { nextEstimateNumber } from './tenants.js';
 import { computeTotals, createInvoice } from './invoices.js';
 import { addDays, ymdInTimeZone } from './dates.js';
 
-export function estimateValidUntilYmd(value) {
+export function estimateValidUntilYmd(value, timeZone = 'UTC') {
   if (!value) return '';
   if (typeof value === 'string') return value.slice(0, 10);
   const d = new Date(value);
-  return Number.isNaN(d.getTime()) ? '' : d.toISOString().slice(0, 10);
+  return Number.isNaN(d.getTime()) ? '' : ymdInTimeZone(d, timeZone);
 }
 
 export function estimateExpired(tenant, estimate, now = new Date()) {
-  const validUntil = estimateValidUntilYmd(estimate?.valid_until);
+  const validUntil = estimateValidUntilYmd(estimate?.valid_until, tenant.timezone);
   return Boolean(validUntil && ymdInTimeZone(now, tenant.timezone) > validUntil);
 }
 

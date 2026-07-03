@@ -71,7 +71,10 @@
         btn.disabled = true; btn.textContent = 'Charging…';
         try {
           const r = await (await fetch(`/api/pay/${id}/charge-saved`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ token, paymentMethodId:+btn.dataset.pm }) })).json();
-          if (r.ok) return success({ ...i, status:'paid' });
+          if (r.ok) {
+            if (r.paid || r.invoice?.status === 'paid' || r.invoice?.balanceCents <= 0) return success({ ...i, status:'paid' });
+            return processing(i);
+          }
           alert(r.error || 'Could not charge this card.');
           btn.disabled = false; btn.textContent = 'Try again';
         } catch {
