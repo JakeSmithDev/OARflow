@@ -42,7 +42,7 @@ export async function createInvoiceCheckout(tenant, invoice, { balanceCents, cus
     line_items: [{
       quantity: 1,
       price_data: {
-        currency: (tenant.currency || 'usd').toLowerCase(),
+        currency: (invoice.currency || tenant.currency || 'usd').toLowerCase(),
         unit_amount: balanceCents,
         product_data: { name: `${tenant.name} — Invoice ${invoice.number}` },
       },

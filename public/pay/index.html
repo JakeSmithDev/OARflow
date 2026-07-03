@@ -45,7 +45,8 @@
       document.getElementById('sub').textContent = `Invoice ${d.invoice.number}`;
       const i = d.invoice;
       if (d.voided || i.status==='void') { document.getElementById('view').innerHTML = `<div class="card card-pad center muted">This invoice has been canceled and is no longer payable. Please contact ${esc(d.tenant.name)} with any questions.</div>`; return; }
-      if (qp.get('paid') || i.status==='paid') return success(i);
+      if (i.status==='paid') return success(i);
+      if (qp.get('paid')) return processing(i);
       const li = (i.lineItems||[]).map(x=>`<div class="totline"><span>${esc(x.label)}${x.quantity>1?` ×${x.quantity}`:''}</span><span class="mono">${money(x.amount_cents)}</span></div>`).join('');
       document.getElementById('view').innerHTML = `<div class="card card-pad">
         ${li}<hr class="divider" style="margin:8px 0">
@@ -66,6 +67,27 @@
           if (r.ok && r.url) location.href = r.url; else { alert(r.error||'Could not start checkout.'); payBtn.disabled=false; payBtn.textContent='Try again'; } }
         catch { payBtn.disabled=false; payBtn.textContent='Try again'; }
       };
+    }
+    const wait=(ms)=>new Promise(r=>setTimeout(r,ms));
+    async function processing(i){
+      document.getElementById('view').innerHTML = `<div class="card card-pad center">
+        <span class="spinner"></span><h2 style="font-size:20px;margin-top:14px">Payment processing…</h2>
+        <p class="muted" style="margin-top:8px">We're confirming invoice ${esc(i.number)} with the payment processor.</p></div>`;
+      const deadline=Date.now()+30000;
+      while(Date.now()<deadline){
+        await wait(2000);
+        try{
+          const d=await (await fetch(`/api/pay/${id}?token=${encodeURIComponent(token)}`)).json();
+          if(d.ok){
+            CUR=d.invoice.currency||CUR;
+            if(d.invoice.status==='paid') return success(d.invoice);
+            if(d.voided||d.invoice.status==='void'){ document.getElementById('view').innerHTML=`<div class="card card-pad center muted">This invoice has been canceled and is no longer payable. Please contact ${esc(d.tenant.name)} with any questions.</div>`; return; }
+          }
+        }catch{}
+      }
+      document.getElementById('view').innerHTML = `<div class="card card-pad center">
+        <h2 style="font-size:20px">Payment still processing</h2>
+        <p class="muted" style="margin-top:8px">Your payment is being processed; you'll receive a receipt by email once it is confirmed.</p></div>`;
     }
     function success(i){ document.getElementById('view').innerHTML = `<div class="ok-screen">
       <div class="big"><svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg></div>
