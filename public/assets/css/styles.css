@@ -400,7 +400,7 @@ h3 { font-size: 1.3rem; }
 .footer-brand .brand-text strong { color: #fff; }
 .footer-brand .brand-text span { color: var(--blue-300); }
 .footer-brand p { margin-top: 16px; font-size: .94rem; max-width: 320px; }
-.footer h4 { color: #fff; font-size: 1rem; margin-bottom: 16px; letter-spacing: .02em; }
+.site-footer h4 { color: #fff; font-size: 1rem; margin-bottom: 16px; letter-spacing: .02em; }
 .footer-col ul { display: grid; gap: 10px; }
 .footer-col a { color: rgba(255,255,255,.74); font-size: .95rem; }
 .footer-col a:hover { color: #8fe3a6; }
