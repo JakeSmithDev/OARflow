@@ -2,10 +2,11 @@
 const OF = window.OF;
 
     const TZ = () => OF.tenant.timezone;
+    const tenantYmd = () => new Intl.DateTimeFormat('en-CA',{timeZone:TZ(),year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
     let view = OF.qs('view') || 'week';
     let techFilter = '';
     let TECHS = null;
-    let cursor = OF.qs('date') || new Intl.DateTimeFormat('en-CA',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+    let cursor = OF.qs('date') || tenantYmd();
 
     const ymdUTC = (d) => new Intl.DateTimeFormat('en-CA',{timeZone:'UTC',year:'numeric',month:'2-digit',day:'2-digit'}).format(d);
     const addYmd = (ymd,n) => ymdUTC(new Date(new Date(ymd+'T00:00:00Z').getTime()+n*86400000));
@@ -13,7 +14,7 @@ const OF = window.OF;
     const tzYmd = (iso) => new Intl.DateTimeFormat('en-CA',{timeZone:TZ(),year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(iso));
     const tzHm = (iso) => new Intl.DateTimeFormat('en-GB',{timeZone:TZ(),hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(iso));
     const labelYmd = (ymd,opts) => new Intl.DateTimeFormat('en-US',{timeZone:'UTC',...opts}).format(new Date(ymd+'T12:00:00Z'));
-    const todayYmd = () => new Intl.DateTimeFormat('en-CA',{timeZone:TZ(),year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+    const todayYmd = tenantYmd;
 
     function rangeFor() {
       if (view==='day') return { from: addYmd(cursor,-1), to: addYmd(cursor,2), cells:[cursor] };
