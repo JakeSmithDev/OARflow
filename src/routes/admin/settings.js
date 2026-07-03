@@ -44,8 +44,10 @@ router.get('/', asyncHandler(async (req, res) => {
       googleEmail: t.settings.integrations.google.email || '',
       emailProvider: emailProviderName(),
       emailFrom: t.settings.integrations.email.from || '',
+      emailReplyTo: t.settings.integrations.email.replyTo || '',
       smsEnabled: smsConfigured(t),
       smsFrom: t.settings.integrations.sms?.fromNumber || '',
+      smsMessagingServiceSid: t.settings.integrations.sms?.messagingServiceSid || '',
       smsProvider: t.settings.integrations.sms?.provider || 'twilio',
       smsBrandStatus: t.settings.integrations.sms?.brandStatus || 'not_started',
     },
@@ -255,7 +257,10 @@ router.put('/integrations/stripe', asyncHandler(async (req, res) => {
 }));
 router.put('/integrations/email', asyncHandler(async (req, res) => {
   const b = req.body || {};
-  await updateTenantSettings(req.tenant.id, { integrations: { email: { from: b.from || '', replyTo: b.replyTo || '' } } });
+  const email = {};
+  if (b.from !== undefined) email.from = b.from;
+  if (b.replyTo !== undefined) email.replyTo = b.replyTo;
+  await updateTenantSettings(req.tenant.id, { integrations: { email } });
   res.json({ ok: true });
 }));
 router.put('/integrations/sms', asyncHandler(async (req, res) => {
