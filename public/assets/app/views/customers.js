@@ -114,10 +114,13 @@ const OF = window.OF;
     function printQr(token, label) {
       const url = location.origin + '/device?d=' + token;
       const w = window.open('', '_blank');
-      w.document.write(`<html><head><title>${label}</title><script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"><\/script>
+      if (!w) return;
+      const safeLabel = OF.escape(label);
+      const safeUrl = OF.escape(url);
+      w.document.write(`<html><head><title>${safeLabel}</title><script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"><\/script>
         <style>body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;text-align:center;padding:40px}#qr{display:inline-block;margin:16px}h2{margin:0}</style></head>
-        <body><h2>${label.replace(/</g,'&lt;')}</h2><div id="qr"></div><p style="color:#475569;font-size:13px;word-break:break-all">${url}</p>
-        <script>new QRCode(document.getElementById('qr'),{text:'${url}',width:220,height:220});setTimeout(()=>window.print(),500);<\/script></body></html>`);
+        <body><h2>${safeLabel}</h2><div id="qr"></div><p style="color:#475569;font-size:13px;word-break:break-all">${safeUrl}</p>
+        <script>new QRCode(document.getElementById('qr'),{text:${JSON.stringify(url)},width:220,height:220});setTimeout(()=>window.print(),500);<\/script></body></html>`);
       w.document.close();
     }
 
