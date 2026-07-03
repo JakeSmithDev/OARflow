@@ -3,6 +3,7 @@
 import { queryOne } from './db.js';
 import { defaultEmailTemplates } from './defaults.js';
 import { sendEmail } from './email.js';
+import { hexColor } from './http.js';
 
 const DEFAULTS = Object.fromEntries(defaultEmailTemplates().map((t) => [t.type, t]));
 
@@ -26,7 +27,7 @@ export function detailsTable(rows) {
 
 export function buildShell(tenant, innerHtml) {
   const brand = tenant?.settings?.branding || {};
-  const primary = brand.primaryColor || '#0e7c4b';
+  const primary = hexColor(brand.primaryColor, '#0e7c4b');
   const company = brand.logoText || tenant?.name || 'OARFlow';
   const phone = brand.supportPhone || tenant?.contact_phone || '';
   const email = brand.supportEmail || tenant?.contact_email || '';

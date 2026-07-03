@@ -75,6 +75,7 @@ router.put('/settings', asyncHandler(async (req, res) => {
   const allowed = ['branding', 'booking', 'availability', 'invoicing', 'notifications'];
   const clean = {};
   for (const k of allowed) if (patch[k] !== undefined) clean[k] = patch[k];
+  if (clean.branding?.primaryColor !== undefined) clean.branding = { ...clean.branding, primaryColor: hexColor(clean.branding.primaryColor, '#0e7c4b') };
   const t = await updateTenantSettings(req.tenant.id, clean);
   await logAudit({ tenantId: req.tenant.id, adminUsername: req.admin.username, action: 'settings_update', details: { sections: Object.keys(clean) } });
   res.json({ ok: true, settings: redactSettings(t.settings) });
