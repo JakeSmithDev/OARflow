@@ -6,6 +6,7 @@ import { getTenantById } from './tenants.js';
 import { createAppointment, getService } from './appointments.js';
 import { createInvoice } from './invoices.js';
 import { zonedWallTimeToUtc, ymdInTimeZone } from './dates.js';
+import { getStripe } from './stripe.js';
 
 export function monthsForInterval(interval, intervalCount = 1) {
   return ({ monthly: 1, quarterly: 3, semiannual: 6, annual: 12 })[interval] || (intervalCount || 1);
@@ -67,6 +68,37 @@ export async function syncStripeSubscriptionStatus(event) {
   );
 }
 
+function stripeInvoiceRef(session) {
+  return typeof session.invoice === 'string' ? session.invoice : session.invoice?.id || null;
+}
+
+async function checkoutSessionAmountPaid(tenant, session) {
+  if (Number.isFinite(session.amount_total) && session.amount_total > 0) return session.amount_total;
+  const invoiceId = stripeInvoiceRef(session);
+  if (!invoiceId) return 0;
+  const stripe = getStripe(tenant);
+  const inv = stripe ? await stripe.invoices.retrieve(invoiceId).catch(() => null) : null;
+  return Math.round(inv?.amount_paid || 0);
+}
+
+async function recordInitialSubscriptionPayment(tenant, sub, event) {
+  const session = event.data.object;
+  const externalRef = stripeInvoiceRef(session) || event.id;
+  const dup = await queryOne('SELECT id FROM financial_events WHERE tenant_id=$1 AND external_ref=$2', [tenant.id, externalRef]);
+  if (dup) return { duplicate: true };
+
+  const amount = await checkoutSessionAmountPaid(tenant, session);
+  if (amount <= 0) return { skipped: true };
+  const plan = await queryOne('SELECT name FROM recurring_plans WHERE tenant_id=$1 AND id=$2', [tenant.id, sub.plan_id]);
+  const created = await createInvoice(tenant, {
+    customerId: sub.customer_id, subscriptionId: sub.id,
+    lineItems: [{ label: `${plan?.name || 'Recurring plan'} (initial)`, quantity: 1, unit_amount_cents: amount, taxable: false }],
+    taxRatePercent: 0,
+  }, 'stripe');
+  const { recordPayment } = await import('./invoices.js');
+  return recordPayment(tenant, created.id, { amountCents: created.total_cents, method: 'stripe', stripeRef: externalRef, externalRef, note: 'Stripe subscription initial payment' });
+}
+
 /** Stripe subscription checkout completed → record/activate the subscription. */
 export async function activateSubscriptionFromCheckout(event) {
   const session = event.data.object;
@@ -76,9 +108,9 @@ export async function activateSubscriptionFromCheckout(event) {
   const planId = Number.parseInt(meta.plan_id, 10);
   if (!tenantId || !customerId || !planId) return;
   const tenant = await getTenantById(tenantId);
-  const existing = await queryOne('SELECT id FROM subscriptions WHERE tenant_id=$1 AND stripe_subscription_id=$2', [tenantId, session.subscription]);
-  if (existing) return;
-  await enrollSubscription(tenant, { customerId, planId, stripeSubscriptionId: session.subscription });
+  const existing = await queryOne('SELECT * FROM subscriptions WHERE tenant_id=$1 AND stripe_subscription_id=$2', [tenantId, session.subscription]);
+  const sub = existing || await enrollSubscription(tenant, { customerId, planId, stripeSubscriptionId: session.subscription });
+  await recordInitialSubscriptionPayment(tenant, sub, event);
 }
 
 /** Generate the due cycle (appointment + draft invoice) for all due subscriptions. */
