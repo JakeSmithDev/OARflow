@@ -53,6 +53,7 @@
           <input id="nm" class="input" type="text" placeholder="Your full name" autocomplete="name">
           <div style="margin-top:12px"><label style="font-weight:600;font-size:13px;display:block;margin-bottom:6px">Draw your signature (optional)</label><canvas class="sig" id="sig"></canvas><div style="text-align:right;margin-top:4px"><a id="clr" class="link-btn" style="cursor:pointer">Clear</a></div></div>
           <div style="display:flex;gap:10px;margin-top:12px;flex-wrap:wrap"><button class="btn btn-primary btn-lg" id="sign" style="flex:1;min-width:160px">Agree &amp; sign</button><button class="btn btn-ghost" id="decline">Decline</button></div>
+          <div id="docErr" class="small" style="color:var(--danger);margin-top:10px"></div>
           <p class="legal">By typing your name and clicking Agree &amp; sign, you agree to this document and consent to sign electronically. Your name, date, and IP address are recorded as your signature.</p>
         </div>`:`<div class="sign-box"><button class="btn btn-primary btn-lg btn-block" id="ack">I acknowledge this document</button></div>`}`;
       let sig=null;
@@ -68,7 +69,7 @@
         catch{ signBtn.disabled=false; signBtn.textContent='Try again'; }
       };
       const dc=document.getElementById('decline');
-      if(dc) dc.onclick=async()=>{ if(!confirm('Decline this document?'))return; try{ await fetch('/api/documents/decline',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token})}); }catch{} location.reload(); };
+      if(dc) dc.onclick=async()=>{ if(!confirm('Decline this document?'))return; const err=document.getElementById('docErr'); err.textContent=''; dc.disabled=true; try{ const r=await (await fetch('/api/documents/decline',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token})})).json(); if(r.ok) location.reload(); else { err.textContent=r.error||'Could not decline this document.'; dc.disabled=false; } }catch{ err.textContent='Could not decline this document. Check your connection and try again.'; dc.disabled=false; } };
     }
 
     function setupSig(){

@@ -36,6 +36,7 @@
   <div class="wrap"><div id="view"><div class="loading-page"><span class="spinner"></span></div></div></div>
   <script>
     const esc=(s)=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const hexColor=(s,fallback='#1f8a3d')=>/^#[0-9a-fA-F]{3}$|^#[0-9a-fA-F]{6}$/.test(String(s||'').trim())?String(s).trim().toLowerCase():fallback;
     const token=new URLSearchParams(location.search).get('token') || (()=>{try{return localStorage.getItem('oarflow_field_token')}catch{return null}})() || '';
     if(token) try{ localStorage.setItem('oarflow_field_token', token); }catch{}
     const tfmt=(iso)=>iso?new Date(iso).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}):'—';
@@ -84,7 +85,7 @@
       const b=d.tenant.branding||{}; if(b.primaryColor) document.documentElement.style.setProperty('--brand',b.primaryColor);
       document.getElementById('title').textContent=`Hi, ${d.technician.name.split(' ')[0]}`;
       document.getElementById('sub').textContent=new Date(d.date+'T12:00:00').toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'})+` · ${d.jobs.length} job${d.jobs.length===1?'':'s'}`;
-      document.getElementById('view').innerHTML = (d.jobs.length&&d.routeUrl?`<a class="big-btn b-soft" href="${esc(d.routeUrl)}" target="_blank" rel="noopener" style="margin:0 0 12px">🧭 Open today's route in Maps</a>`:'') + (d.jobs.length? d.jobs.map(j=>`<div class="jobcard" data-id="${j.id}" style="border-left-color:${j.service_color||'var(--brand)'}">
+      document.getElementById('view').innerHTML = (d.jobs.length&&d.routeUrl?`<a class="big-btn b-soft" href="${esc(d.routeUrl)}" target="_blank" rel="noopener" style="margin:0 0 12px">🧭 Open today's route in Maps</a>`:'') + (d.jobs.length? d.jobs.map(j=>`<div class="jobcard" data-id="${j.id}" style="border-left-color:${hexColor(j.service_color,'var(--brand)')}">
         <div class="row between"><span class="when">${tfmt(j.scheduled_start)}</span><span class="badge no-dot">${esc(j.status)}</span></div>
         <div class="t">${esc(j.customer_name)}</div>
         <div class="muted small">${esc(j.service_name||'Service')}${j.service_address?' · '+esc(j.service_address):''}</div></div>`).join('')
@@ -118,7 +119,7 @@
         <div class="inline-error" id="jobErr"></div>
         <div class="card card-pad" style="margin-top:14px">
           <div class="row between"><strong>Photos</strong><label class="btn btn-secondary btn-sm" style="cursor:pointer">Add<input type="file" id="ph" accept="image/*" capture="environment" multiple hidden></label></div>
-          <div class="thumbs" id="thumbs">${photos.map(p=>`<a href="${p.url}" target="_blank" rel="noopener"><img src="${p.url}"></a>`).join('')||'<span class="muted small">No photos yet.</span>'}</div>
+          <div class="thumbs" id="thumbs">${photos.map(p=>`<a href="${esc(p.url)}" target="_blank" rel="noopener"><img src="${esc(p.url)}"></a>`).join('')||'<span class="muted small">No photos yet.</span>'}</div>
           <div class="inline-error" id="photoErr"></div>
         </div>
         ${(d.devices||[]).length?`<div class="card card-pad" style="margin-top:14px"><strong>Devices &amp; stations</strong>

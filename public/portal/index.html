@@ -28,6 +28,7 @@
   </div>
   <script>
     const esc = (s)=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const hexColor=(s,fallback='#1f8a3d')=>/^#[0-9a-fA-F]{3}$|^#[0-9a-fA-F]{6}$/.test(String(s||'').trim())?String(s).trim().toLowerCase():fallback;
     const qp = new URLSearchParams(location.search);
     const token = qp.get('token');
     const slug = qp.get('t') || 'default';
@@ -68,7 +69,7 @@
 
     function render(d){
       CUR=(d.invoices[0]&&d.invoices[0].currency)||'USD';
-      const visits=(items,empty)=>items.length? items.map(a=>`<div class="row-item"><div><div class="pill-when">${esc(a.service_name||'Appointment')}</div><div class="tiny muted">${a.scheduled_start?dt(a.scheduled_start):'Time to be confirmed'}${a.service_address?' · '+esc(a.service_address):''}</div></div><span class="badge no-dot" style="background:${(a.service_color||'#1f8a3d')}1a;color:${a.service_color||'#1f8a3d'}">${esc(a.status)}</span></div>`).join('') : `<div class="empty-sm">${empty}</div>`;
+      const visits=(items,empty)=>items.length? items.map(a=>{ const c=hexColor(a.service_color); return `<div class="row-item"><div><div class="pill-when">${esc(a.service_name||'Appointment')}</div><div class="tiny muted">${a.scheduled_start?dt(a.scheduled_start):'Time to be confirmed'}${a.service_address?' · '+esc(a.service_address):''}</div></div><span class="badge no-dot" style="background:${c}1a;color:${c}">${esc(a.status)}</span></div>`; }).join('') : `<div class="empty-sm">${empty}</div>`;
       const upcoming = visits(d.upcoming, 'No upcoming visits. <a href="'+esc(d.tenant.bookUrl)+'">Book a service →</a>');
       const past = (d.past||[]).length? `<div class="sec"><h3>Past visits</h3><div class="card card-pad">${visits(d.past,'')}</div></div>` : '';
       const invs = d.invoices.length? d.invoices.map(i=>{ const label=i.status==='paid'&&i.balanceCents<=0?'Paid':(i.status||'Open'); return `<div class="row-item"><div><div class="pill-when">${esc(i.number)}</div><div class="tiny muted">${dd(i.createdAt)} · ${esc(i.status)}</div></div><div style="text-align:right"><div class="mono">${money(i.balanceCents>0?i.balanceCents:i.totalCents)}</div>${i.payUrl?`<a class="btn btn-primary btn-sm" href="${esc(i.payUrl)}" style="margin-top:4px">Pay now</a>`:`<span class="tiny muted">${esc(label)}</span>`}</div></div>`; }).join('') : '<div class="empty-sm">No invoices.</div>';

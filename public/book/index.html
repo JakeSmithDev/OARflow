@@ -141,14 +141,15 @@
     const $$ = (s,r=document) => [...r.querySelectorAll(s)];
 
     function dayList() {
-      const days = []; const now = new Date();
+      const days = []; const start = ymd(new Date());
       // Show from today through the admin-configured booking window (the
       // availability API still filters out too-soon times per the lead time).
       const span = Math.max(7, Math.min(CFG.booking.maxDaysOut||60, 120));
-      for (let i=0;i<=span;i++){ const d = new Date(now.getTime()+i*86400000); days.push(d); }
+      for (let i=0;i<=span;i++){ const key = addCalendarDays(start, i); days.push({ key, date: new Date(`${key}T12:00:00Z`) }); }
       return days;
     }
     function ymd(d){ return new Intl.DateTimeFormat('en-CA',{timeZone:TZ,year:'numeric',month:'2-digit',day:'2-digit'}).format(d); }
+    function addCalendarDays(dateYmd, days){ const [y,m,d]=dateYmd.split('-').map(Number); return new Intl.DateTimeFormat('en-CA',{timeZone:'UTC',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(Date.UTC(y,m-1,d+days,12))); }
 
     const GRAN = () => (CFG.booking.granularity === 'windows' ? 'windows' : 'slots');
     const NOUN = (n=1) => GRAN()==='windows' ? (n===1?'arrival window':'arrival windows') : (n===1?'time slot':'time slots');
@@ -168,10 +169,10 @@
         <div class="navbtns">${reqMode?`<button class="btn btn-primary btn-lg" id="next" disabled>Continue</button>`:''}</div>`;
       $('#back').onclick = renderServices;
       const strip = $('#strip');
-      dayList().forEach(d => {
+      dayList().forEach(({key,date}) => {
         const btn = document.createElement('div'); btn.className='daybtn';
-        btn.innerHTML = `<div class="dow">${new Intl.DateTimeFormat('en-US',{timeZone:TZ,weekday:'short'}).format(d)}</div><div class="dnum">${new Intl.DateTimeFormat('en-US',{timeZone:TZ,day:'numeric'}).format(d)}</div>`;
-        btn.onclick = () => { $$('.daybtn').forEach(x=>x.classList.remove('active')); btn.classList.add('active'); loadSlots(ymd(d)); };
+        btn.innerHTML = `<div class="dow">${new Intl.DateTimeFormat('en-US',{timeZone:TZ,weekday:'short'}).format(date)}</div><div class="dnum">${new Intl.DateTimeFormat('en-US',{timeZone:TZ,day:'numeric'}).format(date)}</div>`;
+        btn.onclick = () => { $$('.daybtn').forEach(x=>x.classList.remove('active')); btn.classList.add('active'); loadSlots(key); };
         strip.appendChild(btn);
       });
       if (reqMode) renderPicked();
@@ -233,7 +234,7 @@
         <div class="card card-pad">
           <div class="field"><label>Full name *</label><input id="f_name" type="text" value="${esc(state.details.name||'')}"></div>
           <div class="grid cols-2">
-            <div class="field"><label>Email *</label><input id="f_email" type="email" value="${esc(state.details.email||'')}"></div>
+            <div class="field"><label>Email *</label><input id="f_email" type="email" required value="${esc(state.details.email||'')}"><div id="f_email_err" class="hint" style="color:var(--danger)"></div></div>
             <div class="field"><label>Phone</label><input id="f_phone" type="tel" value="${esc(state.details.phone||'')}"></div>
           </div>
           ${needAddr?`<div class="field"><label>Service address *</label><input id="f_addr" type="text" value="${esc(state.details.address||'')}"></div>`:''}
@@ -242,8 +243,10 @@
         <div class="navbtns"><button class="btn btn-primary btn-lg btn-block" id="review">Review &amp; ${state.mode==='request'?'send request':'confirm'}</button></div>`;
       $('#back').onclick = renderTime;
       $('#review').onclick = () => {
-        state.details = { name:$('#f_name').value.trim(), email:$('#f_email').value.trim(), phone:$('#f_phone').value.trim(), address: needAddr?$('#f_addr').value.trim():'', notes:$('#f_notes').value.trim() };
-        if (!state.details.name || !state.details.email) return alert('Name and email are required.');
+        const emailInput = $('#f_email'); const emailErr = $('#f_email_err'); emailErr.textContent=''; emailInput.value=emailInput.value.trim();
+        state.details = { name:$('#f_name').value.trim(), email:emailInput.value.trim(), phone:$('#f_phone').value.trim(), address: needAddr?$('#f_addr').value.trim():'', notes:$('#f_notes').value.trim() };
+        if (!state.details.name) return alert('Name is required.');
+        if (!emailInput.checkValidity()) { emailErr.textContent = emailInput.validity.valueMissing ? 'Email is required.' : 'Enter a valid email address.'; emailInput.focus(); return; }
         if (needAddr && !state.details.address) return alert('Service address is required.');
         renderReview();
       };

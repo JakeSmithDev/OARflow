@@ -125,7 +125,7 @@ router.post('/:slug/book', asyncHandler(async (req, res) => {
     try {
       appt = await bookInstant(tenant, {
         customerId, serviceTypeId: service.id, status: 'scheduled', source: 'online',
-        scheduledStart: slot.start, scheduledEnd: slot.end, serviceAddress: customer.address || null,
+        scheduledStart: slot.start, scheduledEnd: match.end, serviceAddress: customer.address || null,
         notes: customer.notes || null, priceCents: service.base_price_cents,
       }, { dateYmd, capacity: slotCapacity(tenant, override) });
     } catch (err) {

@@ -42,7 +42,7 @@
       document.getElementById('logo').textContent = (b.logoText||d.tenant.name||'O')[0];
       document.getElementById('company').textContent = b.logoText || d.tenant.name;
       document.getElementById('sub').textContent = `Securely save a card for ${d.customer.name}`;
-      if (!d.cards.available) { fail(`${esc(d.tenant.name)} isn't set up to store cards yet.`); return; }
+      if (!d.cards.available) { fail(`${d.tenant.name} isn't set up to store cards yet.`); return; }
       d.setup && d.setup.mock ? renderMock(d) : renderStripe(d);
     }
     function fail(msg){ document.getElementById('view').innerHTML = `<div class="card card-pad center">${esc(msg)}</div>`; }

@@ -77,6 +77,7 @@
               <button class="btn btn-primary btn-lg" id="approve" style="flex:1;min-width:180px">Approve ${money(e.totalCents)}</button>
               <button class="btn btn-ghost" id="decline">Decline</button>
             </div>
+            <div id="quoteErr" class="small" style="color:var(--danger);margin-top:10px"></div>
             <p class="legal">By typing your name and clicking Approve, you agree to this estimate and authorize ${esc(tenant.name)} to schedule the work. Your name, date, and IP address are recorded as your electronic signature.${e.terms?` ${esc(e.terms)}`:''}</p>
           </div>`);
       const ap = document.getElementById('approve');
@@ -91,8 +92,11 @@
       const dc = document.getElementById('decline');
       if (dc) dc.onclick = async () => {
         if (!confirm('Decline this estimate?')) return;
-        try { await fetch(`/api/quotes/${id}/decline`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token})}); } catch {}
-        location.reload();
+        const err=document.getElementById('quoteErr'); err.textContent=''; dc.disabled=true;
+        try {
+          const r=await (await fetch(`/api/quotes/${id}/decline`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token})})).json();
+          if(r.ok) location.reload(); else { err.textContent=r.error||'Could not decline this estimate.'; dc.disabled=false; }
+        } catch { err.textContent='Could not decline this estimate. Check your connection and try again.'; dc.disabled=false; }
       };
     }
 
