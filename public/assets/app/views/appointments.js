@@ -3,7 +3,11 @@ const OF = window.OF;
 
     let SERVICES = [];
     let TECHS = null;
+    let activeRoot = null;
     const state = { status: 'all', q: '', limit: OF.listLimit, rows: [], total: 0 };
+    function inRoot(root, selector) {
+      return root && root === activeRoot && root.isConnected ? root.querySelector(selector) : null;
+    }
 
     async function loadServices() { if (!SERVICES.length) SERVICES = (await OF.get('/api/admin/appointments/meta/services')).services; return SERVICES; }
     async function loadTechs() { if (!TECHS) TECHS = (await OF.get('/api/admin/technicians')).technicians; return TECHS; }
@@ -39,16 +43,18 @@ const OF = window.OF;
       return params;
     }
 
-    async function refresh({ append = false } = {}) {
+    async function refresh(root, { append = false } = {}) {
       const d = await OF.get('/api/admin/appointments?' + listParams(append ? state.rows.length : 0));
       state.rows = append ? state.rows.concat(d.appointments || []) : (d.appointments || []);
       state.total = d.total || state.rows.length;
       const c = d.counts;
-      document.getElementById('chips').innerHTML =
+      const chips = inRoot(root, '#chips');
+      const list = inRoot(root, '#list');
+      if (!chips || !list) return;
+      chips.innerHTML =
         chip('all','All',c.all)+chip('requested','Requested',c.requested||0)+chip('scheduled','Scheduled',c.scheduled||0)+chip('completed','Completed',c.completed||0)+chip('no_show','No-show',c.no_show||0)+chip('canceled','Canceled',c.canceled||0);
-      document.querySelectorAll('#chips .chip').forEach(b=>b.onclick=()=>{ state.status=b.dataset.status; refresh(); });
+      chips.querySelectorAll('.chip').forEach(b=>b.onclick=()=>{ state.status=b.dataset.status; refresh(root); });
       const rows = state.rows;
-      const list = document.getElementById('list');
       list.innerHTML = rows.length ? `<div class="table-wrap"><table class="tbl">
         <thead><tr><th>When</th><th>Customer</th><th>Service</th><th>Status</th><th class="right">Price</th></tr></thead>
         <tbody>${rows.map(a=>`<tr class="clickable" data-id="${a.id}">
@@ -58,8 +64,8 @@ const OF = window.OF;
           <td>${OF.statusBadge(a.status)}</td>
           <td class="right mono">${OF.money(a.price_cents)}</td></tr>`).join('')}</tbody></table></div>${OF.listFooter({ shown: rows.length, total: state.total, label: 'appointments' })}`
         : `<div class="empty"><div class="ic">${OF.icon('appointments',22)}</div><p>No appointments found.</p></div>${OF.listFooter({ shown: 0, total: state.total, label: 'appointments' })}`;
-      list.querySelectorAll('tr[data-id]').forEach(r=>r.onclick=()=>openDrawer(r.dataset.id));
-      list.querySelector('[data-load-more]')?.addEventListener('click', () => refresh({ append: true }));
+      list.querySelectorAll('tr[data-id]').forEach(r=>r.onclick=()=>openDrawer(root, r.dataset.id));
+      list.querySelector('[data-load-more]')?.addEventListener('click', () => refresh(root, { append: true }));
     }
 
     function filesHtml(files){ return (files&&files.length)?`<div class="filegrid">${files.map(f=>f.contentType&&f.contentType.startsWith('image/')
@@ -67,7 +73,7 @@ const OF = window.OF;
         : `<div class="filecard doc" data-fid="${f.id}"><a href="${f.url}" target="_blank" rel="noopener" class="doclink">${OF.icon('invoices',20)}<span>${OF.escape(f.filename)}</span></a><button class="filedel" data-del="${f.id}" title="Delete">✕</button></div>`).join('')}</div>`
       : '<p class="muted small">No photos or files yet.</p>'; }
 
-    async function openDrawer(id) {
+    async function openDrawer(root, id) {
       const { appointment: a, invoices, technicians, files } = await OF.get('/api/admin/appointments/'+id);
       const isReq = a.status==='requested';
       const crew = technicians || [];
@@ -116,7 +122,7 @@ const OF = window.OF;
           </div>
         </div>`, { wide:true });
 
-      const reload = () => { dr.close(); refresh(); };
+      const reload = () => { dr.close(); refresh(root); };
       dr.q('#assignBtn')?.addEventListener('click', ()=>assignModal(id, crew, (updated)=>{ dr.q('#crewBox').innerHTML = updated.length?updated.map(techChip).join(''):'<span class="muted small">No one assigned yet.</span>'; }));
       function bindFiles(){ dr.el.querySelectorAll('[data-del]').forEach(b=>b.onclick=async()=>{ if(!(await OF.confirm({title:'Delete this file?',confirmText:'Delete',danger:true})))return; await OF.del(`/api/admin/appointments/${id}/files/${b.dataset.del}`); jobFiles=jobFiles.filter(f=>String(f.id)!==b.dataset.del); dr.q('#filesBox').innerHTML=filesHtml(jobFiles); }); }
       bindFiles();
@@ -215,7 +221,7 @@ const OF = window.OF;
       m.q('#srPrint').onclick=()=>{ const w=window.open('','_blank'); w.document.write(`<html><head><title>Service Report</title><link rel="stylesheet" href="/assets/app/app.css"></head><body style="padding:24px">${m.q('#srBody').innerHTML}</body></html>`); w.document.close(); w.focus(); setTimeout(()=>w.print(),300); };
     }
 
-    async function newAppointment(prefill={}) {
+    async function newAppointment(root, prefill={}) {
       await loadServices();
       let picked = prefill.customerId ? { id: prefill.customerId, name: prefill.name || '', address: prefill.address || '' } : null;
       const m = OF.modal(`
@@ -253,7 +259,7 @@ const OF = window.OF;
           serviceId:+m.q('#n_service').value, date:m.q('#n_date').value, time:m.q('#n_time').value, serviceAddress:m.q('#n_addr').value.trim(), notes:m.q('#n_notes').value.trim(), notify:m.q('#n_notify').checked };
         if(!picked && !name) return OF.toast('Customer, date and time are required','error');
         if(!body.date||!body.time) return OF.toast('Customer, date and time are required','error');
-        if(await doForce(force=>OF.post('/api/admin/appointments',{...body,force}))){ m.close(); OF.toast('Appointment created','ok'); refresh(); }
+        if(await doForce(force=>OF.post('/api/admin/appointments',{...body,force}))){ m.close(); OF.toast('Appointment created','ok'); refresh(root); }
       });
     }
 
@@ -264,22 +270,23 @@ const OF = window.OF;
     }
 
     OF.page({ active:'appointments', title:'Appointments', subtitle:'Jobs, requests & history', render: async (root, ctx) => {
+      activeRoot = root;
       ctx.setActions(`<button class="btn btn-secondary btn-sm" id="exportBtn">Export CSV</button><button class="btn btn-primary btn-sm" id="newBtn">${OF.icon('plus',15)} New appointment</button>`);
       root.innerHTML = `<div class="row between wrap" style="margin-bottom:16px;gap:10px">
         <div class="row wrap" id="chips" style="gap:8px"></div>
         ${OF.searchInput({ placeholder:'Search name or email…', value: state.q })}
       </div><div id="list"><div class="loading-page"><span class="spinner"></span></div></div>`;
-      document.getElementById('newBtn').onclick=()=>newAppointment();
+      document.getElementById('newBtn').onclick=()=>newAppointment(root);
       document.getElementById('exportBtn').onclick=exportAppointments;
-      document.getElementById('search').addEventListener('input', OF.debounce((e)=>{ state.q=e.target.value.trim(); refresh(); },300));
-      await refresh();
-      const id = OF.qs('id'); if (id) openDrawer(id);
+      inRoot(root, '#search')?.addEventListener('input', OF.debounce((e)=>{ state.q=e.target.value.trim(); refresh(root); },300));
+      await refresh(root);
+      const id = OF.qs('id'); if (id) openDrawer(root, id);
       if (OF.qs('new')) {
         const cid = OF.qs('customer');
         if (cid) {
-          try { const c = (await OF.get('/api/admin/customers/'+cid)).customer; newAppointment({ customerId:+cid, name:c.name, address:c.address||'' }); }
-          catch { newAppointment({ name: OF.qs('name') || '' }); }
-        } else newAppointment({ name: OF.qs('name') || '' });
+          try { const c = (await OF.get('/api/admin/customers/'+cid)).customer; newAppointment(root, { customerId:+cid, name:c.name, address:c.address||'' }); }
+          catch { newAppointment(root, { name: OF.qs('name') || '' }); }
+        } else newAppointment(root, { name: OF.qs('name') || '' });
       }
     }});
   

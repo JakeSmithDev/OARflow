@@ -1,18 +1,23 @@
 // Auto-generated SPA view module. Registers itself via OF.page() on import.
 const OF = window.OF;
 
+    let activeRoot = null;
     const state = { q: '', limit: OF.listLimit, rows: [], total: 0 };
+    function inRoot(root, selector) {
+      return root && root === activeRoot && root.isConnected ? root.querySelector(selector) : null;
+    }
     function params(offset = 0) {
       const p = new URLSearchParams({ limit: state.limit, offset });
       if (state.q) p.set('q', state.q);
       return p;
     }
-    async function refresh({ append = false } = {}) {
+    async function refresh(root, { append = false } = {}) {
       const offset = append ? state.rows.length : 0;
       const d = await OF.get('/api/admin/customers?' + params(offset));
       state.rows = append ? state.rows.concat(d.customers || []) : (d.customers || []);
       state.total = d.total || state.rows.length;
-      const list = document.getElementById('list');
+      const list = inRoot(root, '#list');
+      if (!list) return;
       list.innerHTML = state.rows.length ? `<div class="table-wrap"><table class="tbl">
         <thead><tr><th>Customer</th><th>Contact</th><th class="right">Visits</th><th class="right">Lifetime</th><th class="right">Balance</th></tr></thead>
         <tbody>${state.rows.map(c=>`<tr class="clickable" data-id="${c.id}">
@@ -22,11 +27,11 @@ const OF = window.OF;
           <td class="right mono">${OF.money(c.ltv_cents)}</td>
           <td class="right">${Number(c.balance_cents)>0?`<span class="badge warn no-dot">${OF.money(c.balance_cents)}</span>`:'<span class="muted">—</span>'}</td></tr>`).join('')}</tbody></table></div>${OF.listFooter({ shown: state.rows.length, total: state.total, label: 'customers' })}`
         : `<div class="empty"><div class="ic">${OF.icon('customers',22)}</div><p>No customers yet.</p></div>${OF.listFooter({ shown: 0, total: state.total, label: 'customers' })}`;
-      list.querySelectorAll('tr[data-id]').forEach(r=>r.onclick=()=>openDrawer(r.dataset.id));
-      list.querySelector('[data-load-more]')?.addEventListener('click', () => refresh({ append: true }));
+      list.querySelectorAll('tr[data-id]').forEach(r=>r.onclick=()=>openDrawer(root, r.dataset.id));
+      list.querySelector('[data-load-more]')?.addEventListener('click', () => refresh(root, { append: true }));
     }
 
-    async function openDrawer(id) {
+    async function openDrawer(root, id) {
       window.__custId = id;
       const d = await OF.get('/api/admin/customers/'+id);
       const c = d.customer;
@@ -100,7 +105,7 @@ const OF = window.OF;
       dr.q('#portalBtn').onclick=async()=>{ const r=await OF.post(`/api/admin/customers/${id}/portal-link`); navigator.clipboard?.writeText(r.url); OF.toast('Portal link copied — share it with the customer','ok'); };
       dr.q('#saveCust').onclick=async()=>{
         await OF.patch('/api/admin/customers/'+id,{name:dr.q('#e_name').value,email:dr.q('#e_email').value,phone:dr.q('#e_phone').value,address:dr.q('#e_addr').value,city:dr.q('#e_city').value,state:dr.q('#e_state').value,postalCode:dr.q('#e_zip').value,notes:dr.q('#e_notes').value});
-        OF.toast('Saved','ok'); dr.close(); refresh();
+        OF.toast('Saved','ok'); dr.close(); refresh(root);
       };
     }
     function section(title, inner){ return `<div style="margin-bottom:16px"><div class="muted tiny" style="text-transform:uppercase;letter-spacing:.04em;font-weight:700;margin-bottom:6px">${title}</div>${inner||'<p class="muted small">None yet.</p>'}</div>`; }
@@ -185,7 +190,7 @@ const OF = window.OF;
       m.q('#ud_add').onclick=async()=>{ const label=m.q('#ud_label').value.trim(); if(!label)return; if(!custId){ OF.toast('Reopen from the customer to add devices','error'); return; } await OF.post('/api/admin/devices',{ customerId:+custId, label, unitId:+unitId, deviceType:'bait_station' }); OF.toast('Device added','ok'); m.close(); unitModal(unitId); };
     }
 
-    function addCustomer() {
+    function addCustomer(root) {
       const m = OF.modal(`<div class="modal-head"><h3>Add customer</h3><button class="x" data-close>&times;</button></div>
         <div class="modal-body">
           <div class="field"><label>Name *</label><input id="c_name"></div>
@@ -196,7 +201,7 @@ const OF = window.OF;
         <div class="modal-foot"><button class="btn btn-secondary" data-close>Cancel</button><button class="btn btn-primary" id="c_save">Add</button></div>`);
       m.q('#c_save').onclick=async()=>{ if(!m.q('#c_name').value.trim()) return OF.toast('Name required','error');
         await OF.post('/api/admin/customers',{name:m.q('#c_name').value.trim(),email:m.q('#c_email').value.trim(),phone:m.q('#c_phone').value.trim(),address:m.q('#c_addr').value.trim(),city:m.q('#c_city').value.trim(),state:m.q('#c_state').value.trim(),postalCode:m.q('#c_zip').value.trim()});
-        m.close(); OF.toast('Customer added','ok'); refresh(); };
+        m.close(); OF.toast('Customer added','ok'); refresh(root); };
     }
 
     function exportCustomers() {
@@ -205,7 +210,7 @@ const OF = window.OF;
       location.href = '/api/admin/customers/export.csv' + (p.toString() ? '?' + p : '');
     }
 
-    function importCustomers() {
+    function importCustomers(root) {
       let csv = '';
       let preview = null;
       const m = OF.modal(`<div class="modal-head"><h3>Import customers</h3><button class="x" data-close>&times;</button></div>
@@ -238,19 +243,20 @@ const OF = window.OF;
         try {
           const r = await OF.post('/api/admin/customers/import', { csv, dryRun:false });
           OF.toast(`Imported ${r.inserted} customer${r.inserted===1?'':'s'}`, 'ok');
-          m.close(); refresh();
+          m.close(); refresh(root);
         } catch (err) { OF.toast(err.message, 'error'); }
       };
     }
 
     OF.page({ active:'customers', title:'Customers', subtitle:'Your customer book', render: async (root, ctx) => {
+      activeRoot = root;
       ctx.setActions(`<button class="btn btn-secondary btn-sm" id="importBtn">Import CSV</button><button class="btn btn-secondary btn-sm" id="exportBtn">Export CSV</button><button class="btn btn-primary btn-sm" id="addBtn">${OF.icon('plus',15)} Add customer</button>`);
       root.innerHTML = `<div class="row between" style="margin-bottom:16px">${OF.searchInput({ placeholder:'Search customers…', value: state.q })}</div><div id="list"><div class="loading-page"><span class="spinner"></span></div></div>`;
-      document.getElementById('addBtn').onclick=addCustomer;
+      document.getElementById('addBtn').onclick=()=>addCustomer(root);
       document.getElementById('exportBtn').onclick=exportCustomers;
-      document.getElementById('importBtn').onclick=importCustomers;
-      document.getElementById('search').addEventListener('input', OF.debounce(e=>{ state.q=e.target.value.trim(); refresh(); },300));
-      await refresh();
-      if (OF.qs('id')) openDrawer(OF.qs('id'));
+      document.getElementById('importBtn').onclick=()=>importCustomers(root);
+      inRoot(root, '#search')?.addEventListener('input', OF.debounce(e=>{ state.q=e.target.value.trim(); refresh(root); },300));
+      await refresh(root);
+      if (OF.qs('id')) openDrawer(root, OF.qs('id'));
     }});
   

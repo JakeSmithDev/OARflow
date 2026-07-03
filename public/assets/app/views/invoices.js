@@ -2,29 +2,36 @@
 const OF = window.OF;
 
     let META = { presets: [], defaults: {}, stripeEnabled: false };
+    let activeRoot = null;
     const state = { status: 'all', q: '', limit: OF.listLimit, rows: [], total: 0 };
     const centsToStr = (c) => ((c||0)/100).toFixed(2);
     const strToCents = (s) => Math.round((parseFloat(String(s).replace(/[^0-9.\-]/g,''))||0)*100);
+    function inRoot(root, selector) {
+      return root && root === activeRoot && root.isConnected ? root.querySelector(selector) : null;
+    }
 
     function listParams(offset = 0) {
       const p = new URLSearchParams({ status: state.status, limit: state.limit, offset }); if (state.q) p.set('q', state.q);
       return p;
     }
-    async function refresh({ append = false } = {}) {
+    async function refresh(root, { append = false } = {}) {
       const p = listParams(append ? state.rows.length : 0);
       const d = await OF.get('/api/admin/invoices?'+p);
       state.rows = append ? state.rows.concat(d.invoices || []) : (d.invoices || []);
       state.total = d.total || state.rows.length;
       const s = d.summary;
-      document.getElementById('tiles').innerHTML = `<div class="grid cols-3" style="margin-bottom:18px">
+      const tiles = inRoot(root, '#tiles');
+      const chips = inRoot(root, '#chips');
+      const list = inRoot(root, '#list');
+      if (!tiles || !chips || !list) return;
+      tiles.innerHTML = `<div class="grid cols-3" style="margin-bottom:18px">
         <div class="stat"><div class="label">Outstanding</div><div class="value">${OF.money(s.outstanding)}</div></div>
         <div class="stat"><div class="label">Collected (all time)</div><div class="value">${OF.money(s.collected)}</div></div>
         <div class="stat"><div class="label">Draft (unsent)</div><div class="value">${OF.money(s.draft)}</div></div></div>`;
-      document.getElementById('chips').innerHTML = ['all','draft','sent','partial','paid','void']
+      chips.innerHTML = ['all','draft','sent','partial','paid','void']
         .map(k=>`<button class="chip ${state.status===k?'active':''}" data-s="${k}">${k[0].toUpperCase()+k.slice(1)}</button>`).join('');
-      document.querySelectorAll('#chips .chip').forEach(b=>b.onclick=()=>{state.status=b.dataset.s;refresh();});
+      chips.querySelectorAll('.chip').forEach(b=>b.onclick=()=>{state.status=b.dataset.s;refresh(root);});
       const rows = state.rows;
-      const list = document.getElementById('list');
       list.innerHTML = rows.length?`<div class="table-wrap"><table class="tbl">
         <thead><tr><th>Invoice</th><th>Customer</th><th>Status</th><th class="right">Total</th><th class="right">Balance</th><th></th></tr></thead>
         <tbody>${rows.map(i=>`<tr class="clickable" data-id="${i.id}"><td class="cell-strong">${OF.escape(i.number)}<div class="tiny muted">${OF.date(i.created_at)}</div></td>
@@ -32,11 +39,11 @@ const OF = window.OF;
           <td class="right mono">${OF.money(i.total_cents)}</td>
           <td class="right mono">${OF.money(i.total_cents-i.amount_paid_cents)}</td><td></td></tr>`).join('')}</tbody></table></div>${OF.listFooter({ shown: rows.length, total: state.total, label: 'invoices' })}`
         : `<div class="empty"><div class="ic">${OF.icon('invoices',22)}</div><p>No invoices yet.</p></div>${OF.listFooter({ shown: 0, total: state.total, label: 'invoices' })}`;
-      list.querySelectorAll('tr[data-id]').forEach(r=>r.onclick=()=>openDrawer(r.dataset.id));
-      list.querySelector('[data-load-more]')?.addEventListener('click', () => refresh({ append: true }));
+      list.querySelectorAll('tr[data-id]').forEach(r=>r.onclick=()=>openDrawer(root, r.dataset.id));
+      list.querySelector('[data-load-more]')?.addEventListener('click', () => refresh(root, { append: true }));
     }
 
-    async function openDrawer(id) {
+    async function openDrawer(root, id) {
       const d = await OF.get('/api/admin/invoices/'+id);
       const i = d.invoice;
       const editable = i.status==='draft' || i.status==='sent' || i.status==='partial';
@@ -77,7 +84,7 @@ const OF = window.OF;
           <div style="margin-top:8px"><div class="muted tiny" style="text-transform:uppercase;letter-spacing:.04em;font-weight:700;margin-bottom:6px">Payments</div>${evHtml}</div>
         </div>`, { wide:true });
 
-      const reload = () => { dr.close(); refresh(); };
+      const reload = () => { dr.close(); refresh(root); };
       dr.q('#sendBtn')?.addEventListener('click', async()=>{ try{ const r=await OF.post(`/api/admin/invoices/${id}/send`); OF.toast(r.emailed?'Invoice sent ✓':'Marked sent (email not configured)','ok'); reload(); }catch(e){OF.toast(e.message,'error');}});
       dr.q('#payBtn')?.addEventListener('click', ()=>dr.q('#payForm').classList.toggle('hidden'));
       dr.q('#chargeBtn')?.addEventListener('click', async()=>{
@@ -94,12 +101,12 @@ const OF = window.OF;
         m.el.querySelectorAll('[data-pm]').forEach(b=>b.onclick=()=>{ const pm=cards.find(c=>String(c.id)===b.dataset.pm); m.close(); charge(pm); });
       });
       dr.q('#p_save')?.addEventListener('click', async()=>{ await OF.post(`/api/admin/invoices/${id}/payment`,{amountCents:strToCents(dr.q('#p_amt').value),method:dr.q('#p_method').value,sendReceipt:dr.q('#p_receipt').checked}); OF.toast('Payment recorded','ok'); reload(); });
-      dr.q('#editBtn')?.addEventListener('click', ()=>{ dr.close(); builder({ editId:id, invoice:i }); });
+      dr.q('#editBtn')?.addEventListener('click', ()=>{ dr.close(); builder(root, { editId:id, invoice:i }); });
       dr.q('#voidBtn')?.addEventListener('click', async()=>{ if(!(await OF.confirm({title:'Void invoice?',confirmText:'Void',danger:true}))) return; await OF.post(`/api/admin/invoices/${id}/void`); OF.toast('Voided','ok'); reload(); });
       dr.q('#copyBtn')?.addEventListener('click', ()=>{ navigator.clipboard?.writeText(d.payUrl); OF.toast('Pay link copied','ok'); });
     }
 
-    async function builder({ editId, invoice, customerId, customerName, appointmentId } = {}) {
+    async function builder(root, { editId, invoice, customerId, customerName, appointmentId } = {}) {
       const items = invoice ? invoice.line_items.map(li=>({...li})) : [];
       let cust = { id: customerId || invoice?.customer_id || null, name: customerName || invoice?.customer_name || '' };
       let taxRate = invoice ? invoice.tax_rate_percent : META.defaults.taxRatePercent;
@@ -174,7 +181,7 @@ const OF = window.OF;
             try { await OF.post(`/api/admin/invoices/${inv.id}/send`); OF.toast('Invoice saved & sent','ok'); }
             catch (sendErr) {
               if (!editId) {
-                m.close(); await refresh(); openDrawer(inv.id);
+                m.close(); await refresh(root); openDrawer(root, inv.id);
                 OF.toast(`Saved as draft — send failed: ${sendErr.message}`,'error');
                 return;
               }
@@ -182,7 +189,7 @@ const OF = window.OF;
             }
           }
           else OF.toast('Invoice saved','ok');
-          m.close(); refresh();
+          m.close(); refresh(root);
         } catch(e){ OF.toast(e.message,'error'); }
       }
       m.q('#b_save').onclick = ()=>save(false);
@@ -196,18 +203,19 @@ const OF = window.OF;
     }
 
     OF.page({ active:'invoices', title:'Invoices', subtitle:'Customizable invoices — sent only when you choose', render: async (root, ctx) => {
+      activeRoot = root;
       META = await OF.get('/api/admin/invoices/meta');
       ctx.setActions(`<button class="btn btn-secondary btn-sm" id="exportBtn">Export CSV</button><button class="btn btn-primary btn-sm" id="newBtn">${OF.icon('plus',15)} New invoice</button>`);
       root.innerHTML = `<div id="tiles"></div><div class="row between wrap" style="gap:10px;margin-bottom:14px"><div class="row wrap" id="chips" style="gap:8px"></div>${OF.searchInput({ placeholder:'Search invoice or customer…', value: state.q })}</div><div id="list"><div class="loading-page"><span class="spinner"></span></div></div>`;
-      document.getElementById('newBtn').onclick=()=>builder({});
+      document.getElementById('newBtn').onclick=()=>builder(root, {});
       document.getElementById('exportBtn').onclick=exportInvoices;
-      document.getElementById('search').addEventListener('input', OF.debounce((e)=>{ state.q=e.target.value.trim(); refresh(); },300));
-      await refresh();
-      if (OF.qs('id')) openDrawer(OF.qs('id'));
+      inRoot(root, '#search')?.addEventListener('input', OF.debounce((e)=>{ state.q=e.target.value.trim(); refresh(root); },300));
+      await refresh(root);
+      if (OF.qs('id')) openDrawer(root, OF.qs('id'));
       if (OF.qs('new')) {
         const cid = OF.qs('customer'); let cname='';
         if (cid) { try { cname=(await OF.get('/api/admin/customers/'+cid)).customer.name; } catch{} }
-        builder({ customerId: cid?+cid:null, customerName: cname, appointmentId: OF.qs('appointment')?+OF.qs('appointment'):null });
+        builder(root, { customerId: cid?+cid:null, customerName: cname, appointmentId: OF.qs('appointment')?+OF.qs('appointment'):null });
       }
     }});
   

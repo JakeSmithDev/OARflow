@@ -3,29 +3,36 @@
 const OF = window.OF;
 
     let META = { presets: [], defaults: {} };
+    let activeRoot = null;
     const state = { status: 'all', q: '', limit: OF.listLimit, rows: [], total: 0 };
     const centsToStr = (c) => ((c||0)/100).toFixed(2);
     const strToCents = (s) => Math.round((parseFloat(String(s).replace(/[^0-9.\-]/g,''))||0)*100);
+    function inRoot(root, selector) {
+      return root && root === activeRoot && root.isConnected ? root.querySelector(selector) : null;
+    }
 
     function listParams(offset = 0) {
       const p = new URLSearchParams({ status: state.status, limit: state.limit, offset }); if (state.q) p.set('q', state.q);
       return p;
     }
-    async function refresh({ append = false } = {}) {
+    async function refresh(root, { append = false } = {}) {
       const p = listParams(append ? state.rows.length : 0);
       const d = await OF.get('/api/admin/estimates?'+p);
       state.rows = append ? state.rows.concat(d.estimates || []) : (d.estimates || []);
       state.total = d.total || state.rows.length;
       const s = d.summary;
-      document.getElementById('tiles').innerHTML = `<div class="grid cols-3" style="margin-bottom:18px">
+      const tiles = inRoot(root, '#tiles');
+      const chips = inRoot(root, '#chips');
+      const list = inRoot(root, '#list');
+      if (!tiles || !chips || !list) return;
+      tiles.innerHTML = `<div class="grid cols-3" style="margin-bottom:18px">
         <div class="stat"><div class="label">Awaiting approval</div><div class="value">${OF.money(s.outstanding)}</div></div>
         <div class="stat"><div class="label">Approved</div><div class="value">${OF.money(s.accepted)}</div></div>
         <div class="stat"><div class="label">Draft</div><div class="value">${OF.money(s.draft)}</div></div></div>`;
-      document.getElementById('chips').innerHTML = ['all','draft','sent','accepted','declined','converted']
+      chips.innerHTML = ['all','draft','sent','accepted','declined','converted']
         .map(k=>`<button class="chip ${state.status===k?'active':''}" data-s="${k}">${k[0].toUpperCase()+k.slice(1)}</button>`).join('');
-      document.querySelectorAll('#chips .chip').forEach(b=>b.onclick=()=>{state.status=b.dataset.s;refresh();});
+      chips.querySelectorAll('.chip').forEach(b=>b.onclick=()=>{state.status=b.dataset.s;refresh(root);});
       const rows = state.rows;
-      const list = document.getElementById('list');
       list.innerHTML = rows.length?`<div class="table-wrap"><table class="tbl">
         <thead><tr><th>Estimate</th><th>Customer</th><th>Status</th><th class="right">Total</th><th>Good through</th><th></th></tr></thead>
         <tbody>${rows.map(e=>`<tr class="clickable" data-id="${e.id}"><td class="cell-strong">${OF.escape(e.number)}<div class="tiny muted">${OF.date(e.created_at)}</div></td>
@@ -33,11 +40,11 @@ const OF = window.OF;
           <td class="right mono">${OF.money(e.total_cents)}</td>
           <td class="small muted">${e.valid_until?OF.date(e.valid_until):'—'}</td><td></td></tr>`).join('')}</tbody></table></div>${OF.listFooter({ shown: rows.length, total: state.total, label: 'estimates' })}`
         : `<div class="empty"><div class="ic">${OF.icon('estimates',22)}</div><p>No estimates yet. Create one to send a customer an online approval link.</p></div>${OF.listFooter({ shown: 0, total: state.total, label: 'estimates' })}`;
-      list.querySelectorAll('tr[data-id]').forEach(r=>r.onclick=()=>openDrawer(r.dataset.id));
-      list.querySelector('[data-load-more]')?.addEventListener('click', () => refresh({ append: true }));
+      list.querySelectorAll('tr[data-id]').forEach(r=>r.onclick=()=>openDrawer(root, r.dataset.id));
+      list.querySelector('[data-load-more]')?.addEventListener('click', () => refresh(root, { append: true }));
     }
 
-    async function openDrawer(id) {
+    async function openDrawer(root, id) {
       const d = await OF.get('/api/admin/estimates/'+id);
       const e = d.estimate;
       const editable = e.status==='draft' || e.status==='sent';
@@ -66,15 +73,15 @@ const OF = window.OF;
           ${d.acceptUrl?`<div class="small muted" style="word-break:break-all">Approve link: ${OF.escape(d.acceptUrl)}</div>`:''}
         </div>`, { wide:true });
 
-      const reload = () => { dr.close(); refresh(); };
+      const reload = () => { dr.close(); refresh(root); };
       dr.q('#sendBtn')?.addEventListener('click', async()=>{ try{ const r=await OF.post(`/api/admin/estimates/${id}/send`); OF.toast(r.emailed?'Estimate sent ✓':'Marked sent (email not configured)','ok'); reload(); }catch(err){OF.toast(err.message,'error');}});
       dr.q('#convBtn')?.addEventListener('click', async()=>{ try{ const r=await OF.post(`/api/admin/estimates/${id}/convert`); OF.toast('Converted to invoice','ok'); dr.close(); OF.go('/admin/invoices?id='+r.invoiceId); }catch(err){OF.toast(err.message,'error');}});
-      dr.q('#editBtn')?.addEventListener('click', ()=>{ dr.close(); builder({ editId:id, estimate:e }); });
+      dr.q('#editBtn')?.addEventListener('click', ()=>{ dr.close(); builder(root, { editId:id, estimate:e }); });
       dr.q('#declineBtn')?.addEventListener('click', async()=>{ if(!(await OF.confirm({title:'Mark this estimate declined?',confirmText:'Mark declined',danger:true}))) return; await OF.post(`/api/admin/estimates/${id}/decline`); OF.toast('Marked declined','ok'); reload(); });
       dr.q('#copyBtn')?.addEventListener('click', ()=>{ navigator.clipboard?.writeText(d.acceptUrl); OF.toast('Approve link copied','ok'); });
     }
 
-    async function builder({ editId, estimate, customerId, customerName } = {}) {
+    async function builder(root, { editId, estimate, customerId, customerName } = {}) {
       const items = estimate ? estimate.line_items.map(li=>({...li})) : [];
       let cust = { id: customerId || estimate?.customer_id || null, name: customerName || estimate?.customer_name || '' };
       let taxRate = estimate ? estimate.tax_rate_percent : META.defaults.taxRatePercent;
@@ -149,7 +156,7 @@ const OF = window.OF;
             try { await OF.post(`/api/admin/estimates/${est.id}/send`); OF.toast('Estimate saved & sent','ok'); }
             catch (sendErr) {
               if (!editId) {
-                m.close(); await refresh(); openDrawer(est.id);
+                m.close(); await refresh(root); openDrawer(root, est.id);
                 OF.toast(`Saved as draft — send failed: ${sendErr.message}`,'error');
                 return;
               }
@@ -157,7 +164,7 @@ const OF = window.OF;
             }
           }
           else OF.toast('Estimate saved','ok');
-          m.close(); refresh();
+          m.close(); refresh(root);
         } catch(err){ OF.toast(err.message,'error'); }
       }
       m.q('#b_save').onclick = ()=>save(false);
@@ -165,16 +172,17 @@ const OF = window.OF;
     }
 
     OF.page({ active:'estimates', title:'Estimates', subtitle:'Quotes customers can approve online — then convert to invoices', render: async (root, ctx) => {
+      activeRoot = root;
       META = await OF.get('/api/admin/invoices/meta');
       ctx.setActions(`<button class="btn btn-primary btn-sm" id="newBtn">${OF.icon('plus',15)} New estimate</button>`);
       root.innerHTML = `<div id="tiles"></div><div class="row between wrap" style="gap:10px;margin-bottom:14px"><div class="row wrap" id="chips" style="gap:8px"></div>${OF.searchInput({ placeholder:'Search estimate or customer…', value: state.q })}</div><div id="list"><div class="loading-page"><span class="spinner"></span></div></div>`;
-      document.getElementById('newBtn').onclick=()=>builder({});
-      document.getElementById('search').addEventListener('input', OF.debounce((e)=>{ state.q=e.target.value.trim(); refresh(); },300));
-      await refresh();
-      if (OF.qs('id')) openDrawer(OF.qs('id'));
+      document.getElementById('newBtn').onclick=()=>builder(root, {});
+      inRoot(root, '#search')?.addEventListener('input', OF.debounce((e)=>{ state.q=e.target.value.trim(); refresh(root); },300));
+      await refresh(root);
+      if (OF.qs('id')) openDrawer(root, OF.qs('id'));
       if (OF.qs('new')) {
         const cid = OF.qs('customer'); let cname='';
         if (cid) { try { cname=(await OF.get('/api/admin/customers/'+cid)).customer.name; } catch{} }
-        builder({ customerId: cid?+cid:null, customerName: cname });
+        builder(root, { customerId: cid?+cid:null, customerName: cname });
       }
     }});
