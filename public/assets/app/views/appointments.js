@@ -222,6 +222,6 @@ const OF = window.OF;
       document.getElementById('search').addEventListener('input', OF.debounce((e)=>{ state.q=e.target.value.trim(); refresh(); },300));
       await refresh();
       const id = OF.qs('id'); if (id) openDrawer(id);
-      if (OF.qs('new')) newAppointment();
+      if (OF.qs('new')) newAppointment({ name: OF.qs('name') || '' });
     }});
   
