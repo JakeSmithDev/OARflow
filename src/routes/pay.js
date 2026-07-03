@@ -5,9 +5,12 @@ import { queryOne } from '../lib/db.js';
 import { getTenantById } from '../lib/tenants.js';
 import { balanceCents } from '../lib/invoices.js';
 import { isConfigured as stripeConfigured, createInvoiceCheckout } from '../lib/stripe.js';
+import { rateLimit } from '../lib/rate_limit.js';
 import { config } from '../config.js';
 
 const router = express.Router();
+const limitView = rateLimit({ endpoint: 'pay_get', windowMinutes: 10, maxCount: 60 });
+const limitCheckout = rateLimit({ endpoint: 'pay_checkout', windowMinutes: 10, maxCount: 10 });
 
 async function loadInvoice(id, token) {
   const inv = await queryOne(
@@ -18,7 +21,7 @@ async function loadInvoice(id, token) {
   return inv;
 }
 
-router.get('/:id', asyncHandler(async (req, res) => {
+router.get('/:id', limitView, asyncHandler(async (req, res) => {
   const inv = await loadInvoice(toInt(req.params.id), String(req.query.token || ''));
   if (!inv) return notFound(res, 'Invoice not found.');
   const tenant = await getTenantById(inv.tenant_id);
@@ -37,7 +40,7 @@ router.get('/:id', asyncHandler(async (req, res) => {
   });
 }));
 
-router.post('/:id/checkout', asyncHandler(async (req, res) => {
+router.post('/:id/checkout', limitCheckout, asyncHandler(async (req, res) => {
   const inv = await loadInvoice(toInt(req.params.id), String((req.body || {}).token || ''));
   if (!inv) return notFound(res, 'Invoice not found.');
   if (inv.status === 'void') return badRequest(res, 'This invoice is no longer payable.');

@@ -1,5 +1,6 @@
 // Simple DB-backed sliding-window rate limiter for public endpoints.
 import { query } from './db.js';
+import { getClientIp } from './http.js';
 
 export async function consumeRateLimit({ ip, endpoint, windowMinutes = 10, maxCount = 30 }) {
   const since = new Date(Date.now() - windowMinutes * 60_000).toISOString();
@@ -19,4 +20,17 @@ export async function consumeRateLimit({ ip, endpoint, windowMinutes = 10, maxCo
   return { allowed: true, attempts: attempts + 1, retryAfterSeconds: null };
 }
 
-export default { consumeRateLimit };
+export function rateLimit({ endpoint, windowMinutes = 10, maxCount = 30, message = 'Too many requests. Please wait a few minutes and try again.' }) {
+  return async (req, res, next) => {
+    try {
+      const bucket = typeof endpoint === 'function' ? endpoint(req) : endpoint;
+      const rl = await consumeRateLimit({ ip: getClientIp(req), endpoint: bucket, windowMinutes, maxCount });
+      if (!rl.allowed) return res.status(429).json({ ok: false, error: message, retryAfterSeconds: rl.retryAfterSeconds });
+      next();
+    } catch (err) {
+      next(err);
+    }
+  };
+}
+
+export default { consumeRateLimit, rateLimit };

@@ -6,10 +6,13 @@ import { getTenantById } from '../lib/tenants.js';
 import { getByQr, deviceHistory, recordInspection } from '../lib/devices.js';
 import { technicianByFieldToken } from '../lib/technicians.js';
 import { queryOne } from '../lib/db.js';
+import { rateLimit } from '../lib/rate_limit.js';
 
 const router = express.Router();
+const limitView = rateLimit({ endpoint: 'device_get', windowMinutes: 10, maxCount: 60 });
+const limitInspect = rateLimit({ endpoint: 'device_inspect', windowMinutes: 10, maxCount: 20 });
 
-router.get('/:qr', asyncHandler(async (req, res) => {
+router.get('/:qr', limitView, asyncHandler(async (req, res) => {
   const device = await getByQr(req.params.qr);
   if (!device) return notFound(res, 'Device not found.');
   const tenant = await getTenantById(device.tenant_id);
@@ -23,7 +26,7 @@ router.get('/:qr', asyncHandler(async (req, res) => {
   });
 }));
 
-router.post('/:qr/inspect', asyncHandler(async (req, res) => {
+router.post('/:qr/inspect', limitInspect, asyncHandler(async (req, res) => {
   const device = await getByQr(req.params.qr);
   if (!device) return notFound(res, 'Device not found.');
   const b = req.body || {};

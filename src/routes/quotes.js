@@ -5,8 +5,11 @@ import { queryOne } from '../lib/db.js';
 import { getTenantById } from '../lib/tenants.js';
 import { acceptEstimate, convertToInvoice, estimateExpired } from '../lib/estimates.js';
 import { emitEvent } from '../lib/events.js';
+import { rateLimit } from '../lib/rate_limit.js';
 
 const router = express.Router();
+const limitView = rateLimit({ endpoint: 'quote_get', windowMinutes: 10, maxCount: 60 });
+const limitAction = rateLimit({ endpoint: 'quote_post', windowMinutes: 10, maxCount: 12 });
 
 async function load(id, token) {
   const e = await queryOne('SELECT * FROM estimates WHERE id=$1', [id]);
@@ -14,7 +17,7 @@ async function load(id, token) {
   return e;
 }
 
-router.get('/:id', asyncHandler(async (req, res) => {
+router.get('/:id', limitView, asyncHandler(async (req, res) => {
   const e = await load(toInt(req.params.id), String(req.query.token || ''));
   if (!e) return notFound(res, 'Estimate not found.');
   const tenant = await getTenantById(e.tenant_id);
@@ -29,7 +32,7 @@ router.get('/:id', asyncHandler(async (req, res) => {
   });
 }));
 
-router.post('/:id/accept', asyncHandler(async (req, res) => {
+router.post('/:id/accept', limitAction, asyncHandler(async (req, res) => {
   const e = await load(toInt(req.params.id), String((req.body || {}).token || ''));
   if (!e) return notFound(res, 'Estimate not found.');
   const name = (req.body || {}).name;
@@ -43,7 +46,7 @@ router.post('/:id/accept', asyncHandler(async (req, res) => {
   res.json({ ok: true });
 }));
 
-router.post('/:id/decline', asyncHandler(async (req, res) => {
+router.post('/:id/decline', limitAction, asyncHandler(async (req, res) => {
   const e = await load(toInt(req.params.id), String((req.body || {}).token || ''));
   if (!e) return notFound(res, 'Estimate not found.');
   const tenant = await getTenantById(e.tenant_id);

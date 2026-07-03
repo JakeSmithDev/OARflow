@@ -6,8 +6,11 @@ import { asyncHandler, badRequest, notFound, toInt, getClientIp } from '../lib/h
 import { queryOne } from '../lib/db.js';
 import { getTenantById } from '../lib/tenants.js';
 import { createSetupIntent, attachFromSetupIntent, attachMockCard, cardsStatus } from '../lib/payments.js';
+import { rateLimit } from '../lib/rate_limit.js';
 
 const router = express.Router();
+const limitSetupIntent = rateLimit({ endpoint: 'save_card_get', windowMinutes: 10, maxCount: 5 });
+const limitSaveCard = rateLimit({ endpoint: 'save_card_post', windowMinutes: 10, maxCount: 10 });
 
 async function load(id, token) {
   const c = await queryOne('SELECT * FROM customers WHERE id=$1', [id]);
@@ -15,7 +18,7 @@ async function load(id, token) {
   return c;
 }
 
-router.get('/:id', asyncHandler(async (req, res) => {
+router.get('/:id', limitSetupIntent, asyncHandler(async (req, res) => {
   const c = await load(toInt(req.params.id), String(req.query.token || ''));
   if (!c) return notFound(res, 'This link is no longer valid.');
   const tenant = await getTenantById(c.tenant_id);
@@ -29,7 +32,7 @@ router.get('/:id', asyncHandler(async (req, res) => {
   });
 }));
 
-router.post('/:id', asyncHandler(async (req, res) => {
+router.post('/:id', limitSaveCard, asyncHandler(async (req, res) => {
   const c = await load(toInt(req.params.id), String((req.body || {}).token || ''));
   if (!c) return notFound(res, 'This link is no longer valid.');
   const tenant = await getTenantById(c.tenant_id);

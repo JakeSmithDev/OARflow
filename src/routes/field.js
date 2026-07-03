@@ -14,8 +14,11 @@ import { listDevices } from '../lib/devices.js';
 import { scheduleForCompletion } from '../lib/follow_ups.js';
 import { emitEvent } from '../lib/events.js';
 import { zonedWallTimeToUtc, ymdInTimeZone } from '../lib/dates.js';
+import { rateLimit } from '../lib/rate_limit.js';
 
 const router = express.Router();
+const limitView = rateLimit({ endpoint: 'field_get', windowMinutes: 10, maxCount: 180 });
+const limitAction = rateLimit({ endpoint: 'field_post', windowMinutes: 10, maxCount: 80 });
 
 async function auth(req) {
   const token = String(req.query.token || (req.body || {}).token || '');
@@ -31,7 +34,7 @@ async function authJob(req) {
   return { ...ctx, apptId };
 }
 
-router.get('/me', asyncHandler(async (req, res) => {
+router.get('/me', limitView, asyncHandler(async (req, res) => {
   const ctx = await auth(req);
   if (!ctx) return notFound(res, 'This field link is no longer valid.');
   const day = /^\d{4}-\d{2}-\d{2}$/.test(req.query.date || '') ? req.query.date : ymdInTimeZone(new Date(), ctx.tenant.timezone);
@@ -47,7 +50,7 @@ router.get('/me', asyncHandler(async (req, res) => {
   });
 }));
 
-router.get('/jobs/:id', asyncHandler(async (req, res) => {
+router.get('/jobs/:id', limitView, asyncHandler(async (req, res) => {
   const ctx = await authJob(req);
   if (!ctx) return notFound(res, 'Invalid link.');
   if (ctx.forbidden) return notFound(res, 'This job is not assigned to you.');
@@ -63,7 +66,7 @@ router.get('/jobs/:id', asyncHandler(async (req, res) => {
 }));
 
 // Log a chemical/material application from the field (snapshots the applicator).
-router.post('/jobs/:id/applications', asyncHandler(async (req, res) => {
+router.post('/jobs/:id/applications', limitAction, asyncHandler(async (req, res) => {
   const ctx = await authJob(req);
   if (!ctx || ctx.forbidden) return notFound(res);
   const body = { ...(req.body || {}), technicianId: ctx.tech.id, applicatorName: ctx.tech.name, applicatorLicense: ctx.tech.license_no };
@@ -72,14 +75,14 @@ router.post('/jobs/:id/applications', asyncHandler(async (req, res) => {
   res.json({ ok: true, application: r.application });
 }));
 
-router.post('/jobs/:id/on-my-way', asyncHandler(async (req, res) => {
+router.post('/jobs/:id/on-my-way', limitAction, asyncHandler(async (req, res) => {
   const ctx = await authJob(req);
   if (!ctx || ctx.forbidden) return notFound(res);
   const r = await sendAppointmentSms(ctx.tenant, ctx.apptId, 'onMyWay', { ETA: (req.body || {}).eta || '' }).catch(() => ({ ok: false }));
   res.json({ ok: true, texted: r.ok !== false });
 }));
 
-router.post('/jobs/:id/status', asyncHandler(async (req, res) => {
+router.post('/jobs/:id/status', limitAction, asyncHandler(async (req, res) => {
   const ctx = await authJob(req);
   if (!ctx || ctx.forbidden) return notFound(res);
   const status = (req.body || {}).status;
@@ -94,7 +97,7 @@ router.post('/jobs/:id/status', asyncHandler(async (req, res) => {
   res.json({ ok: true, status });
 }));
 
-router.post('/jobs/:id/photos', asyncHandler(async (req, res) => {
+router.post('/jobs/:id/photos', limitAction, asyncHandler(async (req, res) => {
   const ctx = await authJob(req);
   if (!ctx || ctx.forbidden) return notFound(res);
   const dec = decodeUpload(req.body || {}, { allow: IMAGE_TYPES });
@@ -107,7 +110,7 @@ router.post('/jobs/:id/photos', asyncHandler(async (req, res) => {
   res.json({ ok: true, file: { id: file.id, url: await signedUrl(file) } });
 }));
 
-router.post('/jobs/:id/signature', asyncHandler(async (req, res) => {
+router.post('/jobs/:id/signature', limitAction, asyncHandler(async (req, res) => {
   const ctx = await authJob(req);
   if (!ctx || ctx.forbidden) return notFound(res);
   const dec = decodeUpload(req.body || {}, { allow: ['image/png'] });

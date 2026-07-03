@@ -3,7 +3,7 @@
 //   request  → customer proposes up to N slots; staff confirm one later
 import express from 'express';
 import { asyncHandler, badRequest, notFound, getClientIp } from '../lib/http.js';
-import { consumeRateLimit } from '../lib/rate_limit.js';
+import { consumeRateLimit, rateLimit } from '../lib/rate_limit.js';
 import { getTenantBySlug, getDefaultTenant } from '../lib/tenants.js';
 import { computeDayAvailability, dateWithinBookingWindow, monthOpenDays } from '../lib/availability.js';
 import {
@@ -21,6 +21,9 @@ import { setConsent, normalizeE164 } from '../lib/sms.js';
 import { logAudit } from '../lib/audit.js';
 
 const router = express.Router();
+const limitBootstrap = rateLimit({ endpoint: 'public_bootstrap_get', windowMinutes: 10, maxCount: 120 });
+const limitCalendarLookup = rateLimit({ endpoint: 'public_calendar_get', windowMinutes: 10, maxCount: 180 });
+const limitAppointmentLookup = rateLimit({ endpoint: 'public_appointment_get', windowMinutes: 10, maxCount: 120 });
 
 async function resolveTenant(slug) {
   if (!slug || slug === 'default' || slug === '_') return getDefaultTenant();
@@ -67,7 +70,7 @@ function leadDetailsText(lead) {
 }
 
 // --- Bootstrap ------------------------------------------------------------
-router.get('/:slug/bootstrap', asyncHandler(async (req, res) => {
+router.get('/:slug/bootstrap', limitBootstrap, asyncHandler(async (req, res) => {
   const tenant = await resolveTenant(req.params.slug);
   if (!tenant) return notFound(res, 'Business not found.');
   const services = await listActiveServices(tenant.id);
@@ -85,7 +88,7 @@ router.get('/:slug/bootstrap', asyncHandler(async (req, res) => {
 }));
 
 // --- Month open-days (for calendar) --------------------------------------
-router.get('/:slug/month', asyncHandler(async (req, res) => {
+router.get('/:slug/month', limitCalendarLookup, asyncHandler(async (req, res) => {
   const tenant = await resolveTenant(req.params.slug);
   if (!tenant) return notFound(res);
   const year = Number(req.query.year); const month = Number(req.query.month);
@@ -97,7 +100,7 @@ router.get('/:slug/month', asyncHandler(async (req, res) => {
 }));
 
 // --- Availability for a date ---------------------------------------------
-router.get('/:slug/availability', asyncHandler(async (req, res) => {
+router.get('/:slug/availability', limitCalendarLookup, asyncHandler(async (req, res) => {
   const tenant = await resolveTenant(req.params.slug);
   if (!tenant) return notFound(res);
   const serviceId = Number(req.query.serviceId);
@@ -279,7 +282,7 @@ router.post('/:slug/book', asyncHandler(async (req, res) => {
 }));
 
 // --- Fetch a booking by token (confirmation page) ------------------------
-router.get('/:slug/appointment/:token', asyncHandler(async (req, res) => {
+router.get('/:slug/appointment/:token', limitAppointmentLookup, asyncHandler(async (req, res) => {
   const tenant = await resolveTenant(req.params.slug);
   if (!tenant) return notFound(res);
   const a = await queryOne(

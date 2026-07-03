@@ -5,10 +5,13 @@ import { asyncHandler, badRequest, notFound } from '../lib/http.js';
 import { getTenantById } from '../lib/tenants.js';
 import { getByToken, recordResponse } from '../lib/reviews.js';
 import { query } from '../lib/db.js';
+import { rateLimit } from '../lib/rate_limit.js';
 
 const router = express.Router();
+const limitView = rateLimit({ endpoint: 'review_get', windowMinutes: 10, maxCount: 60 });
+const limitAction = rateLimit({ endpoint: 'review_post', windowMinutes: 10, maxCount: 20 });
 
-router.get('/', asyncHandler(async (req, res) => {
+router.get('/', limitView, asyncHandler(async (req, res) => {
   const reqRow = await getByToken(String(req.query.token || ''));
   if (!reqRow) return notFound(res, 'This review link is no longer valid.');
   const tenant = await getTenantById(reqRow.tenant_id);
@@ -21,7 +24,7 @@ router.get('/', asyncHandler(async (req, res) => {
   });
 }));
 
-router.post('/respond', asyncHandler(async (req, res) => {
+router.post('/respond', limitAction, asyncHandler(async (req, res) => {
   const b = req.body || {};
   const reqRow = await getByToken(String(b.token || ''));
   if (!reqRow) return notFound(res, 'This review link is no longer valid.');
@@ -33,7 +36,7 @@ router.post('/respond', asyncHandler(async (req, res) => {
 }));
 
 // Beacon: which public platform the customer chose (best-effort).
-router.post('/click', asyncHandler(async (req, res) => {
+router.post('/click', limitAction, asyncHandler(async (req, res) => {
   const b = req.body || {};
   const reqRow = await getByToken(String(b.token || ''));
   if (reqRow && b.platform) await query('UPDATE review_requests SET platform_clicked=$2, updated_at=now() WHERE id=$1', [reqRow.id, String(b.platform).slice(0, 20)]);
