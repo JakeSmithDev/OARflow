@@ -18,8 +18,8 @@ import { emitEvent } from '../lib/events.js';
 const router = express.Router();
 function toIntSafe(v) { const n = Number.parseInt(v, 10); return Number.isFinite(n) ? n : null; }
 
-async function emitInvoicePaidIfInserted(tenantId, invoiceId, result) {
-  if (!result?.duplicate && result?.invoice?.status === 'paid') {
+export async function emitInvoicePaidIfInserted(tenantId, invoiceId, result) {
+  if (result?.duplicate === false && result?.invoice?.status === 'paid') {
     await emitEvent('invoice.paid', { tenantId, invoiceId, customerId: result.invoice.customer_id });
   }
 }

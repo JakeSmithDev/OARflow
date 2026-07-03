@@ -797,6 +797,13 @@ async function main() {
     const r = await call(`/api/admin/invoices/${inv.id}/payment`, { method: 'POST', body: { amountCents: 999999, method: 'cash' } });
     assert.equal(r.status, 400);
   });
+  await check('[fix] overpay-rejected webhook does not emit invoice.paid', async () => {
+    const { emitInvoicePaidIfInserted } = await import('../src/routes/stripe_webhook.js');
+    const before = await db.queryOne("SELECT count(*)::int n FROM event_log WHERE name='invoice.paid'");
+    await emitInvoicePaidIfInserted(1, invId, { invoice: { id: invId, customer_id: 1, status: 'paid' }, rejected: 'overpay' });
+    const after = await db.queryOne("SELECT count(*)::int n FROM event_log WHERE name='invoice.paid'");
+    assert.equal(after.n, before.n);
+  });
   await check('[fix] closed-day scheduling blocked unless forced', async () => {
     const d = ymd(new Date(Date.now() + 40 * 86400000));
     await call('/api/admin/settings/blackouts', { method: 'POST', body: { date: d, reason: 'Closed' } });
