@@ -13,9 +13,16 @@ import { recordPayment } from '../lib/invoices.js';
 import { attachFromSetupIntent } from '../lib/payments.js';
 import { queryOne } from '../lib/db.js';
 import { activateSubscriptionFromCheckout, handleStripeInvoicePaid, syncStripeSubscriptionStatus } from '../lib/recurring.js';
+import { emitEvent } from '../lib/events.js';
 
 const router = express.Router();
 function toIntSafe(v) { const n = Number.parseInt(v, 10); return Number.isFinite(n) ? n : null; }
+
+async function emitInvoicePaidIfInserted(tenantId, invoiceId, result) {
+  if (!result?.duplicate && result?.invoice?.status === 'paid') {
+    await emitEvent('invoice.paid', { tenantId, invoiceId, customerId: result.invoice.customer_id });
+  }
+}
 
 async function resolveTenantId(obj) {
   let tenantId = toIntSafe(obj?.metadata?.tenant_id);
@@ -58,10 +65,11 @@ router.post('/', async (req, res) => {
           const t = await getTenantById(evTenantId);
           const invoiceId = toIntSafe(meta.invoice_id);
           if (t && invoiceId) {
-            await recordPayment(t, invoiceId, {
+            const r = await recordPayment(t, invoiceId, {
               amountCents: session.amount_total, method: 'stripe',
               stripeRef: session.payment_intent || session.id, externalRef: event.id, note: 'Paid online via Stripe',
             });
+            await emitInvoicePaidIfInserted(t.id, invoiceId, r);
           }
         } else if (session.mode === 'subscription') {
           await activateSubscriptionFromCheckout(event);
@@ -93,7 +101,10 @@ router.post('/', async (req, res) => {
         const invoiceId = toIntSafe(meta.invoice_id);
         if (meta.kind === 'card_on_file' && evTenantId && invoiceId) {
           const t = await getTenantById(evTenantId);
-          if (t) await recordPayment(t, invoiceId, { amountCents: pi.amount_received ?? pi.amount, method: 'card_on_file', stripeRef: pi.id, externalRef: pi.id, note: 'Card on file' });
+          if (t) {
+            const r = await recordPayment(t, invoiceId, { amountCents: pi.amount_received ?? pi.amount, method: 'card_on_file', stripeRef: pi.id, externalRef: pi.id, note: 'Card on file' });
+            await emitInvoicePaidIfInserted(t.id, invoiceId, r);
+          }
         }
         break;
       }
