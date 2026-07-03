@@ -4,6 +4,7 @@
 //                           link (the map app geocodes the raw addresses)
 import { query, queryOne } from './db.js';
 import { decryptSecret } from './crypto.js';
+import { zonedWallTimeToUtc } from './dates.js';
 import { config } from '../config.js';
 
 export function geocodingConfigured(tenant) {
@@ -68,7 +69,7 @@ function nearestNeighbor(start, nodes) {
  * @returns { stops, optimized, reason?, totalMiles?, mapsUrl }
  */
 export async function optimizeRoute(tenant, { technicianId, date }) {
-  const dayStart = new Date(`${date}T00:00:00`);
+  const dayStart = zonedWallTimeToUtc(date, '00:00', tenant.timezone);
   const from = dayStart.toISOString();
   const to = new Date(dayStart.getTime() + 86_400_000).toISOString();
   const r = await query(
