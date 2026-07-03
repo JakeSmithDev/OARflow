@@ -42,7 +42,7 @@
     </a>
     <nav class="nav-links" aria-label="Primary">
       <a href="index.html">Home</a>
-      <a href="services.html" class="active">Services</a>
+      <a href="services.html" class="active" aria-current="page">Services</a>
       <a href="about.html">About</a>
       <a href="contact.html">Contact</a>
     </nav>
@@ -58,7 +58,7 @@
   <div class="mobile-menu" id="mobileMenu">
     <div><nav aria-label="Mobile">
       <a href="index.html">Home</a>
-      <a href="services.html" class="active">Services</a>
+      <a href="services.html" class="active" aria-current="page">Services</a>
       <a href="about.html">About</a>
       <a href="contact.html">Contact</a>
       <a class="btn btn-primary" href="/book?t=pasternack">Book online</a>
@@ -259,28 +259,28 @@
     </div>
     <div class="faq reveal">
       <div class="faq-item open">
-        <button class="faq-q" aria-expanded="true">How much does pest control cost?<span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></span></button>
-        <div class="faq-a"><div><p>Initial one-time services start at $149.99. Recurring monthly and quarterly plans are quoted based on your home's size, the pest, and the severity of the problem. Every quote is free and comes with no obligation — call us at (410) 446-1169 or request one online.</p></div></div>
+        <button class="faq-q" aria-expanded="true" aria-controls="faq-cost">How much does pest control cost?<span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></span></button>
+        <div class="faq-a" id="faq-cost"><div><p>Initial one-time services start at $149.99. Recurring monthly and quarterly plans are quoted based on your home's size, the pest, and the severity of the problem. Every quote is free and comes with no obligation — call us at (410) 446-1169 or request one online.</p></div></div>
       </div>
       <div class="faq-item">
-        <button class="faq-q" aria-expanded="false">Are your treatments safe for kids and pets?<span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></span></button>
-        <div class="faq-a"><div><p>Family and pet safety come first. We use targeted, responsible treatments and apply them where they're needed most, rather than blanketing your home. We'll always walk you through any simple precautions, such as re-entry timing, before we begin.</p></div></div>
+        <button class="faq-q" aria-expanded="false" aria-controls="faq-safety">Are your treatments safe for kids and pets?<span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></span></button>
+        <div class="faq-a" id="faq-safety"><div><p>Family and pet safety come first. We use targeted, responsible treatments and apply them where they're needed most, rather than blanketing your home. We'll always walk you through any simple precautions, such as re-entry timing, before we begin.</p></div></div>
       </div>
       <div class="faq-item">
-        <button class="faq-q" aria-expanded="false">Do you offer one-time service, or only contracts?<span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></span></button>
-        <div class="faq-a"><div><p>Both. If you have a specific, current problem, a one-time treatment may be all you need. If you'd like year-round peace of mind, our monthly and quarterly plans provide ongoing protection. We'll recommend what actually fits your situation — never upsell you on what you don't.</p></div></div>
+        <button class="faq-q" aria-expanded="false" aria-controls="faq-contracts">Do you offer one-time service, or only contracts?<span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></span></button>
+        <div class="faq-a" id="faq-contracts"><div><p>Both. If you have a specific, current problem, a one-time treatment may be all you need. If you'd like year-round peace of mind, our monthly and quarterly plans provide ongoing protection. We'll recommend what actually fits your situation — never upsell you on what you don't.</p></div></div>
       </div>
       <div class="faq-item">
-        <button class="faq-q" aria-expanded="false">What is "pest exclusion"?<span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></span></button>
-        <div class="faq-a"><div><p>Exclusion means sealing the gaps, cracks, and entry points pests use to get inside — so they can't come back. It's a craft we specialize in, and it's the step that separates a lasting fix from a temporary one. Some jobs need spraying, some need patching, and many need both.</p></div></div>
+        <button class="faq-q" aria-expanded="false" aria-controls="faq-exclusion">What is "pest exclusion"?<span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></span></button>
+        <div class="faq-a" id="faq-exclusion"><div><p>Exclusion means sealing the gaps, cracks, and entry points pests use to get inside — so they can't come back. It's a craft we specialize in, and it's the step that separates a lasting fix from a temporary one. Some jobs need spraying, some need patching, and many need both.</p></div></div>
       </div>
       <div class="faq-item">
-        <button class="faq-q" aria-expanded="false">How often should I schedule service?<span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></span></button>
-        <div class="faq-a"><div><p>It depends on the pest and your home. Quarterly service works well for most households as year-round prevention. Monthly is a better fit for higher-pressure pests or peak mosquito season. For a single issue, a one-time treatment may be enough.</p></div></div>
+        <button class="faq-q" aria-expanded="false" aria-controls="faq-frequency">How often should I schedule service?<span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></span></button>
+        <div class="faq-a" id="faq-frequency"><div><p>It depends on the pest and your home. Quarterly service works well for most households as year-round prevention. Monthly is a better fit for higher-pressure pests or peak mosquito season. For a single issue, a one-time treatment may be enough.</p></div></div>
       </div>
       <div class="faq-item">
-        <button class="faq-q" aria-expanded="false">What areas do you serve?<span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></span></button>
-        <div class="faq-a"><div><p>We serve Carroll County, Montgomery County, and the Greater Baltimore area, including Westminster, Eldersburg, Sykesville, Hampstead, Manchester, Mount Airy, Damascus, Germantown, Gaithersburg, Rockville, Olney, Glen Burnie, Annapolis, Severna Park, Pasadena, Columbia, Ellicott City, Catonsville, Odenton, and surrounding communities. Not sure if you're in range? Just give us a call.</p></div></div>
+        <button class="faq-q" aria-expanded="false" aria-controls="faq-area">What areas do you serve?<span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></span></button>
+        <div class="faq-a" id="faq-area"><div><p>We serve Carroll County, Montgomery County, and the Greater Baltimore area, including Westminster, Eldersburg, Sykesville, Hampstead, Manchester, Mount Airy, Damascus, Germantown, Gaithersburg, Rockville, Olney, Glen Burnie, Annapolis, Severna Park, Pasadena, Columbia, Ellicott City, Catonsville, Odenton, and surrounding communities. Not sure if you're in range? Just give us a call.</p></div></div>
       </div>
     </div>
   </div>

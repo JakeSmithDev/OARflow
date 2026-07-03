@@ -41,7 +41,7 @@
       <a href="index.html">Home</a>
       <a href="services.html">Services</a>
       <a href="about.html">About</a>
-      <a href="contact.html" class="active">Contact</a>
+      <a href="contact.html" class="active" aria-current="page">Contact</a>
     </nav>
     <div class="nav-cta">
       <a class="nav-phone" href="tel:+14104461169">
@@ -57,7 +57,7 @@
       <a href="index.html">Home</a>
       <a href="services.html">Services</a>
       <a href="about.html">About</a>
-      <a href="contact.html" class="active">Contact</a>
+      <a href="contact.html" class="active" aria-current="page">Contact</a>
       <a class="btn btn-primary" href="/book?t=pasternack">Book online</a>
       <a class="btn btn-outline" href="tel:+14104461169">Call (410) 446-1169</a>
     </nav></div>
@@ -126,26 +126,26 @@
           <div class="col-2">
             <div class="field">
               <label for="first">First name <span class="req">*</span></label>
-              <input id="first" name="first_name" type="text" autocomplete="given-name" data-required>
-              <span class="err">Please enter your first name.</span>
+              <input id="first" name="first_name" type="text" autocomplete="given-name" data-required required aria-required="true" aria-describedby="err-first">
+              <span class="err" id="err-first">Please enter your first name.</span>
             </div>
             <div class="field">
               <label for="last">Last name <span class="req">*</span></label>
-              <input id="last" name="last_name" type="text" autocomplete="family-name" data-required>
-              <span class="err">Please enter your last name.</span>
+              <input id="last" name="last_name" type="text" autocomplete="family-name" data-required required aria-required="true" aria-describedby="err-last">
+              <span class="err" id="err-last">Please enter your last name.</span>
             </div>
           </div>
 
           <div class="col-2">
             <div class="field">
               <label for="phone">Phone <span class="req">*</span></label>
-              <input id="phone" name="phone" type="tel" autocomplete="tel" placeholder="(410) 000-0000" data-required>
-              <span class="err">Please enter a valid phone number.</span>
+              <input id="phone" name="phone" type="tel" autocomplete="tel" placeholder="(410) 000-0000" data-required required aria-required="true" aria-describedby="err-phone">
+              <span class="err" id="err-phone">Please enter a valid phone number.</span>
             </div>
             <div class="field">
               <label for="email">Email <span class="req">*</span></label>
-              <input id="email" name="email" type="email" autocomplete="email" placeholder="you@email.com" data-required>
-              <span class="err">Please enter a valid email address.</span>
+              <input id="email" name="email" type="email" autocomplete="email" placeholder="you@email.com" data-required required aria-required="true" aria-describedby="err-email">
+              <span class="err" id="err-email">Please enter a valid email address.</span>
             </div>
           </div>
 
@@ -190,8 +190,8 @@
 
           <div class="field">
             <label for="message">How can we help? <span class="req">*</span></label>
-            <textarea id="message" name="message" placeholder="Describe what you're seeing — where, how long, and how bad it seems." data-required></textarea>
-            <span class="err">Please add a short description.</span>
+            <textarea id="message" name="message" placeholder="Describe what you're seeing — where, how long, and how bad it seems." data-required required aria-required="true" aria-describedby="err-message"></textarea>
+            <span class="err" id="err-message">Please add a short description.</span>
           </div>
 
           <button type="submit" class="btn btn-primary btn-lg btn-block">Send my request</button>

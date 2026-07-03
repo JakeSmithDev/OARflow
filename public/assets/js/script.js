@@ -76,8 +76,10 @@
     var errorBox = formCard ? formCard.querySelector(".form-error") : null;
     var submitBtn = form.querySelector('[type="submit"]');
 
-    var setError = function (field, on) {
+    var setError = function (input, on) {
+      var field = input ? input.closest(".field") : null;
       if (field) field.classList.toggle("invalid", on);
+      if (input) input.setAttribute("aria-invalid", on ? "true" : "false");
     };
 
     var showPanel = function (panel) {
@@ -92,7 +94,6 @@
       var firstBad = null;
 
       form.querySelectorAll("[data-required]").forEach(function (input) {
-        var field = input.closest(".field");
         var val = (input.value || "").trim();
         var ok = val.length > 0;
         if (ok && input.type === "email") {
@@ -101,7 +102,7 @@
         if (ok && input.type === "tel") {
           ok = (val.replace(/\D/g, "").length >= 10);
         }
-        setError(field, !ok);
+        setError(input, !ok);
         if (!ok) { valid = false; if (!firstBad) firstBad = input; }
       });
 
@@ -153,6 +154,7 @@
       input.addEventListener("input", function () {
         var field = input.closest(".field");
         if (field) field.classList.remove("invalid");
+        input.setAttribute("aria-invalid", "false");
         if (success) success.classList.remove("show");
         if (errorBox) errorBox.classList.remove("show");
       });
