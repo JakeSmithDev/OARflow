@@ -110,12 +110,18 @@
     setTimeout(() => { el.style.opacity = '0'; el.style.transition = 'opacity .3s'; setTimeout(() => el.remove(), 300); }, 3200);
   };
 
-  OF.modal = (innerHtml, { wide } = {}) => {
+  OF.modal = (innerHtml, { wide, onClose } = {}) => {
     const ov = document.createElement('div');
     ov.className = 'overlay';
     ov.innerHTML = `<div class="modal ${wide ? 'wide' : ''}">${innerHtml}</div>`;
     document.body.appendChild(ov);
-    const close = () => ov.remove();
+    let closed = false;
+    const close = () => {
+      if (closed) return;
+      closed = true;
+      ov.remove();
+      onClose && onClose();
+    };
     ov.addEventListener('click', (e) => { if (e.target === ov) close(); });
     ov.querySelectorAll('[data-close]').forEach((b) => b.addEventListener('click', close));
     return { el: ov, close, q: (sel) => ov.querySelector(sel) };
@@ -133,13 +139,19 @@
   };
 
   OF.confirm = ({ title = 'Are you sure?', body = '', confirmText = 'Confirm', danger = false }) => new Promise((resolve) => {
+    let done = false;
+    const finish = (value) => {
+      if (done) return;
+      done = true;
+      m.close();
+      resolve(value);
+    };
     const m = OF.modal(`
       <div class="modal-head"><h3>${OF.escape(title)}</h3><button class="x" data-close>&times;</button></div>
       <div class="modal-body">${body}</div>
       <div class="modal-foot"><button class="btn btn-secondary" data-close>Cancel</button>
-      <button class="btn ${danger ? 'btn-danger' : 'btn-primary'}" data-ok>${OF.escape(confirmText)}</button></div>`);
-    m.q('[data-ok]').addEventListener('click', () => { m.close(); resolve(true); });
-    m.el.querySelectorAll('[data-close]').forEach((b) => b.addEventListener('click', () => resolve(false)));
+      <button class="btn ${danger ? 'btn-danger' : 'btn-primary'}" data-ok>${OF.escape(confirmText)}</button></div>`, { onClose: () => finish(false) });
+    m.q('[data-ok]').addEventListener('click', () => finish(true));
   });
 
   // --- App shell + auth guard ---------------------------------------------
