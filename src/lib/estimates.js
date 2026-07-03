@@ -7,6 +7,18 @@ import { nextEstimateNumber } from './tenants.js';
 import { computeTotals, createInvoice } from './invoices.js';
 import { addDays, ymdInTimeZone } from './dates.js';
 
+export function estimateValidUntilYmd(value) {
+  if (!value) return '';
+  if (typeof value === 'string') return value.slice(0, 10);
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? '' : d.toISOString().slice(0, 10);
+}
+
+export function estimateExpired(tenant, estimate, now = new Date()) {
+  const validUntil = estimateValidUntilYmd(estimate?.valid_until);
+  return Boolean(validUntil && ymdInTimeZone(now, tenant.timezone) > validUntil);
+}
+
 export async function createEstimate(tenant, data, createdBy) {
   const totals = computeTotals(data.lineItems, data.taxRatePercent ?? tenant.settings.invoicing.taxRatePercent, data.discountCents);
   const number = await nextEstimateNumber(tenant.id);
@@ -41,6 +53,10 @@ export async function acceptEstimate(tenant, id, { name, ip, userAgent }) {
   if (!e) return { ok: false, error: 'Not found.' };
   if (e.status === 'accepted' || e.status === 'converted') return { ok: true, already: true, estimate: e };
   if (e.status === 'declined') return { ok: false, error: 'This estimate was declined.' };
+  if (estimateExpired(tenant, e)) {
+    const validUntil = estimateValidUntilYmd(e.valid_until);
+    return { ok: false, error: `This estimate expired on ${validUntil}.`, code: 'estimate_expired', expired: true, validUntil };
+  }
   const updated = await queryOne(
     "UPDATE estimates SET status='accepted', accepted_at=now(), accepted_name=$3, accepted_ip=$4, accepted_user_agent=$5, updated_at=now() WHERE tenant_id=$1 AND id=$2 RETURNING *",
     [tenant.id, id, name || null, ip || null, userAgent || null],
@@ -87,4 +103,4 @@ export async function convertToInvoice(tenant, id, createdBy) {
   return { ok: true, invoiceId: inv.id, invoice: inv };
 }
 
-export default { createEstimate, updateEstimate, acceptEstimate, declineEstimate, convertToInvoice };
+export default { createEstimate, updateEstimate, acceptEstimate, declineEstimate, convertToInvoice, estimateExpired, estimateValidUntilYmd };

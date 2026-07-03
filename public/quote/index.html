@@ -67,7 +67,7 @@
     function render(e, tenant){
       if (e.status==='accepted' || e.status==='converted') return accepted(e);
       if (e.status==='declined') { document.getElementById('view').innerHTML = totals(e) + `<div class="card card-pad center" style="margin-top:14px"><span class="pill declined">Declined</span><p class="muted small" style="margin-top:8px">You declined this estimate. Contact ${esc(tenant.name)} if that was a mistake.</p></div>`; return; }
-      const expired = e.validUntil && new Date(e.validUntil) < new Date(new Date().toDateString());
+      const expired = !!e.expired;
       document.getElementById('view').innerHTML = totals(e) + (expired
         ? `<div class="card card-pad center muted" style="margin-top:14px">This estimate expired on ${esc(String(e.validUntil).slice(0,10))}. Please contact ${esc(tenant.name)} for an updated quote.</div>`
         : `<div class="approve-box">
