@@ -45,7 +45,7 @@ function manageUrl(tenant, token) {
 }
 
 function trimCap(value, max) {
-  return String(value || '').trim().slice(0, max);
+  return String(value || '').replace(/[\r\n]/g, ' ').trim().slice(0, max);
 }
 
 function leadDetailsHtml(lead) {
@@ -390,12 +390,13 @@ router.post('/:slug/appointment/:token/cancel', limitAppointmentChange, asyncHan
   }
   const notifyTo = tenantNotifyAddress(tenant);
   if (notifyTo) {
+    const customerName = trimCap(updated.customer_name, 160) || 'Customer';
     await sendEmail({
       tenant,
       to: notifyTo,
-      subject: `Appointment canceled online: ${updated.customer_name}`,
-      html: `<p>${updated.customer_name} canceled an appointment online.</p>${appointmentDetails(tenant, updated)}<p><strong>Reason:</strong> ${htmlEscape(reason)}</p>`,
-      text: `${updated.customer_name} canceled an appointment online.\nReason: ${reason}`,
+      subject: `Appointment canceled online: ${customerName}`,
+      html: `<p>${htmlEscape(updated.customer_name)} canceled an appointment online.</p>${appointmentDetails(tenant, updated)}<p><strong>Reason:</strong> ${htmlEscape(reason)}</p>`,
+      text: `${customerName} canceled an appointment online.\nReason: ${reason}`,
       relatedType: 'appointment',
       relatedId: updated.id,
     }).catch(() => {});
@@ -429,11 +430,12 @@ router.post('/:slug/appointment/:token/reschedule-request', limitAppointmentChan
   );
   const notifyTo = tenantNotifyAddress(tenant);
   if (notifyTo) {
+    const customerName = trimCap(a.customer_name, 160) || 'Customer';
     await sendEmail({
       tenant,
       to: notifyTo,
-      subject: `Reschedule request: ${a.customer_name}`,
-      html: `<p>${a.customer_name} requested a different appointment time.</p>${appointmentDetails(tenant, a)}<pre style="white-space:pre-wrap">${htmlEscape(note)}</pre>`,
+      subject: `Reschedule request: ${customerName}`,
+      html: `<p>${htmlEscape(a.customer_name)} requested a different appointment time.</p>${appointmentDetails(tenant, a)}<pre style="white-space:pre-wrap">${htmlEscape(note)}</pre>`,
       text: note,
       relatedType: 'follow_up',
       relatedId: followUp.id,
