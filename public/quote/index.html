@@ -72,7 +72,7 @@
         ? `<div class="card card-pad center muted" style="margin-top:14px">This estimate expired on ${esc(String(e.validUntil).slice(0,10))}. Please contact ${esc(tenant.name)} for an updated quote.</div>`
         : `<div class="approve-box">
             <label for="nm">Type your full name to approve</label>
-            <input id="nm" class="input" placeholder="Your full name" autocomplete="name" />
+            <input id="nm" class="input" type="text" placeholder="Your full name" autocomplete="name" />
             <div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap">
               <button class="btn btn-primary btn-lg" id="approve" style="flex:1;min-width:180px">Approve ${money(e.totalCents)}</button>
               <button class="btn btn-ghost" id="decline">Decline</button>

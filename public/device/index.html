@@ -12,7 +12,7 @@
     .wrap { max-width: 540px; margin: 0 auto; padding: 26px 16px 80px; }
     .hist { padding:9px 0; border-bottom:1px solid var(--line-2); }
     .pill { display:inline-block; padding:2px 9px; border-radius:999px; font-size:12px; font-weight:700; }
-    .ok { background:var(--ok-tint); color:#15803d; } .activity { background:var(--warn-tint); color:var(--warn); } .damaged,.missing { background:var(--danger-tint); color:var(--danger); }
+    .ok { background:var(--ok-tint); color:#15803d; } .activity { background:var(--warn-tint); color:var(--warn); } .serviced,.pill--serviced { background:var(--info-tint); color:var(--info); } .damaged,.missing { background:var(--danger-tint); color:var(--danger); }
   </style>
 </head>
 <body>
@@ -42,7 +42,7 @@
         ${fieldToken?`<div class="card card-pad" style="margin-bottom:14px"><strong>Log inspection</strong>
           <div class="field" style="margin-top:8px"><label>Status</label><select id="i_status"><option value="ok">OK — no activity</option><option value="activity">Activity found</option><option value="serviced">Serviced / rebaited</option><option value="damaged">Damaged</option><option value="missing">Missing</option></select></div>
           <div class="field"><label>Activity level</label><select id="i_act"><option value="">—</option><option>none</option><option>low</option><option>moderate</option><option>high</option></select></div>
-          <div class="field"><label>Action taken</label><input id="i_action" placeholder="Rebaited, replaced, removed…"></div>
+          <div class="field"><label>Action taken</label><input id="i_action" type="text" placeholder="Rebaited, replaced, removed…"></div>
           <button class="btn btn-primary btn-block" id="i_save">Save inspection</button></div>`
           :`<div class="card card-pad" style="margin-bottom:14px"><p class="muted small" style="margin:0">Open your field app first to log an inspection here.</p></div>`}
         <div class="card card-pad"><strong>History</strong><div style="margin-top:8px">${hist}</div></div>`;

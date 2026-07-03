@@ -50,7 +50,7 @@
       document.getElementById('view').innerHTML = `<div class="card card-pad"><div class="doc-body">${esc(doc.body)}</div></div>
         ${doc.requiresSignature?`<div class="sign-box">
           <label style="font-weight:600;font-size:13px;display:block;margin-bottom:6px">Type your full name to sign</label>
-          <input id="nm" class="input" placeholder="Your full name" autocomplete="name">
+          <input id="nm" class="input" type="text" placeholder="Your full name" autocomplete="name">
           <div style="margin-top:12px"><label style="font-weight:600;font-size:13px;display:block;margin-bottom:6px">Draw your signature (optional)</label><canvas class="sig" id="sig"></canvas><div style="text-align:right;margin-top:4px"><a id="clr" class="link-btn" style="cursor:pointer">Clear</a></div></div>
           <div style="display:flex;gap:10px;margin-top:12px;flex-wrap:wrap"><button class="btn btn-primary btn-lg" id="sign" style="flex:1;min-width:160px">Agree &amp; sign</button><button class="btn btn-ghost" id="decline">Decline</button></div>
           <p class="legal">By typing your name and clicking Agree &amp; sign, you agree to this document and consent to sign electronically. Your name, date, and IP address are recorded as your signature.</p>

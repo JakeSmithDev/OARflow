@@ -128,14 +128,14 @@
           <strong>Materials used</strong>
           <div id="matList" style="margin-top:6px">${(d.applications||[]).map(a=>`<div class="muted small" style="padding:4px 0">${esc(a.product_name)}${a.target_pest?' · '+esc(a.target_pest):''}</div>`).join('')||'<span class="muted small">None logged.</span>'}</div>
           ${(d.products||[]).length?`<div style="margin-top:10px"><select id="matProd" style="width:100%">${d.products.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select>
-            <input id="matPest" placeholder="Target pest (optional)" style="margin-top:8px">
+            <input id="matPest" type="text" placeholder="Target pest (optional)" style="margin-top:8px">
             <button class="btn btn-secondary btn-sm" id="matAdd" style="margin-top:8px">Log material</button></div>`:'<p class="muted small" style="margin-top:8px">No products in the catalog yet.</p>'}
           <div class="inline-error" id="matErr"></div>
         </div>
         <div class="card card-pad" style="margin-top:14px">
           <strong>Customer signature</strong>
           <canvas class="sig" id="sig" style="margin-top:8px"></canvas>
-          <div class="field" style="margin-top:8px"><input id="signName" placeholder="Signed by (name)"></div>
+          <div class="field" style="margin-top:8px"><input id="signName" type="text" placeholder="Signed by (name)"></div>
           <div class="seg"><a id="clearSig" style="cursor:pointer">Clear</a><button class="btn btn-primary btn-sm" id="saveSig" style="flex:1">Save signature</button></div>
           <div class="inline-error" id="sigErr"></div>
         </div>`;

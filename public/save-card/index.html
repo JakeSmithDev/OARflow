@@ -50,7 +50,7 @@
 
     function renderStripe(d){
       document.getElementById('view').innerHTML = `<div class="card card-pad">
-        <div class="field"><label>Cardholder name</label><input id="nm" placeholder="Name on card" value="${esc(d.customer.name)}"></div>
+        <div class="field"><label>Cardholder name</label><input id="nm" type="text" placeholder="Name on card" value="${esc(d.customer.name)}"></div>
         <div class="field"><label>Card details</label><div id="card-element"></div><div id="card-err" class="small" style="color:var(--danger);margin-top:6px"></div></div>
         <button class="btn btn-primary btn-lg btn-block" id="save">Save card securely</button>
         ${legal()}</div>`;
@@ -71,9 +71,9 @@
     function renderMock(d){
       document.getElementById('view').innerHTML = `<div class="card card-pad">
         <div class="card-pad" style="background:var(--surface-2);border-radius:10px;margin-bottom:14px"><p class="small muted" style="margin:0">Demo mode — this business hasn't connected a live card processor, so no real card is stored. Enter any test details.</p></div>
-        <div class="field"><label>Cardholder name</label><input id="nm" placeholder="Name on card" value="${esc(d.customer.name)}"></div>
-        <div class="field"><label>Card number</label><input id="num" placeholder="4242 4242 4242 4242" value="4242 4242 4242 4242"></div>
-        <div class="grid cols-2"><div class="field"><label>Expiry</label><input id="exp" placeholder="MM/YY" value="12/30"></div><div class="field"><label>CVC</label><input id="cvc" placeholder="123" value="123"></div></div>
+        <div class="field"><label>Cardholder name</label><input id="nm" type="text" placeholder="Name on card" value="${esc(d.customer.name)}"></div>
+        <div class="field"><label>Card number</label><input id="num" type="text" placeholder="4242 4242 4242 4242" value="4242 4242 4242 4242"></div>
+        <div class="grid cols-2"><div class="field"><label>Expiry</label><input id="exp" type="text" placeholder="MM/YY" value="12/30"></div><div class="field"><label>CVC</label><input id="cvc" type="text" placeholder="123" value="123"></div></div>
         <button class="btn btn-primary btn-lg btn-block" id="save">Save card</button>
         ${legal()}</div>`;
       document.getElementById('save').onclick = async ()=>{
