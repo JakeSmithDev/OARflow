@@ -362,6 +362,14 @@ h3 { font-size: 1.3rem; }
 }
 .form-success.show { display: flex; }
 .form-success svg { width: 24px; height: 24px; flex: none; }
+.form-error {
+  display: none; background: #fde8e6; border: 1px solid #f2b8b3; color: #9f2f24;
+  border-radius: 12px; padding: 16px 18px; font-weight: 500; align-items: center; gap: 12px;
+  scroll-margin-top: 120px; margin-top: 12px;
+}
+.form-error.show { display: flex; }
+.form-error svg { width: 24px; height: 24px; flex: none; }
+.form-error a { color: #7f261d; text-decoration: underline; }
 
 /* contact info list */
 .contact-aside { display: grid; gap: 18px; align-content: start; }

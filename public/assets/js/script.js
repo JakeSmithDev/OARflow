@@ -73,9 +73,17 @@
   if (form) {
     var formCard = form.closest(".form-card");
     var success = formCard ? formCard.querySelector(".form-success") : null;
+    var errorBox = formCard ? formCard.querySelector(".form-error") : null;
+    var submitBtn = form.querySelector('[type="submit"]');
 
     var setError = function (field, on) {
       if (field) field.classList.toggle("invalid", on);
+    };
+
+    var showPanel = function (panel) {
+      if (success) success.classList.toggle("show", panel === success);
+      if (errorBox) errorBox.classList.toggle("show", panel === errorBox);
+      if (panel) panel.scrollIntoView({ behavior: "smooth", block: "start" });
     };
 
     form.addEventListener("submit", function (e) {
@@ -102,15 +110,41 @@
         return;
       }
 
-      // No backend wired yet — show confirmation and reset.
-      // To receive submissions, set the form's action to a handler
-      // (e.g. Formspree/Netlify Forms) and remove preventDefault above.
-      if (success) {
-        success.classList.add("show");
-        success.scrollIntoView({ behavior: "smooth", block: "start" });
-      }
-      form.querySelectorAll("input, textarea, select").forEach(function (i) {
-        if (i.type !== "submit") i.value = "";
+      var data = new FormData(form);
+      var name = [data.get("first_name"), data.get("last_name")]
+        .map(function (v) { return (v || "").trim(); })
+        .filter(Boolean)
+        .join(" ");
+      var city = (data.get("city") || "").trim();
+      var zip = (data.get("zip") || "").trim();
+      var plan = (data.get("plan") || "").trim();
+      var message = (data.get("message") || "").trim();
+      var notes = [plan ? "Service interest: " + plan : "", message].filter(Boolean).join("\n\n");
+
+      if (submitBtn) submitBtn.disabled = true;
+      showPanel(null);
+
+      fetch("/api/public/pasternack/lead", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: name,
+          phone: (data.get("phone") || "").trim(),
+          email: (data.get("email") || "").trim(),
+          address: [city, zip].filter(Boolean).join(", "),
+          pest: (data.get("pest") || "").trim(),
+          notes: notes,
+        }),
+      }).then(function (res) {
+        if (!res.ok) throw new Error("Lead submit failed");
+        showPanel(success);
+        form.querySelectorAll("input, textarea, select").forEach(function (i) {
+          if (i.type !== "submit") i.value = "";
+        });
+      }).catch(function () {
+        showPanel(errorBox);
+      }).finally(function () {
+        if (submitBtn) submitBtn.disabled = false;
       });
     });
 
@@ -120,6 +154,7 @@
         var field = input.closest(".field");
         if (field) field.classList.remove("invalid");
         if (success) success.classList.remove("show");
+        if (errorBox) errorBox.classList.remove("show");
       });
     });
   }

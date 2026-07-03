@@ -117,7 +117,12 @@
           <span>Thanks! Your request has been received — we'll get back to you as soon as possible.</span>
         </div>
 
-        <form id="quote-form" class="form-grid" action="#" method="post" novalidate>
+        <div class="form-error" role="alert">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v5"/><path d="M12 17h.01"/></svg>
+          <span>Couldn't send — call us at <a href="tel:+14104461169">(410) 446-1169</a>.</span>
+        </div>
+
+        <form id="quote-form" class="form-grid" action="/api/public/pasternack/lead" method="post" novalidate>
           <div class="col-2">
             <div class="field">
               <label for="first">First name <span class="req">*</span></label>
@@ -191,10 +196,6 @@
 
           <button type="submit" class="btn btn-primary btn-lg btn-block">Send my request</button>
           <p class="form-note">Prefer to talk? Call or text <a href="tel:+14104461169">(410) 446-1169</a>.</p>
-          <!-- TO RECEIVE SUBMISSIONS: connect this form to an email/CRM handler.
-               Easiest options: Formspree (set action="https://formspree.io/f/XXXX")
-               or Netlify Forms (add netlify to the <form> tag). Then remove the
-               e.preventDefault() line in assets/js/script.js so it posts normally. -->
         </form>
       </div>
     </div>

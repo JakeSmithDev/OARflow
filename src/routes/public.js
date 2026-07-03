@@ -12,11 +12,13 @@ import {
 } from '../lib/appointments.js';
 import { queryOne, query } from '../lib/db.js';
 import { sendTemplated, detailsTable } from '../lib/email_templates.js';
+import { sendEmail } from '../lib/email.js';
 import { syncAppointment } from '../lib/google_calendar.js';
 import { config } from '../config.js';
 import { formatDateLabel, formatTimeLabel, ymdInTimeZone } from '../lib/dates.js';
 import { emitEvent } from '../lib/events.js';
 import { setConsent, normalizeE164 } from '../lib/sms.js';
+import { logAudit } from '../lib/audit.js';
 
 const router = express.Router();
 
@@ -36,6 +38,32 @@ function publicService(tenant, s) {
 
 function manageUrl(tenant, token) {
   return `${config.baseUrl}/book?appt=${encodeURIComponent(token)}&t=${encodeURIComponent(tenant.slug)}`;
+}
+
+function trimCap(value, max) {
+  return String(value || '').trim().slice(0, max);
+}
+
+function leadDetailsHtml(lead) {
+  return detailsTable([
+    ['Name', lead.name],
+    ['Phone', lead.phone],
+    ['Email', lead.email],
+    ['Address', lead.address],
+    ['Pest problem', lead.pest],
+    ['Notes', lead.notes],
+  ]);
+}
+
+function leadDetailsText(lead) {
+  return [
+    `Name: ${lead.name}`,
+    `Phone: ${lead.phone}`,
+    `Email: ${lead.email}`,
+    lead.address ? `Address: ${lead.address}` : '',
+    lead.pest ? `Pest problem: ${lead.pest}` : '',
+    `Notes: ${lead.notes}`,
+  ].filter(Boolean).join('\n');
 }
 
 // --- Bootstrap ------------------------------------------------------------
@@ -82,6 +110,69 @@ router.get('/:slug/availability', asyncHandler(async (req, res) => {
   const { appointments, blackouts, override } = await fetchDayConflicts(tenant, date);
   const slots = computeDayAvailability({ tenant, service, dateYmd: date, appointments, blackouts, override });
   res.json({ ok: true, slots, mode: effectiveBookingMode(tenant, service), granularity: tenant.settings.availability.granularity || 'slots' });
+}));
+
+// --- Marketing-site lead -------------------------------------------------
+router.post('/:slug/lead', asyncHandler(async (req, res) => {
+  const ip = getClientIp(req);
+  const rl = await consumeRateLimit({ ip, endpoint: 'public_lead', windowMinutes: 10, maxCount: 12 });
+  if (!rl.allowed) return res.status(429).json({ ok: false, error: 'Too many requests. Please try again shortly.' });
+
+  const tenant = await resolveTenant(req.params.slug);
+  if (!tenant) return notFound(res, 'Business not found.');
+
+  const body = req.body || {};
+  const lead = {
+    name: trimCap(body.name, 120),
+    phone: trimCap(body.phone, 40),
+    email: trimCap(body.email, 160).toLowerCase(),
+    address: trimCap(body.address, 220),
+    pest: trimCap(body.pest, 80),
+    notes: trimCap(body.notes, 2000),
+  };
+  if (!lead.name) return badRequest(res, 'Name is required.');
+  if (!lead.phone) return badRequest(res, 'Phone is required.');
+  if (!lead.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(lead.email)) return badRequest(res, 'A valid email is required.');
+  if (!lead.notes) return badRequest(res, 'Please add a short description.');
+
+  const customerId = await findOrCreateCustomer(tenant.id, {
+    name: lead.name,
+    phone: lead.phone,
+    email: lead.email,
+    address: lead.address,
+    notes: `Website lead${lead.pest ? ` (${lead.pest})` : ''}: ${lead.notes}`,
+  });
+  const followUp = await queryOne(
+    `INSERT INTO follow_ups (tenant_id, customer_id, type, title, channel, due_at, note, created_by)
+     VALUES ($1,$2,'task',$3,'task',now(),$4,'public_lead') RETURNING *`,
+    [
+      tenant.id,
+      customerId,
+      `Website quote request from ${lead.name}`,
+      leadDetailsText(lead),
+    ],
+  );
+
+  const notifyTo = tenant.contact_email || tenant.settings.branding.supportEmail || tenant.settings.integrations.email.replyTo;
+  await sendEmail({
+    tenant,
+    to: notifyTo,
+    subject: `New website lead: ${lead.name}`,
+    html: `<p>A new lead was submitted from the Pasternack marketing site.</p>${leadDetailsHtml(lead)}`,
+    text: `A new lead was submitted from the Pasternack marketing site.\n\n${leadDetailsText(lead)}`,
+    relatedType: 'follow_up',
+    relatedId: followUp.id,
+  }).catch(() => {});
+
+  await logAudit({
+    tenantId: tenant.id,
+    action: 'public_lead_create',
+    entityType: 'follow_up',
+    entityId: followUp.id,
+    details: { customerId, ip, pest: lead.pest },
+  });
+
+  return res.status(201).json({ ok: true, followUpId: followUp.id, customerId });
 }));
 
 // --- Create a booking -----------------------------------------------------
