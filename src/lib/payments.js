@@ -158,7 +158,7 @@ async function refundCapturedPaymentIntent(stripe, tenant, pi, { invoiceId, crea
  * the payment in the same ledger as every other payment (idempotent on the
  * PaymentIntent id). Mock mode simulates a successful capture.
  */
-export async function chargeInvoiceOnFile(tenant, invoice, { paymentMethodId, amountCents, createdBy }) {
+export async function chargeInvoiceOnFile(tenant, invoice, { paymentMethodId, amountCents, createdBy, idempotencyKey }) {
   const st = cardsStatus(tenant);
   if (!st.available) return { ok: false, notConfigured: true };
   if (invoice.status === 'void') return { ok: false, error: 'This invoice is void.' };
@@ -170,8 +170,9 @@ export async function chargeInvoiceOnFile(tenant, invoice, { paymentMethodId, am
   if (!pm.consent_at) return { ok: false, error: 'This card has no stored authorization.' };
 
   if (st.mock || pm.is_mock) {
-    const ref = `mock_pi_${crypto.randomUUID()}`;
+    const ref = idempotencyKey ? `mock_pi_${idempotencyKey}` : `mock_pi_${crypto.randomUUID()}`;
     const r = await recordPayment(tenant, invoice.id, { amountCents: amount, method: 'card_on_file', stripeRef: ref, externalRef: ref, note: `Card on file ••${pm.last4 || ''} (simulated)`, createdBy });
+    if (r.duplicate) return { ok: true, duplicate: true, mock: true, invoice: r.invoice, amountCents: amount };
     if (r.rejected) return { ok: false, error: r.rejected === 'overpay' ? 'This invoice was already paid by a concurrent charge.' : 'The invoice could not be charged.' };
     return { ok: true, mock: true, invoice: r.invoice, amountCents: amount };
   }
@@ -179,11 +180,12 @@ export async function chargeInvoiceOnFile(tenant, invoice, { paymentMethodId, am
   const stripe = getStripe(tenant);
   let pi;
   try {
-    pi = await stripe.paymentIntents.create({
+    const params = {
       amount, currency: (tenant.currency || 'usd').toLowerCase(), customer: pm.provider_customer_id || undefined,
       payment_method: pm.provider_pm_id, off_session: true, confirm: true,
       metadata: { kind: 'card_on_file', tenant_id: String(tenant.id), invoice_id: String(invoice.id) },
-    });
+    };
+    pi = await stripe.paymentIntents.create(params, idempotencyKey ? { idempotencyKey } : undefined);
   } catch (err) {
     return { ok: false, error: err?.raw?.message || err.message || 'The card was declined.' };
   }
@@ -203,6 +205,7 @@ export async function chargeInvoiceOnFile(tenant, invoice, { paymentMethodId, am
         : `The charge could not be recorded on the invoice. Automatic refund failed: ${refund.error}`,
     };
   }
+  if (r.duplicate) return { ok: true, duplicate: true, mock: false, invoice: r.invoice, amountCents: pi.amount_received ?? amount };
   if (r.rejected || r.notFound) {
     const refund = await refundCapturedPaymentIntent(stripe, tenant, pi, { invoiceId: invoice.id, createdBy, reason: r.rejected || 'not_found' });
     const message = r.rejected === 'overpay'

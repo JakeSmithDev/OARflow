@@ -2,10 +2,11 @@
 const OF = window.OF;
 
     let S = null; let tab = OF.qs('tab') || 'business';
+    let auditState = { entity: '', actor: '', from: '', to: '', limit: OF.listLimit, rows: [], total: 0 };
     const DAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
     const dollars = c => ((c||0)/100).toFixed(2);
     const toCents = v => Math.round((parseFloat(String(v).replace(/[^0-9.\-]/g,''))||0)*100);
-    const TABS = [['business','Business'],['booking','Booking & Availability'],['services','Services'],['invoicing','Invoicing'],['integrations','Integrations'],['email','Email templates'],['team','Team']];
+    const TABS = [['business','Business'],['booking','Booking & Availability'],['services','Services'],['invoicing','Invoicing'],['integrations','Integrations'],['email','Email templates'],['team','Team'],['audit','Audit']];
     const CURRENCIES = ['USD','CAD','MXN','EUR','GBP','AUD','NZD'];
     const FALLBACK_TIMEZONES = ['America/New_York','America/Chicago','America/Denver','America/Los_Angeles','America/Phoenix','America/Anchorage','Pacific/Honolulu','UTC'];
     const TIMEZONES = (()=>{try{return Intl.supportedValuesOf ? Intl.supportedValuesOf('timeZone') : FALLBACK_TIMEZONES;}catch{return FALLBACK_TIMEZONES;}})();
@@ -48,6 +49,7 @@ const OF = window.OF;
           ${field('Proposed times to request', `<input id="bk_count" type="number" min="1" max="6" value="${bk.requestSlotCount}">`)}
         </div>
         <div class="grid cols-2">${field('Lead time (hours)', `<input id="bk_lead" type="number" min="0" value="${bk.leadTimeHours}">`,'Earliest a customer can book from now.')}${field('Book up to (days out)', `<input id="bk_max" type="number" min="1" value="${bk.maxDaysOut}">`)}</div>
+        ${field('Minimum online cancel notice (hours)', `<input id="bk_cancel" type="number" min="0" value="${bk.minimumCancelNoticeHours??24}">`,'Customers inside this window will be asked to contact you instead.')}
         <label class="row" style="gap:8px;margin:6px 0"><input type="checkbox" id="bk_addr" ${bk.collectAddress?'checked':''} style="width:auto"> Require a service address at booking</label>
         ${field('Confirmation message', `<textarea id="bk_msg">${OF.escape(bk.confirmationMessage||'')}</textarea>`)}
         <button class="btn btn-primary" id="saveBooking">Save booking settings</button>
@@ -69,7 +71,7 @@ const OF = window.OF;
         ${hoursRows}
         <button class="btn btn-primary" id="saveAvail" style="margin-top:8px">Save availability</button>`);
       root.querySelectorAll('.h_closed').forEach(c=>c.onchange=e=>{const d=e.target.dataset.d;root.querySelector(`.h_start[data-d="${d}"]`).disabled=e.target.checked;root.querySelector(`.h_end[data-d="${d}"]`).disabled=e.target.checked;});
-      root.querySelector('#saveBooking').onclick=async()=>{await OF.put('/api/admin/settings/settings',{booking:{defaultMode:root.querySelector('#bk_mode').value,requestSlotCount:+root.querySelector('#bk_count').value,leadTimeHours:+root.querySelector('#bk_lead').value,maxDaysOut:+root.querySelector('#bk_max').value,collectAddress:root.querySelector('#bk_addr').checked,confirmationMessage:root.querySelector('#bk_msg').value}});OF.toast('Saved','ok');};
+      root.querySelector('#saveBooking').onclick=async()=>{await OF.put('/api/admin/settings/settings',{booking:{defaultMode:root.querySelector('#bk_mode').value,requestSlotCount:+root.querySelector('#bk_count').value,leadTimeHours:+root.querySelector('#bk_lead').value,maxDaysOut:+root.querySelector('#bk_max').value,minimumCancelNoticeHours:+root.querySelector('#bk_cancel').value||0,collectAddress:root.querySelector('#bk_addr').checked,confirmationMessage:root.querySelector('#bk_msg').value}});OF.toast('Saved','ok');};
       root.querySelector('#applyDefaultMode').onclick=async()=>{ if(!(await OF.confirm({title:'Use default for all services?',body:'<p class="muted">Every service will follow the default booking mode above. You can still override individual services afterward.</p>',confirmText:'Apply to all'}))) return; const r=await OF.post('/api/admin/settings/services/use-default-mode'); OF.toast(`Updated ${r.updated} service(s)`,'ok'); };
       root.querySelector('#saveReminders').onclick=async()=>{await OF.put('/api/admin/settings/settings',{notifications:{appointmentReminder:{enabled:root.querySelector('#rem_on').checked,leadHours:+root.querySelector('#rem_lead').value||24}}});OF.toast('Saved','ok');};
       // Arrival-windows editor
@@ -205,9 +207,30 @@ const OF = window.OF;
       m.q('#verify').onclick=async()=>{try{await OF.post('/api/admin/auth/totp/enable',{code:m.q('#code').value});m.close();OF.toast('2FA enabled ✓','ok');teamTab(document.getElementById('content'));}catch(e){OF.toast(e.message,'error');}};
     }
 
+    async function auditTab(root, append=false){
+      const offset = append ? auditState.rows.length : 0;
+      const p = new URLSearchParams({ limit:auditState.limit, offset });
+      ['entity','actor','from','to'].forEach(k=>{ if(auditState[k]) p.set(k,auditState[k]); });
+      const d = await OF.get('/api/admin/audit?'+p);
+      auditState.rows = append ? auditState.rows.concat(d.entries||[]) : (d.entries||[]);
+      auditState.total = d.total || auditState.rows.length;
+      root.innerHTML = card('Audit log', `
+        <div class="row wrap" style="gap:8px;align-items:end;margin-bottom:12px">
+          ${field('Entity',`<input id="a_entity" value="${OF.escape(auditState.entity)}" placeholder="invoice, customer…">`)}
+          ${field('Actor',`<input id="a_actor" value="${OF.escape(auditState.actor)}" placeholder="username">`)}
+          ${field('From',`<input id="a_from" type="date" value="${OF.escape(auditState.from)}">`)}
+          ${field('To',`<input id="a_to" type="date" value="${OF.escape(auditState.to)}">`)}
+          <button class="btn btn-secondary" id="a_apply">Apply</button>
+        </div>
+        ${auditState.rows.length?`<div class="table-wrap"><table class="tbl"><thead><tr><th>When</th><th>Actor</th><th>Action</th><th>Entity</th><th>Details</th></tr></thead><tbody>${auditState.rows.map(x=>`<tr><td class="tiny muted">${OF.dateTime(x.created_at)}</td><td>${OF.escape(x.admin_username||'system')}</td><td class="cell-strong">${OF.escape(x.action)}</td><td>${OF.escape([x.entity_type,x.entity_id].filter(Boolean).join(' #')||'—')}</td><td class="tiny muted">${OF.escape(JSON.stringify(x.details||{})).slice(0,160)}</td></tr>`).join('')}</tbody></table></div>`:'<div class="empty"><p>No audit entries found.</p></div>'}
+        ${OF.listFooter({shown:auditState.rows.length,total:auditState.total,label:'entries'})}`);
+      root.querySelector('#a_apply').onclick=()=>{auditState={...auditState,entity:root.querySelector('#a_entity').value.trim(),actor:root.querySelector('#a_actor').value.trim(),from:root.querySelector('#a_from').value,to:root.querySelector('#a_to').value,rows:[]};auditTab(root);};
+      root.querySelector('[data-load-more]')?.addEventListener('click',()=>auditTab(root,true));
+    }
+
     function renderTab(root){
       const body = document.getElementById('tabbody');
-      ({business:businessTab,booking:bookingTab,services:servicesTab,invoicing:invoicingTab,integrations:integrationsTab,email:emailTab,team:teamTab})[tab](body);
+      ({business:businessTab,booking:bookingTab,services:servicesTab,invoicing:invoicingTab,integrations:integrationsTab,email:emailTab,team:teamTab,audit:auditTab})[tab](body);
     }
     async function reload(){ S = await OF.get('/api/admin/settings'); renderTab(); }
 

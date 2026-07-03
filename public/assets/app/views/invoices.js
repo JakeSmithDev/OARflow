@@ -2,13 +2,19 @@
 const OF = window.OF;
 
     let META = { presets: [], defaults: {}, stripeEnabled: false };
-    const state = { status: 'all', q: '' };
+    const state = { status: 'all', q: '', limit: OF.listLimit, rows: [], total: 0 };
     const centsToStr = (c) => ((c||0)/100).toFixed(2);
     const strToCents = (s) => Math.round((parseFloat(String(s).replace(/[^0-9.\-]/g,''))||0)*100);
 
-    async function refresh() {
-      const p = new URLSearchParams({ status: state.status }); if (state.q) p.set('q', state.q);
+    function listParams(offset = 0) {
+      const p = new URLSearchParams({ status: state.status, limit: state.limit, offset }); if (state.q) p.set('q', state.q);
+      return p;
+    }
+    async function refresh({ append = false } = {}) {
+      const p = listParams(append ? state.rows.length : 0);
       const d = await OF.get('/api/admin/invoices?'+p);
+      state.rows = append ? state.rows.concat(d.invoices || []) : (d.invoices || []);
+      state.total = d.total || state.rows.length;
       const s = d.summary;
       document.getElementById('tiles').innerHTML = `<div class="grid cols-3" style="margin-bottom:18px">
         <div class="stat"><div class="label">Outstanding</div><div class="value">${OF.money(s.outstanding)}</div></div>
@@ -17,21 +23,24 @@ const OF = window.OF;
       document.getElementById('chips').innerHTML = ['all','draft','sent','partial','paid','void']
         .map(k=>`<button class="chip ${state.status===k?'active':''}" data-s="${k}">${k[0].toUpperCase()+k.slice(1)}</button>`).join('');
       document.querySelectorAll('#chips .chip').forEach(b=>b.onclick=()=>{state.status=b.dataset.s;refresh();});
-      const rows = d.invoices;
-      document.getElementById('list').innerHTML = rows.length?`<div class="table-wrap"><table class="tbl">
+      const rows = state.rows;
+      const list = document.getElementById('list');
+      list.innerHTML = rows.length?`<div class="table-wrap"><table class="tbl">
         <thead><tr><th>Invoice</th><th>Customer</th><th>Status</th><th class="right">Total</th><th class="right">Balance</th><th></th></tr></thead>
         <tbody>${rows.map(i=>`<tr class="clickable" data-id="${i.id}"><td class="cell-strong">${OF.escape(i.number)}<div class="tiny muted">${OF.date(i.created_at)}</div></td>
           <td>${OF.escape(i.customer_name)}</td><td>${OF.statusBadge(i.status)}</td>
           <td class="right mono">${OF.money(i.total_cents)}</td>
-          <td class="right mono">${OF.money(i.total_cents-i.amount_paid_cents)}</td><td></td></tr>`).join('')}</tbody></table></div>`
-        : `<div class="empty"><div class="ic">${OF.icon('invoices',22)}</div><p>No invoices yet.</p></div>`;
-      document.querySelectorAll('#list tr[data-id]').forEach(r=>r.onclick=()=>openDrawer(r.dataset.id));
+          <td class="right mono">${OF.money(i.total_cents-i.amount_paid_cents)}</td><td></td></tr>`).join('')}</tbody></table></div>${OF.listFooter({ shown: rows.length, total: state.total, label: 'invoices' })}`
+        : `<div class="empty"><div class="ic">${OF.icon('invoices',22)}</div><p>No invoices yet.</p></div>${OF.listFooter({ shown: 0, total: state.total, label: 'invoices' })}`;
+      list.querySelectorAll('tr[data-id]').forEach(r=>r.onclick=()=>openDrawer(r.dataset.id));
+      list.querySelector('[data-load-more]')?.addEventListener('click', () => refresh({ append: true }));
     }
 
     async function openDrawer(id) {
       const d = await OF.get('/api/admin/invoices/'+id);
       const i = d.invoice;
       const editable = i.status==='draft' || i.status==='sent' || i.status==='partial';
+      const canPayments = OF.hasCap('payments.manage');
       const liHtml = (i.line_items||[]).map(li=>`<div class="row between" style="padding:5px 0"><span>${OF.escape(li.label)}${li.quantity>1?` ×${li.quantity}`:''}</span><span class="mono">${OF.money(li.amount_cents)}</span></div>`).join('');
       const evHtml = (d.events||[]).map(e=>`<div class="row between" style="padding:5px 0;border-top:1px solid var(--line-2)"><span class="small">${OF.escape(e.event_type)} · ${OF.escape(e.method||'')} ${e.note?`· ${OF.escape(e.note)}`:''}<div class="tiny muted">${OF.dateTime(e.created_at)}</div></span><span class="mono">${OF.money(e.amount_cents)}</span></div>`).join('') || '<p class="muted small">No payments recorded.</p>';
       const dr = OF.drawer(`
@@ -50,11 +59,12 @@ const OF = window.OF;
           </div>
           <div class="row wrap" style="gap:8px;margin-bottom:14px">
             ${i.status!=='void'&&i.status!=='paid'?`<button class="btn btn-primary btn-sm" id="sendBtn">${OF.icon('send',15)} ${i.sent_at?'Resend':'Send'} invoice</button>`:''}
-            ${d.balanceCents>0&&i.status!=='void'?`<button class="btn btn-secondary btn-sm" id="payBtn">${OF.icon('money',15)} Record payment</button>`:''}
-            ${d.balanceCents>0&&i.status!=='void'&&(d.savedCards||[]).length?`<button class="btn btn-secondary btn-sm" id="chargeBtn">${OF.icon('money',15)} Charge card on file</button>`:''}
+            ${canPayments&&d.balanceCents>0&&i.status!=='void'?`<button class="btn btn-secondary btn-sm" id="payBtn">${OF.icon('money',15)} Record payment</button>`:''}
+            ${canPayments&&d.balanceCents>0&&i.status!=='void'&&(d.savedCards||[]).length?`<button class="btn btn-secondary btn-sm" id="chargeBtn">${OF.icon('money',15)} Charge card on file</button>`:''}
             ${editable?`<button class="btn btn-ghost btn-sm" id="editBtn">Edit</button>`:''}
+            <a class="btn btn-ghost btn-sm" href="/api/admin/invoices/${id}/pdf" download>Download PDF</a>
             <button class="btn btn-ghost btn-sm" id="copyBtn">Copy pay link</button>
-            ${i.status!=='paid'&&i.status!=='void'?`<button class="btn btn-danger-soft btn-sm" id="voidBtn">Void</button>`:''}
+            ${canPayments&&i.status!=='paid'&&i.status!=='void'?`<button class="btn btn-danger-soft btn-sm" id="voidBtn">Void</button>`:''}
           </div>
           <div id="payForm" class="hidden card card-pad" style="margin-bottom:12px">
             <div class="grid cols-2"><div class="field"><label>Amount</label><div class="input-prefix"><span>$</span><input id="p_amt" value="${centsToStr(d.balanceCents)}"></div></div>
@@ -71,10 +81,17 @@ const OF = window.OF;
       dr.q('#sendBtn')?.addEventListener('click', async()=>{ try{ const r=await OF.post(`/api/admin/invoices/${id}/send`); OF.toast(r.emailed?'Invoice sent ✓':'Marked sent (email not configured)','ok'); reload(); }catch(e){OF.toast(e.message,'error');}});
       dr.q('#payBtn')?.addEventListener('click', ()=>dr.q('#payForm').classList.toggle('hidden'));
       dr.q('#chargeBtn')?.addEventListener('click', async()=>{
-        const def = (d.savedCards||[]).find(c=>c.is_default) || d.savedCards[0];
-        if (!(await OF.confirm({ title:`Charge ${OF.money(d.balanceCents)}?`, body:`This will charge ${def.brand||'card'} ••${def.last4||''} on file${d.cards&&d.cards.mock?' (simulated in demo mode)':''}.`, confirmText:'Charge card' }))) return;
-        try { const r = await OF.post(`/api/admin/invoices/${id}/charge-on-file`, { paymentMethodId: def.id }); OF.toast(r.mock?'Charged (simulated) ✓':'Card charged ✓','ok'); reload(); }
-        catch(e){ OF.toast(e.message,'error'); }
+        const cards = d.savedCards || [];
+        const charge = async (pm) => {
+          if (!(await OF.confirm({ title:`Charge ${OF.money(d.balanceCents)}?`, body:`This will charge ${pm.brand||'card'} ••${pm.last4||''} on file${d.cards&&d.cards.mock?' (simulated in demo mode)':''}.`, confirmText:'Charge card' }))) return;
+          try { const r = await OF.post(`/api/admin/invoices/${id}/charge-on-file`, { paymentMethodId: pm.id }); OF.toast(r.mock?'Charged (simulated) ✓':'Card charged ✓','ok'); reload(); }
+          catch(e){ OF.toast(e.message,'error'); }
+        };
+        if (cards.length <= 1) return charge(cards[0]);
+        const m = OF.modal(`<div class="modal-head"><h3>Choose card</h3><button class="x" data-close>&times;</button></div>
+          <div class="modal-body"><div class="stack">${cards.map(pm=>`<button class="btn btn-secondary btn-block" data-pm="${pm.id}">${OF.escape(pm.brand||'card')} ••${OF.escape(pm.last4||'')} <span class="tiny muted">exp ${pm.exp_month}/${String(pm.exp_year).slice(-2)}${pm.is_default?' · default':''}</span></button>`).join('')}</div></div>
+          <div class="modal-foot"><button class="btn btn-secondary" data-close>Cancel</button></div>`);
+        m.el.querySelectorAll('[data-pm]').forEach(b=>b.onclick=()=>{ const pm=cards.find(c=>String(c.id)===b.dataset.pm); m.close(); charge(pm); });
       });
       dr.q('#p_save')?.addEventListener('click', async()=>{ await OF.post(`/api/admin/invoices/${id}/payment`,{amountCents:strToCents(dr.q('#p_amt').value),method:dr.q('#p_method').value,sendReceipt:dr.q('#p_receipt').checked}); OF.toast('Payment recorded','ok'); reload(); });
       dr.q('#editBtn')?.addEventListener('click', ()=>{ dr.close(); builder({ editId:id, invoice:i }); });
@@ -172,11 +189,19 @@ const OF = window.OF;
       m.q('#b_savesend')?.addEventListener('click', ()=>save(true));
     }
 
+    function exportInvoices() {
+      const p = listParams(0);
+      p.delete('limit'); p.delete('offset');
+      location.href = '/api/admin/invoices/export.csv?' + p;
+    }
+
     OF.page({ active:'invoices', title:'Invoices', subtitle:'Customizable invoices — sent only when you choose', render: async (root, ctx) => {
       META = await OF.get('/api/admin/invoices/meta');
-      ctx.setActions(`<button class="btn btn-primary btn-sm" id="newBtn">${OF.icon('plus',15)} New invoice</button>`);
-      root.innerHTML = `<div id="tiles"></div><div class="row wrap" id="chips" style="gap:8px;margin-bottom:14px"></div><div id="list"><div class="loading-page"><span class="spinner"></span></div></div>`;
+      ctx.setActions(`<button class="btn btn-secondary btn-sm" id="exportBtn">Export CSV</button><button class="btn btn-primary btn-sm" id="newBtn">${OF.icon('plus',15)} New invoice</button>`);
+      root.innerHTML = `<div id="tiles"></div><div class="row between wrap" style="gap:10px;margin-bottom:14px"><div class="row wrap" id="chips" style="gap:8px"></div>${OF.searchInput({ placeholder:'Search invoice or customer…', value: state.q })}</div><div id="list"><div class="loading-page"><span class="spinner"></span></div></div>`;
       document.getElementById('newBtn').onclick=()=>builder({});
+      document.getElementById('exportBtn').onclick=exportInvoices;
+      document.getElementById('search').addEventListener('input', OF.debounce((e)=>{ state.q=e.target.value.trim(); refresh(); },300));
       await refresh();
       if (OF.qs('id')) openDrawer(OF.qs('id'));
       if (OF.qs('new')) {

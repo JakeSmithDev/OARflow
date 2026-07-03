@@ -55,6 +55,48 @@
   OF.initials = (name) => (name || '?').split(/\s+/).slice(0, 2).map((w) => w[0]).join('').toUpperCase();
   OF.debounce = (fn, ms = 250) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
   OF.qs = (k) => new URLSearchParams(location.search).get(k);
+  OF.listLimit = 50;
+
+  OF.searchInput = ({ id = 'search', placeholder = 'Search…', value = '' } = {}) =>
+    `<div class="input-prefix" style="max-width:320px">${OF.icon('search', 16).replace('<svg', '<svg style="position:absolute;left:11px;top:50%;transform:translateY(-50%);color:var(--muted)"')}<input id="${OF.escape(id)}" placeholder="${OF.escape(placeholder)}" value="${OF.escape(value)}" style="padding-left:34px"></div>`;
+
+  OF.listFooter = ({ shown = 0, total = 0, label = 'items' } = {}) => {
+    const hasMore = Number(total) > Number(shown);
+    return `<div class="list-footer">
+      <span class="small muted">Showing <b>${Number(shown) || 0}</b> of <b>${Number(total) || 0}</b> ${OF.escape(label)}</span>
+      ${hasMore ? `<button class="btn btn-secondary btn-sm" data-load-more>Load more</button>` : ''}
+    </div>`;
+  };
+
+  OF.customerPicker = ({ input, results, onSelect, onType, limit = 6 } = {}) => {
+    if (!input || !results) return;
+    let selected = null;
+    const close = () => { results.style.display = 'none'; };
+    input.addEventListener('input', OF.debounce(async () => {
+      selected = null;
+      onType && onType(input.value);
+      const q = input.value.trim();
+      if (q.length < 2) { close(); return; }
+      const d = await OF.get('/api/admin/customers?q=' + encodeURIComponent(q));
+      results.innerHTML = (d.customers || []).slice(0, limit).map((c) => `
+        <div class="picker-row" data-id="${c.id}" data-name="${OF.escape(c.name)}" data-email="${OF.escape(c.email || '')}" data-phone="${OF.escape(c.phone || '')}" data-address="${OF.escape(c.address || '')}">
+          <span>${OF.escape(c.name)}</span>
+          <small>${OF.escape([c.email, c.phone].filter(Boolean).join(' · ') || c.address || '')}</small>
+        </div>`).join('') || '<div class="picker-row muted">No matches</div>';
+      results.style.display = 'block';
+      results.querySelectorAll('[data-id]').forEach((row) => row.addEventListener('click', () => {
+        selected = {
+          id: Number(row.dataset.id), name: row.dataset.name, email: row.dataset.email,
+          phone: row.dataset.phone, address: row.dataset.address,
+        };
+        input.value = selected.name;
+        close();
+        onSelect && onSelect(selected);
+      }));
+    }, 250));
+    document.addEventListener('click', (e) => { if (!results.contains(e.target) && e.target !== input) close(); });
+    return { get selected() { return selected; }, clear() { selected = null; close(); } };
+  };
 
   const STATUS = {
     scheduled: ['info', 'Scheduled'], requested: ['warn', 'Requested'], completed: ['ok', 'Completed'],
@@ -113,6 +155,13 @@
     setTimeout(() => { el.style.opacity = '0'; el.style.transition = 'opacity .3s'; setTimeout(() => el.remove(), 300); }, 3200);
   };
 
+  const closeStack = [];
+  function pushClose(close) { closeStack.push(close); }
+  function popClose(close) {
+    const i = closeStack.lastIndexOf(close);
+    if (i >= 0) closeStack.splice(i, 1);
+  }
+
   OF.modal = (innerHtml, { wide, onClose } = {}) => {
     const ov = document.createElement('div');
     ov.className = 'overlay';
@@ -122,9 +171,11 @@
     const close = () => {
       if (closed) return;
       closed = true;
+      popClose(close);
       ov.remove();
       onClose && onClose();
     };
+    pushClose(close);
     ov.addEventListener('click', (e) => { if (e.target === ov) close(); });
     ov.querySelectorAll('[data-close]').forEach((b) => b.addEventListener('click', close));
     return { el: ov, close, q: (sel) => ov.querySelector(sel) };
@@ -135,7 +186,9 @@
     const dr = document.createElement('div'); dr.className = 'drawer ' + (wide ? 'wide' : '');
     dr.innerHTML = innerHtml;
     document.body.appendChild(ov); document.body.appendChild(dr);
-    const close = () => { ov.remove(); dr.remove(); };
+    let closed = false;
+    const close = () => { if (closed) return; closed = true; popClose(close); ov.remove(); dr.remove(); };
+    pushClose(close);
     ov.addEventListener('click', close);
     dr.querySelectorAll('[data-close]').forEach((b) => b.addEventListener('click', close));
     return { el: dr, close, q: (s) => dr.querySelector(s) };
@@ -155,6 +208,14 @@
       <div class="modal-foot"><button class="btn btn-secondary" data-close>Cancel</button>
       <button class="btn ${danger ? 'btn-danger' : 'btn-primary'}" data-ok>${OF.escape(confirmText)}</button></div>`, { onClose: () => finish(false) });
     m.q('[data-ok]').addEventListener('click', () => finish(true));
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    const close = closeStack[closeStack.length - 1];
+    if (close) { e.preventDefault(); close(); return; }
+    const sb = document.getElementById('sidebar');
+    if (sb?.classList.contains('open')) { e.preventDefault(); sb.classList.remove('open'); document.getElementById('scrim')?.setAttribute('hidden', ''); }
   });
 
   // --- App shell + auth guard ---------------------------------------------
@@ -223,6 +284,7 @@
           <button class="link-btn" id="logoutBtn" style="margin-left:auto;color:#7c8aa0">Log out</button>
         </div>
       </aside>
+      <div class="scrim" id="scrim" hidden></div>
       <main class="main">
         <div class="topbar">
           <button class="menu-toggle" id="menuToggle" aria-label="Open menu">${OF.icon('menu', 20)}</button>
@@ -251,6 +313,14 @@
       if (n) { el.textContent = n; el.hidden = false; } else { el.hidden = true; }
     });
   }
+  OF.applyCounts = applyCounts;
+  OF.refreshCounts = () => api('/api/admin/dashboard/counts').then((r) => {
+    const c = r.counts || {};
+    applyCounts(c);
+    writeCache({ session: OF.session, tenant: OF.tenant, counts: c });
+    return c;
+  }).catch(() => null);
+
   function setActiveNav(view) {
     document.querySelectorAll('.nav-link[data-view]').forEach((a) => a.classList.toggle('active', a.dataset.view === view));
   }
@@ -258,7 +328,18 @@
     const lo = document.getElementById('logoutBtn');
     if (lo && !lo._bound) { lo._bound = 1; lo.addEventListener('click', async () => { OF.clearCache(); await api('/api/admin/auth/logout', { method: 'POST' }).catch(() => {}); location.href = '/admin/login'; }); }
     const mt = document.getElementById('menuToggle');
-    if (mt && !mt._bound) { mt._bound = 1; mt.addEventListener('click', () => document.getElementById('sidebar')?.classList.toggle('open')); }
+    const scrim = document.getElementById('scrim');
+    const closeMenu = () => { document.getElementById('sidebar')?.classList.remove('open'); scrim?.setAttribute('hidden', ''); };
+    if (mt && !mt._bound) {
+      mt._bound = 1;
+      mt.addEventListener('click', () => {
+        const sb = document.getElementById('sidebar');
+        const open = !sb?.classList.contains('open');
+        sb?.classList.toggle('open', open);
+        if (open) scrim?.removeAttribute('hidden'); else scrim?.setAttribute('hidden', '');
+      });
+    }
+    if (scrim && !scrim._bound) { scrim._bound = 1; scrim.addEventListener('click', closeMenu); }
   }
 
   // --- Client-side router (true SPA — no document reloads) -----------------
@@ -266,6 +347,14 @@
   // View modules call OF.page({active,title,subtitle,render}) at import time to
   // register themselves; the router renders the registered view into #content.
   OF.page = (cfg) => { OF._views[cfg.active] = cfg; };
+  OF._views.notfound = {
+    active: 'notfound',
+    title: 'Not found',
+    subtitle: 'This admin page does not exist',
+    render: async (root) => {
+      root.innerHTML = `<div class="empty"><div class="ic">${OF.icon('bell', 22)}</div><p>We couldn't find that admin page.</p><a class="btn btn-primary btn-sm" href="/admin/">Go to Dashboard</a></div>`;
+    },
+  };
 
   const ROUTES = [
     { path: '/admin/', file: 'dashboard', view: 'dashboard' },
@@ -290,7 +379,7 @@
   function matchRoute(pathname) {
     const p = pathname.replace(/\/+$/, '');
     if (p === '' || p === '/admin') return ROUTES[0];
-    return ROUTES.find((r) => r.path.replace(/\/$/, '') === p) || ROUTES[0];
+    return ROUTES.find((r) => r.path.replace(/\/$/, '') === p) || { path: p, file: null, view: 'notfound' };
   }
 
   /** Navigate within the SPA (pushState + render). External paths fall back to a full load. */
@@ -303,16 +392,25 @@
   };
 
   let routeSeq = 0;
+  let cleanups = [];
+  OF.onCleanup = (fn) => { if (typeof fn === 'function') cleanups.push(fn); };
+  function runCleanups() {
+    const fns = cleanups;
+    cleanups = [];
+    for (const fn of fns) { try { fn(); } catch { /* best-effort */ } }
+  }
   async function renderRoute() {
+    runCleanups();
     const route = matchRoute(location.pathname);
     setActiveNav(route.view);
     const content = document.getElementById('content');
     if (!content) return;
     document.getElementById('pageActions').innerHTML = '';
+    OF.refreshCounts();
     const seq = ++routeSeq;
     const loading = '<div class="loading-page"><span class="spinner"></span></div>';
     content.innerHTML = loading;
-    if (!OF._views[route.view]) {
+    if (!OF._views[route.view] && route.file) {
       try { await import(`/assets/app/views/${route.file}.js`); }
       catch (e) {
         if (seq !== routeSeq) return;
@@ -328,6 +426,7 @@
     document.title = (cfg.title ? cfg.title + ' · ' : '') + (OF.tenant?.name || 'OARFlow');
     window.scrollTo(0, 0);
     document.getElementById('sidebar')?.classList.remove('open');
+    document.getElementById('scrim')?.setAttribute('hidden', '');
     const viewRoot = document.createElement('div');
     viewRoot.className = 'view-root';
     viewRoot.innerHTML = loading;
@@ -374,7 +473,7 @@
     const counts = (cached && cached.counts) || {};
     writeCache({ session: s.user, tenant: s.tenant, counts });
     if (!(cached && cached.tenant) || cachedShell !== shellSignature(s.user, s.tenant)) { root.innerHTML = renderShell(active, counts); bindShell(); }
-    api('/api/admin/dashboard/counts').then((r) => { const c = r.counts || {}; applyCounts(c); writeCache({ session: OF.session, tenant: OF.tenant, counts: c }); }).catch(() => {});
+    OF.refreshCounts();
     document.addEventListener('click', onDocClick);
     window.addEventListener('popstate', renderRoute);
     await renderRoute();

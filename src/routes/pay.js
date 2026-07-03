@@ -5,9 +5,12 @@ import { queryOne } from '../lib/db.js';
 import { getTenantById } from '../lib/tenants.js';
 import { balanceCents } from '../lib/invoices.js';
 import { isConfigured as stripeConfigured, createInvoiceCheckout } from '../lib/stripe.js';
+import { cardsStatus, listPaymentMethods, chargeInvoiceOnFile } from '../lib/payments.js';
 import { rateLimit } from '../lib/rate_limit.js';
 import { safeEqual } from '../lib/crypto.js';
 import { config } from '../config.js';
+import { logAudit } from '../lib/audit.js';
+import { emitEvent } from '../lib/events.js';
 
 const router = express.Router();
 const limitView = rateLimit({ endpoint: 'pay_get', windowMinutes: 10, maxCount: 60 });
@@ -26,6 +29,8 @@ router.get('/:id', limitView, asyncHandler(async (req, res) => {
   const inv = await loadInvoice(toInt(req.params.id), String(req.query.token || ''));
   if (!inv) return notFound(res, 'Invoice not found.');
   const tenant = await getTenantById(inv.tenant_id);
+  const cards = cardsStatus(tenant);
+  const savedCards = cards.available ? await listPaymentMethods(tenant, inv.customer_id) : [];
   res.json({
     ok: true,
     invoice: {
@@ -36,9 +41,28 @@ router.get('/:id', limitView, asyncHandler(async (req, res) => {
     },
     tenant: { name: tenant.name, branding: tenant.settings.branding, timezone: tenant.timezone },
     stripeEnabled: stripeConfigured(tenant),
+    cards,
+    savedCards: savedCards.map((pm) => ({ id: pm.id, brand: pm.brand, last4: pm.last4, expMonth: pm.exp_month, expYear: pm.exp_year, isDefault: pm.is_default, isMock: pm.is_mock })),
     paid: inv.status === 'paid',
     voided: inv.status === 'void',
   });
+}));
+
+router.post('/:id/charge-saved', limitCheckout, asyncHandler(async (req, res) => {
+  const body = req.body || {};
+  const inv = await loadInvoice(toInt(req.params.id), String(body.token || ''));
+  if (!inv) return notFound(res, 'Invoice not found.');
+  if (inv.status === 'void') return badRequest(res, 'This invoice is no longer payable.');
+  if (inv.status === 'paid') return res.json({ ok: true, paid: true });
+  const tenant = await getTenantById(inv.tenant_id);
+  const paymentMethodId = toInt(body.paymentMethodId);
+  if (!paymentMethodId) return badRequest(res, 'Choose a saved card.');
+  const idempotencyKey = `pay_saved_${tenant.id}_${inv.id}_${paymentMethodId}`;
+  const r = await chargeInvoiceOnFile(tenant, inv, { paymentMethodId, createdBy: 'public_pay', idempotencyKey });
+  if (!r.ok) return badRequest(res, r.error || (r.notConfigured ? 'Card payments are not set up.' : 'The charge could not be completed.'));
+  await logAudit({ tenantId: tenant.id, action: 'public_invoice_charge_saved', entityType: 'invoice', entityId: inv.id, details: { paymentMethodId, amount: r.amountCents, mock: r.mock, duplicate: r.duplicate } });
+  if (r.invoice?.status === 'paid') emitEvent('invoice.paid', { tenantId: tenant.id, invoiceId: inv.id, customerId: r.invoice.customer_id }).catch(() => {});
+  res.json({ ok: true, paid: r.invoice?.status === 'paid', mock: r.mock, duplicate: r.duplicate, invoice: { status: r.invoice?.status, balanceCents: r.invoice ? balanceCents(r.invoice) : 0 } });
 }));
 
 router.post('/:id/checkout', limitCheckout, asyncHandler(async (req, res) => {

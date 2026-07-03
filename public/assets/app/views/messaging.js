@@ -39,6 +39,8 @@ async function openThread(host, id) {
   sendBtn.onclick = send;
   comp.addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
   comp.focus();
+  load(host).catch(() => {});
+  OF.refreshCounts();
 }
 
 async function load(host) {
@@ -74,5 +76,7 @@ OF.page({
       };
     };
     await load(root);
+    const poll = setInterval(() => { load(root).catch(() => {}); OF.refreshCounts(); }, 20000);
+    OF.onCleanup(() => clearInterval(poll));
   },
 });

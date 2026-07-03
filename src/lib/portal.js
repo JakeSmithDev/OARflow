@@ -30,7 +30,7 @@ export function portalUrl(token, tenant) {
 /** Everything the portal page renders for one customer. */
 export async function portalData(tenant, customer) {
   const appts = await query(
-    `SELECT a.id, a.status, a.scheduled_start, a.service_address, s.name AS service_name, s.color AS service_color
+    `SELECT a.id, a.status, a.scheduled_start, a.service_address, a.access_token, s.name AS service_name, s.color AS service_color
        FROM appointments a LEFT JOIN service_types s ON s.id=a.service_type_id
       WHERE a.tenant_id=$1 AND a.customer_id=$2 AND a.status <> 'canceled'
       ORDER BY COALESCE(a.scheduled_start, a.created_at) DESC LIMIT 50`,
@@ -40,6 +40,7 @@ export async function portalData(tenant, customer) {
   const upcoming = []; const past = [];
   const terminalStatuses = new Set(['completed', 'canceled', 'no_show']);
   for (const a of appts.rows) {
+    a.manageUrl = a.access_token ? `${config.baseUrl}/book?appt=${encodeURIComponent(a.access_token)}&t=${encodeURIComponent(tenant.slug)}` : null;
     const when = a.scheduled_start ? new Date(a.scheduled_start).getTime() : null;
     ((when && when >= now) || (!when && !terminalStatuses.has(a.status)) ? upcoming : past).push(a);
   }

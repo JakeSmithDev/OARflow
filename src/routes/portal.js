@@ -1,6 +1,6 @@
 // Customer self-service portal API (public; magic-link token auth).
 import express from 'express';
-import { asyncHandler, badRequest, notFound, getClientIp } from '../lib/http.js';
+import { asyncHandler, badRequest, notFound, getClientIp, toInt } from '../lib/http.js';
 import { consumeRateLimit } from '../lib/rate_limit.js';
 import { query, queryOne } from '../lib/db.js';
 import { getDefaultTenant, getTenantBySlug } from '../lib/tenants.js';
@@ -8,6 +8,8 @@ import { ensurePortalToken, customerByPortalToken, portalUrl, portalData } from 
 import { randomToken } from '../lib/crypto.js';
 import { sendTemplated } from '../lib/email_templates.js';
 import { config } from '../config.js';
+import { removePaymentMethod, setDefaultPaymentMethod } from '../lib/payments.js';
+import { logAudit } from '../lib/audit.js';
 
 const router = express.Router();
 
@@ -55,6 +57,24 @@ router.post('/card-link', asyncHandler(async (req, res) => {
   let token = ctx.customer.card_token;
   if (!token) { token = randomToken(); await query('UPDATE customers SET card_token=$3 WHERE tenant_id=$1 AND id=$2', [ctx.tenant.id, ctx.customer.id, token]); }
   res.json({ ok: true, url: `${config.baseUrl}/save-card?customer=${ctx.customer.id}&token=${token}` });
+}));
+
+router.post('/payment-methods/:pmId/default', asyncHandler(async (req, res) => {
+  const ctx = await loadCustomer(req);
+  if (!ctx) return notFound(res, 'This link is no longer valid.');
+  const pm = await setDefaultPaymentMethod(ctx.tenant, ctx.customer.id, toInt(req.params.pmId));
+  if (!pm) return notFound(res, 'Card not found.');
+  await logAudit({ tenantId: ctx.tenant.id, action: 'portal_card_default', entityType: 'customer', entityId: ctx.customer.id, details: { paymentMethodId: pm.id } });
+  res.json({ ok: true, paymentMethod: pm });
+}));
+
+router.delete('/payment-methods/:pmId', asyncHandler(async (req, res) => {
+  const ctx = await loadCustomer(req);
+  if (!ctx) return notFound(res, 'This link is no longer valid.');
+  const r = await removePaymentMethod(ctx.tenant, ctx.customer.id, toInt(req.params.pmId));
+  if (!r.ok) return badRequest(res, r.error || 'Could not remove this card.');
+  await logAudit({ tenantId: ctx.tenant.id, action: 'portal_card_remove', entityType: 'customer', entityId: ctx.customer.id, details: { paymentMethodId: toInt(req.params.pmId) } });
+  res.json({ ok: true });
 }));
 
 export default router;

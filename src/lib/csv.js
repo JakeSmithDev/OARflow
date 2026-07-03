@@ -13,4 +13,33 @@ export function toCsv(columns, rows) {
   return `${head}\n${body}\n`;
 }
 
-export default { toCsv };
+export function parseCsv(text) {
+  const rows = [];
+  let row = [];
+  let cur = '';
+  let quoted = false;
+  const s = String(text || '').replace(/^\uFEFF/, '');
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (quoted) {
+      if (ch === '"' && s[i + 1] === '"') { cur += '"'; i++; }
+      else if (ch === '"') quoted = false;
+      else cur += ch;
+      continue;
+    }
+    if (ch === '"') quoted = true;
+    else if (ch === ',') { row.push(cur); cur = ''; }
+    else if (ch === '\n') { row.push(cur); rows.push(row); row = []; cur = ''; }
+    else if (ch !== '\r') cur += ch;
+  }
+  if (cur || row.length) { row.push(cur); rows.push(row); }
+  if (!rows.length) return [];
+  const headers = rows.shift().map((h) => String(h || '').trim().toLowerCase());
+  return rows.filter((r) => r.some((v) => String(v || '').trim())).map((r, idx) => {
+    const obj = { row: idx + 2 };
+    headers.forEach((h, i) => { if (h) obj[h] = r[i] == null ? '' : String(r[i]).trim(); });
+    return obj;
+  });
+}
+
+export default { toCsv, parseCsv };

@@ -17,6 +17,7 @@ export function defaultTenantSettings(overrides = {}) {
       requestSlotCount: 3,
       leadTimeHours: 24,
       maxDaysOut: 60,
+      minimumCancelNoticeHours: 24,
       requireDeposit: false,
       depositType: 'none',          // 'none' | 'fixed' | 'percent'
       depositValueCents: 0,

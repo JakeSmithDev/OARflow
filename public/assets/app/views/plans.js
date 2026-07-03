@@ -7,6 +7,7 @@ const OF = window.OF;
 
     async function refresh(root) {
       DATA = await OF.get('/api/admin/plans');
+      const canOwner = OF.hasCap('*');
       const m = DATA.metrics;
       root.innerHTML = `
         <div class="grid cols-3" style="margin-bottom:20px">
@@ -24,8 +25,8 @@ const OF = window.OF;
           <div style="margin:8px 0"><span class="price">${OF.money(p.price_cents)}</span> <span class="per">/ ${intervalLabel(p.interval,p.interval_count)}</span></div>
           <p class="small muted" style="min-height:34px">${OF.escape(p.description||'')}</p>
           <div class="tiny muted">${p.service_name?`Includes: ${OF.escape(p.service_name)} · `:''}${p.active_count} active</div>
-          <div class="row" style="gap:8px;margin-top:12px"><button class="btn btn-secondary btn-sm" data-edit="${p.id}">Edit</button><button class="btn btn-ghost btn-sm" data-enroll="${p.id}">Enroll customer</button></div>
-        </div>`).join('') + `<button class="plan-card" id="addPlan" style="border-style:dashed;cursor:pointer;display:grid;place-items:center;color:var(--muted)">${OF.icon('plus',22)}<span style="margin-top:6px;font-weight:600">New plan</span></button>`;
+          <div class="row" style="gap:8px;margin-top:12px">${canOwner?`<button class="btn btn-secondary btn-sm" data-edit="${p.id}">Edit</button>`:''}<button class="btn btn-ghost btn-sm" data-enroll="${p.id}">Enroll customer</button></div>
+        </div>`).join('') + (canOwner ? `<button class="plan-card" id="addPlan" style="border-style:dashed;cursor:pointer;display:grid;place-items:center;color:var(--muted)">${OF.icon('plus',22)}<span style="margin-top:6px;font-weight:600">New plan</span></button>` : '');
 
       const subs = DATA.subscriptions;
       document.getElementById('subs').innerHTML = subs.length?`<div class="table-wrap"><table class="tbl">
@@ -36,7 +37,7 @@ const OF = window.OF;
           <td class="right">${s.status==='active'?`<button class="link-btn" data-sub="${s.id}" data-act="paused">Pause</button> · <button class="link-btn" style="color:var(--danger)" data-sub="${s.id}" data-act="canceled">Cancel</button>`:s.status==='paused'?`<button class="link-btn" data-sub="${s.id}" data-act="active">Resume</button>`:''}</td></tr>`).join('')}</tbody></table></div>`
         : `<div class="empty"><div class="ic">${OF.icon('recurring',22)}</div><p>No subscriptions yet. Enroll a customer in a plan to build recurring revenue.</p></div>`;
 
-      document.getElementById('addPlan').onclick=()=>planModal();
+      document.getElementById('addPlan')?.addEventListener('click',()=>planModal());
       document.querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>planModal(DATA.plans.find(p=>p.id==b.dataset.edit)));
       document.querySelectorAll('[data-enroll]').forEach(b=>b.onclick=()=>enrollModal(+b.dataset.enroll));
       document.getElementById('runDue').onclick=async()=>{ const r=await OF.post('/api/admin/plans/generate-due'); OF.toast(`Generated ${r.appointments} visit(s), ${r.invoices} invoice(s)`,'ok'); refresh(root); };

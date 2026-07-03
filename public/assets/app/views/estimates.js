@@ -3,13 +3,19 @@
 const OF = window.OF;
 
     let META = { presets: [], defaults: {} };
-    const state = { status: 'all', q: '' };
+    const state = { status: 'all', q: '', limit: OF.listLimit, rows: [], total: 0 };
     const centsToStr = (c) => ((c||0)/100).toFixed(2);
     const strToCents = (s) => Math.round((parseFloat(String(s).replace(/[^0-9.\-]/g,''))||0)*100);
 
-    async function refresh() {
-      const p = new URLSearchParams({ status: state.status }); if (state.q) p.set('q', state.q);
+    function listParams(offset = 0) {
+      const p = new URLSearchParams({ status: state.status, limit: state.limit, offset }); if (state.q) p.set('q', state.q);
+      return p;
+    }
+    async function refresh({ append = false } = {}) {
+      const p = listParams(append ? state.rows.length : 0);
       const d = await OF.get('/api/admin/estimates?'+p);
+      state.rows = append ? state.rows.concat(d.estimates || []) : (d.estimates || []);
+      state.total = d.total || state.rows.length;
       const s = d.summary;
       document.getElementById('tiles').innerHTML = `<div class="grid cols-3" style="margin-bottom:18px">
         <div class="stat"><div class="label">Awaiting approval</div><div class="value">${OF.money(s.outstanding)}</div></div>
@@ -18,15 +24,17 @@ const OF = window.OF;
       document.getElementById('chips').innerHTML = ['all','draft','sent','accepted','declined','converted']
         .map(k=>`<button class="chip ${state.status===k?'active':''}" data-s="${k}">${k[0].toUpperCase()+k.slice(1)}</button>`).join('');
       document.querySelectorAll('#chips .chip').forEach(b=>b.onclick=()=>{state.status=b.dataset.s;refresh();});
-      const rows = d.estimates;
-      document.getElementById('list').innerHTML = rows.length?`<div class="table-wrap"><table class="tbl">
+      const rows = state.rows;
+      const list = document.getElementById('list');
+      list.innerHTML = rows.length?`<div class="table-wrap"><table class="tbl">
         <thead><tr><th>Estimate</th><th>Customer</th><th>Status</th><th class="right">Total</th><th>Good through</th><th></th></tr></thead>
         <tbody>${rows.map(e=>`<tr class="clickable" data-id="${e.id}"><td class="cell-strong">${OF.escape(e.number)}<div class="tiny muted">${OF.date(e.created_at)}</div></td>
           <td>${OF.escape(e.customer_name)}</td><td>${OF.statusBadge(e.status)}</td>
           <td class="right mono">${OF.money(e.total_cents)}</td>
-          <td class="small muted">${e.valid_until?OF.date(e.valid_until):'—'}</td><td></td></tr>`).join('')}</tbody></table></div>`
-        : `<div class="empty"><div class="ic">${OF.icon('estimates',22)}</div><p>No estimates yet. Create one to send a customer an online approval link.</p></div>`;
-      document.querySelectorAll('#list tr[data-id]').forEach(r=>r.onclick=()=>openDrawer(r.dataset.id));
+          <td class="small muted">${e.valid_until?OF.date(e.valid_until):'—'}</td><td></td></tr>`).join('')}</tbody></table></div>${OF.listFooter({ shown: rows.length, total: state.total, label: 'estimates' })}`
+        : `<div class="empty"><div class="ic">${OF.icon('estimates',22)}</div><p>No estimates yet. Create one to send a customer an online approval link.</p></div>${OF.listFooter({ shown: 0, total: state.total, label: 'estimates' })}`;
+      list.querySelectorAll('tr[data-id]').forEach(r=>r.onclick=()=>openDrawer(r.dataset.id));
+      list.querySelector('[data-load-more]')?.addEventListener('click', () => refresh({ append: true }));
     }
 
     async function openDrawer(id) {
@@ -159,8 +167,9 @@ const OF = window.OF;
     OF.page({ active:'estimates', title:'Estimates', subtitle:'Quotes customers can approve online — then convert to invoices', render: async (root, ctx) => {
       META = await OF.get('/api/admin/invoices/meta');
       ctx.setActions(`<button class="btn btn-primary btn-sm" id="newBtn">${OF.icon('plus',15)} New estimate</button>`);
-      root.innerHTML = `<div id="tiles"></div><div class="row wrap" id="chips" style="gap:8px;margin-bottom:14px"></div><div id="list"><div class="loading-page"><span class="spinner"></span></div></div>`;
+      root.innerHTML = `<div id="tiles"></div><div class="row between wrap" style="gap:10px;margin-bottom:14px"><div class="row wrap" id="chips" style="gap:8px"></div>${OF.searchInput({ placeholder:'Search estimate or customer…', value: state.q })}</div><div id="list"><div class="loading-page"><span class="spinner"></span></div></div>`;
       document.getElementById('newBtn').onclick=()=>builder({});
+      document.getElementById('search').addEventListener('input', OF.debounce((e)=>{ state.q=e.target.value.trim(); refresh(); },300));
       await refresh();
       if (OF.qs('id')) openDrawer(OF.qs('id'));
       if (OF.qs('new')) {

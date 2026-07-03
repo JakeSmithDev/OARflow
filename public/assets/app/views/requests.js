@@ -3,9 +3,18 @@ const OF = window.OF;
 
     async function load(root) {
       const d = await OF.get('/api/admin/appointments?status=requested&limit=100');
+      const fu = await OF.get('/api/admin/follow-ups?status=pending').catch(() => ({ followUps: [] }));
+      const reschedules = (fu.followUps || []).filter(f => f.created_by === 'public_reschedule' || /^Reschedule request/i.test(f.title || ''));
       const rows = d.appointments;
-      if (!rows.length) { root.innerHTML = `<div class="card"><div class="empty"><div class="ic">${OF.icon('check',22)}</div><p>No pending requests. You're all caught up. 🎉</p></div></div>`; return; }
-      root.innerHTML = `<div class="stack">` + rows.map(a => {
+      if (!rows.length && !reschedules.length) { root.innerHTML = `<div class="card"><div class="empty"><div class="ic">${OF.icon('check',22)}</div><p>No pending requests. You're all caught up.</p></div></div>`; return; }
+      const rescheduleHtml = reschedules.length ? `<div class="card card-pad">
+        <div class="row between" style="margin-bottom:8px"><h3 style="font-size:16px">Reschedule requests</h3><span class="badge warn no-dot">${reschedules.length}</span></div>
+        ${reschedules.map(f=>`<div class="row between" style="padding:9px 0;border-bottom:1px solid var(--line-2)">
+          <div><div class="cell-strong">${OF.escape(f.customer_name||'Customer')}</div><div class="small muted" style="white-space:pre-wrap">${OF.escape(f.note||f.title||'')}</div></div>
+          <div class="row" style="gap:8px"><a class="btn btn-secondary btn-sm" href="/admin/appointments?id=${f.appointment_id}">Appointment</a><button class="btn btn-primary btn-sm" data-fu-done="${f.id}">Done</button></div>
+        </div>`).join('')}
+      </div>` : '';
+      root.innerHTML = `<div class="stack">${rescheduleHtml}` + rows.map(a => {
         const slots = (a.requested_slots||[]);
         const color = OF.color(a.service_color);
         return `<div class="card card-pad" data-id="${a.id}">
@@ -61,6 +70,7 @@ const OF = window.OF;
         if(!(await OF.confirm({title:'Decline request?',body:'<p class="muted">This cancels the request. The customer can be notified.</p>',confirmText:'Decline',danger:true}))) return;
         await OF.patch('/api/admin/appointments/'+id,{status:'canceled',notify:true}); OF.toast('Request declined','ok'); load(root);
       });
+      root.querySelectorAll('[data-fu-done]').forEach(b=>b.onclick=async()=>{ await OF.patch('/api/admin/follow-ups/'+b.dataset.fuDone,{status:'done'}); OF.toast('Request completed','ok'); load(root); });
     }
 
     OF.page({ active:'requests', title:'Requests', subtitle:'Booking requests awaiting your confirmation',

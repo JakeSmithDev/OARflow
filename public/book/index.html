@@ -36,10 +36,12 @@
     .navbtns { flex-wrap:wrap; }
     @media (max-width:560px){ .wrap{padding:20px 14px 70px;} .svc{padding:13px 14px;} .bk-hero{padding:18px 16px;} .bk-brand .company{font-size:19px;} .svc .price{font-size:15px;} }
     .datestrip { display:flex; gap:8px; overflow-x:auto; padding: 4px 2px 10px; }
+    .month-label { flex:none; align-self:center; color:var(--muted); font-size:12px; font-weight:800; text-transform:uppercase; letter-spacing:.06em; padding:0 4px 0 10px; }
     .daybtn { flex:none; width:64px; padding:10px 0; border:1px solid var(--line); border-radius:12px; background:var(--surface); text-align:center; cursor:pointer; transition:.1s; }
     .daybtn:hover { border-color: var(--brand); } .daybtn.active { background:var(--brand); color:#fff; border-color:var(--brand); }
     .daybtn .dow { font-size:11px; font-weight:700; text-transform:uppercase; opacity:.7; } .daybtn .dnum { font-size:19px; font-weight:800; margin-top:2px; }
-    .daybtn.closed { opacity:.4; cursor:not-allowed; }
+    .daybtn.closed { opacity:.45; cursor:not-allowed; background:var(--surface-2); }
+    .daybtn.closed:hover { border-color:var(--line); }
     .slots { display:grid; grid-template-columns: repeat(auto-fill, minmax(96px,1fr)); gap:10px; margin-top:6px; }
     .slots.win { grid-template-columns: repeat(auto-fill, minmax(150px,1fr)); }
     .slot { padding:11px 8px; border:1px solid var(--line); border-radius:10px; background:var(--surface); text-align:center; font-weight:600; cursor:pointer; transition:.1s; }
@@ -169,13 +171,44 @@
         <div class="navbtns">${reqMode?`<button class="btn btn-primary btn-lg" id="next" disabled>Continue</button>`:''}</div>`;
       $('#back').onclick = renderServices;
       const strip = $('#strip');
-      dayList().forEach(({key,date}) => {
+      const days = dayList();
+      let lastMonth = '';
+      days.forEach(({key,date}) => {
+        const monthKey = key.slice(0,7);
+        if (monthKey !== lastMonth) {
+          const lab = document.createElement('div');
+          lab.className = 'month-label';
+          lab.textContent = new Intl.DateTimeFormat('en-US',{timeZone:'UTC',month:'short',year:'numeric'}).format(new Date(`${key}T12:00:00Z`));
+          strip.appendChild(lab);
+          lastMonth = monthKey;
+        }
         const btn = document.createElement('div'); btn.className='daybtn';
+        btn.dataset.day = key;
         btn.innerHTML = `<div class="dow">${new Intl.DateTimeFormat('en-US',{timeZone:TZ,weekday:'short'}).format(date)}</div><div class="dnum">${new Intl.DateTimeFormat('en-US',{timeZone:TZ,day:'numeric'}).format(date)}</div>`;
-        btn.onclick = () => { $$('.daybtn').forEach(x=>x.classList.remove('active')); btn.classList.add('active'); loadSlots(key); };
+        btn.onclick = () => { if (btn.dataset.closed === '1') return; $$('.daybtn').forEach(x=>x.classList.remove('active')); btn.classList.add('active'); loadSlots(key); };
         strip.appendChild(btn);
       });
+      prefetchMonths(days);
       if (reqMode) renderPicked();
+    }
+
+    async function prefetchMonths(days) {
+      const months = [...new Set(days.map(d=>d.key.slice(0,7)))];
+      await Promise.all(months.map(async(mk)=>{
+        const [year, month] = mk.split('-');
+        try {
+          const d = await api(`/api/public/${slug}/month?year=${year}&month=${Number(month)}&serviceId=${state.service.id}`);
+          Object.entries(d.days||{}).forEach(([ymd, info]) => {
+            const btn = document.querySelector(`.daybtn[data-day="${ymd}"]`);
+            if (!btn) return;
+            const available = typeof info === 'boolean' ? info : info.available;
+            btn.classList.toggle('closed', !available);
+            btn.dataset.closed = available ? '0' : '1';
+            btn.title = available ? '' : (info && info.full ? 'Fully booked' : 'Closed');
+            btn.setAttribute('aria-disabled', available ? 'false' : 'true');
+          });
+        } catch { /* availability strip is a hint; slot lookup remains authoritative */ }
+      }));
     }
 
     async function loadSlots(date) {
@@ -300,6 +333,38 @@
       </div>`;
     }
 
+    function icsLocal(iso, timeZone) {
+      const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+        timeZone, year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false,
+      }).formatToParts(new Date(iso)).filter(p=>p.type!=='literal').map(p=>[p.type,p.value]));
+      return `${parts.year}${parts.month}${parts.day}T${parts.hour}${parts.minute}${parts.second}`;
+    }
+    function icsUtc(iso) { return new Date(iso).toISOString().replace(/[-:]/g,'').replace(/\.\d{3}Z$/,'Z'); }
+    function icsText(s) { return String(s||'').replace(/\\/g,'\\\\').replace(/\n/g,'\\n').replace(/,/g,'\\,').replace(/;/g,'\\;'); }
+    function downloadIcs(appt, tenant) {
+      const summary = `${appt.serviceName || 'Appointment'} with ${tenant.name}`;
+      const locationText = appt.serviceAddress || tenant.address || '';
+      const desc = `${tenant.name}${tenant.contactPhone ? `\\n${tenant.contactPhone}` : ''}`;
+      const lines = [
+        'BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//OARFlow//Booking//EN','CALSCALE:GREGORIAN','METHOD:PUBLISH',
+        `X-WR-TIMEZONE:${TZ}`,'BEGIN:VEVENT',
+        `UID:oarflow-appt-${appt.id}@${location.host}`,
+        `DTSTAMP:${icsUtc(new Date().toISOString())}`,
+        `DTSTART;TZID=${TZ}:${icsLocal(appt.scheduledStart, TZ)}`,
+        `DTEND;TZID=${TZ}:${icsLocal(appt.scheduledEnd || appt.scheduledStart, TZ)}`,
+        `SUMMARY:${icsText(summary)}`,
+        `LOCATION:${icsText(locationText)}`,
+        `DESCRIPTION:${icsText(desc)}`,
+        'END:VEVENT','END:VCALENDAR',
+      ];
+      const blob = new Blob([lines.join('\r\n')], { type: 'text/calendar;charset=utf-8' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'appointment.ics';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    }
+
     async function showExisting(token) {
       try {
         const d = await api(`/api/public/${slug}/appointment/${token}`);
@@ -313,7 +378,32 @@
           ${a.serviceAddress?`<div class="row between"><span class="muted">Address</span><b>${esc(a.serviceAddress)}</b></div>`:''}
           ${a.status==='requested'&&a.requestedSlots?`<div><span class="muted small">Proposed:</span><ul style="margin:6px 0;padding-left:18px">${a.requestedSlots.map(s=>`<li>${fmtDate(new Date(s.start))} · ${fmtTime(new Date(s.start))}</li>`).join('')}</ul></div>`:''}
         </div>
-        <div class="navbtns"><a class="btn btn-secondary" href="/">Back to homepage</a></div>`;
+        <div class="navbtns">
+          ${a.scheduledStart?`<button class="btn btn-secondary" id="icsBtn">Add to calendar</button>`:''}
+          ${a.canRequestReschedule?`<button class="btn btn-secondary" id="reschedBtn">Request a different time</button>`:''}
+          ${a.canCancel?`<button class="btn btn-danger-soft" id="cancelBtn">Cancel appointment</button>`:''}
+          <a class="btn btn-secondary" href="/">Back to homepage</a>
+        </div>
+        ${a.canRequestReschedule?`<div class="card card-pad hidden" id="reschedForm" style="margin-top:14px">
+          <h3 style="font-size:16px;margin-bottom:10px">Request a different time</h3>
+          <div class="field"><label>Preferred dates or times</label><input id="prefDates" placeholder="e.g. next Tuesday morning, Friday after 2"></div>
+          <div class="field"><label>Message</label><textarea id="reschedMsg" placeholder="Anything we should know?"></textarea></div>
+          <button class="btn btn-primary" id="reschedSend">Send request</button>
+        </div>`:''}`;
+        $('#icsBtn')?.addEventListener('click', ()=>downloadIcs(a, d.tenant));
+        $('#reschedBtn')?.addEventListener('click', ()=>$('#reschedForm')?.classList.toggle('hidden'));
+        $('#reschedSend')?.addEventListener('click', async()=>{
+          const btn=$('#reschedSend'); btn.disabled=true; btn.textContent='Sending…';
+          try {
+            await api(`/api/public/${slug}/appointment/${token}/reschedule-request`, { method:'POST', body:{ preferredDates:$('#prefDates').value.trim(), message:$('#reschedMsg').value.trim() } });
+            $('#reschedForm').innerHTML='<p class="muted small" style="margin:0">Thanks — your request was sent. Our team will follow up with options.</p>';
+          } catch(e) { alert(e.message); btn.disabled=false; btn.textContent='Send request'; }
+        });
+        $('#cancelBtn')?.addEventListener('click', async()=>{
+          if(!confirm(`Cancel this appointment?${a.minimumCancelNoticeHours!=null?` Online cancellation requires ${a.minimumCancelNoticeHours} hours notice.`:''}`)) return;
+          try { await api(`/api/public/${slug}/appointment/${token}/cancel`, { method:'POST', body:{ reason:'Canceled online by customer' } }); showExisting(token); }
+          catch(e) { alert(e.message); }
+        });
       } catch(e){ $('#view').innerHTML = `<div class="card card-pad center">${esc(e.message)}</div>`; }
     }
 

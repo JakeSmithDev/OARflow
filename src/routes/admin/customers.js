@@ -7,6 +7,7 @@ import { logAudit } from '../../lib/audit.js';
 import { requireWrite, requirePermission } from '../../lib/permissions.js';
 import { randomToken } from '../../lib/crypto.js';
 import { config } from '../../config.js';
+import { toCsv, parseCsv } from '../../lib/csv.js';
 import {
   cardsStatus, createSetupIntent, attachFromSetupIntent, attachMockCard,
   listPaymentMethods, setDefaultPaymentMethod, removePaymentMethod,
@@ -19,6 +20,7 @@ router.use(requireWrite('customers.manage')); // reads open to admins; writes ga
 router.use(['/:id/setup-intent', '/:id/payment-methods', '/:id/payment-methods/:pmId', '/:id/payment-methods/:pmId/default'], (req, res, next) => (req.method === 'GET' ? next() : requirePermission('payments.manage')(req, res, next)));
 
 async function loadCustomer(req) { return queryOne('SELECT * FROM customers WHERE tenant_id=$1 AND id=$2', [req.tenant.id, toInt(req.params.id)]); }
+const phoneKey = (s) => String(s || '').replace(/\D/g, '').slice(-10);
 
 router.get('/', asyncHandler(async (req, res) => {
   const tenantId = req.tenant.id;
@@ -40,6 +42,67 @@ router.get('/', asyncHandler(async (req, res) => {
   );
   const total = await queryOne(`SELECT count(*)::int n FROM customers c WHERE ${where.slice(0, q ? 2 : 1).join(' AND ')}`, params.slice(0, q ? 2 : 1));
   res.json({ ok: true, customers: rows.rows, total: total.n });
+}));
+
+router.get('/export.csv', asyncHandler(async (req, res) => {
+  const q = req.query.q;
+  const where = ['tenant_id=$1']; const params = [req.tenant.id];
+  if (q) { params.push(`%${q}%`); where.push(`(name ILIKE $${params.length} OR email ILIKE $${params.length} OR phone ILIKE $${params.length})`); }
+  const rows = await query(
+    `SELECT name, email, phone, address, city, state, postal_code, notes, created_at
+       FROM customers WHERE ${where.join(' AND ')} ORDER BY name`,
+    params,
+  );
+  const csv = toCsv([
+    { key: 'name', label: 'name' }, { key: 'email', label: 'email' }, { key: 'phone', label: 'phone' },
+    { key: 'address', label: 'address' }, { key: 'city', label: 'city' }, { key: 'state', label: 'state' },
+    { key: 'postal_code', label: 'postal_code' }, { key: 'notes', label: 'notes' }, { key: 'created_at', label: 'created_at' },
+  ], rows.rows);
+  res.set('Content-Type', 'text/csv; charset=utf-8');
+  res.set('Content-Disposition', `attachment; filename="customers_${new Date().toISOString().slice(0, 10)}.csv"`);
+  res.send(csv);
+}));
+
+router.post('/import', asyncHandler(async (req, res) => {
+  const b = req.body || {};
+  const dryRun = b.dryRun !== false;
+  const rows = parseCsv(b.csv).slice(0, 1000);
+  if (!rows.length) return badRequest(res, 'Upload a CSV with at least one row.');
+  const existing = await query('SELECT id, email, phone FROM customers WHERE tenant_id=$1', [req.tenant.id]);
+  const emails = new Set(existing.rows.map((r) => String(r.email || '').trim().toLowerCase()).filter(Boolean));
+  const phones = new Set(existing.rows.map((r) => phoneKey(r.phone)).filter(Boolean));
+  const batchEmails = new Set(); const batchPhones = new Set();
+  const preview = rows.map((r) => {
+    const email = String(r.email || '').trim().toLowerCase();
+    const phone = String(r.phone || '').trim();
+    const pkey = phoneKey(phone);
+    const out = {
+      row: r.row, name: r.name || '', email, phone, address: r.address || '', city: r.city || '', state: r.state || '',
+      postalCode: r.postal_code || r.zip || r.postalcode || '', notes: r.notes || '', status: 'valid', errors: [],
+    };
+    if (!out.name) out.errors.push('Name is required.');
+    if (email && (emails.has(email) || batchEmails.has(email))) out.errors.push('Duplicate email.');
+    if (pkey && (phones.has(pkey) || batchPhones.has(pkey))) out.errors.push('Duplicate phone.');
+    if (email) batchEmails.add(email);
+    if (pkey) batchPhones.add(pkey);
+    if (out.errors.length) out.status = out.errors.some((e) => /^Duplicate/.test(e)) ? 'duplicate' : 'error';
+    return out;
+  });
+  if (dryRun) {
+    return res.json({ ok: true, dryRun: true, rows: preview, summary: { total: preview.length, valid: preview.filter((r) => r.status === 'valid').length, duplicates: preview.filter((r) => r.status === 'duplicate').length, errors: preview.filter((r) => r.status === 'error').length } });
+  }
+  const valid = preview.filter((r) => r.status === 'valid');
+  const inserted = [];
+  for (const r of valid) {
+    const row = await queryOne(
+      `INSERT INTO customers (tenant_id, name, email, phone, address, city, state, postal_code, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
+      [req.tenant.id, r.name, r.email || null, r.phone || null, r.address || null, r.city || null, r.state || null, r.postalCode || null, r.notes || null],
+    );
+    inserted.push(row.id);
+  }
+  await logAudit({ tenantId: req.tenant.id, adminUsername: req.admin.username, action: 'customer_import', entityType: 'customer', details: { inserted: inserted.length, skipped: preview.length - inserted.length } });
+  res.json({ ok: true, inserted: inserted.length, skipped: preview.length - inserted.length, rows: preview });
 }));
 
 router.get('/:id', asyncHandler(async (req, res) => {

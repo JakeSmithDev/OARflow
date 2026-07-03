@@ -1,26 +1,36 @@
 // Auto-generated SPA view module. Registers itself via OF.page() on import.
 const OF = window.OF;
 
-    const state = { q: '' };
-    async function refresh() {
-      const d = await OF.get('/api/admin/customers?' + new URLSearchParams(state.q?{q:state.q}:{}));
+    const state = { q: '', limit: OF.listLimit, rows: [], total: 0 };
+    function params(offset = 0) {
+      const p = new URLSearchParams({ limit: state.limit, offset });
+      if (state.q) p.set('q', state.q);
+      return p;
+    }
+    async function refresh({ append = false } = {}) {
+      const offset = append ? state.rows.length : 0;
+      const d = await OF.get('/api/admin/customers?' + params(offset));
+      state.rows = append ? state.rows.concat(d.customers || []) : (d.customers || []);
+      state.total = d.total || state.rows.length;
       const list = document.getElementById('list');
-      list.innerHTML = d.customers.length ? `<div class="table-wrap"><table class="tbl">
+      list.innerHTML = state.rows.length ? `<div class="table-wrap"><table class="tbl">
         <thead><tr><th>Customer</th><th>Contact</th><th class="right">Visits</th><th class="right">Lifetime</th><th class="right">Balance</th></tr></thead>
-        <tbody>${d.customers.map(c=>`<tr class="clickable" data-id="${c.id}">
+        <tbody>${state.rows.map(c=>`<tr class="clickable" data-id="${c.id}">
           <td><div class="row" style="gap:10px"><span class="avatar-sm">${OF.initials(c.name)}</span><div><div class="cell-strong">${OF.escape(c.name)}</div><div class="tiny muted">${OF.escape([c.city,c.state].filter(Boolean).join(', '))}</div></div></div></td>
           <td><div class="small">${OF.escape(c.email||'')}</div><div class="tiny muted">${OF.escape(c.phone||'')}</div></td>
           <td class="right mono">${c.appt_count}</td>
           <td class="right mono">${OF.money(c.ltv_cents)}</td>
-          <td class="right">${Number(c.balance_cents)>0?`<span class="badge warn no-dot">${OF.money(c.balance_cents)}</span>`:'<span class="muted">—</span>'}</td></tr>`).join('')}</tbody></table></div>`
-        : `<div class="empty"><div class="ic">${OF.icon('customers',22)}</div><p>No customers yet.</p></div>`;
+          <td class="right">${Number(c.balance_cents)>0?`<span class="badge warn no-dot">${OF.money(c.balance_cents)}</span>`:'<span class="muted">—</span>'}</td></tr>`).join('')}</tbody></table></div>${OF.listFooter({ shown: state.rows.length, total: state.total, label: 'customers' })}`
+        : `<div class="empty"><div class="ic">${OF.icon('customers',22)}</div><p>No customers yet.</p></div>${OF.listFooter({ shown: 0, total: state.total, label: 'customers' })}`;
       list.querySelectorAll('tr[data-id]').forEach(r=>r.onclick=()=>openDrawer(r.dataset.id));
+      list.querySelector('[data-load-more]')?.addEventListener('click', () => refresh({ append: true }));
     }
 
     async function openDrawer(id) {
       window.__custId = id;
       const d = await OF.get('/api/admin/customers/'+id);
       const c = d.customer;
+      const canPayments = OF.hasCap('payments.manage');
       const dr = OF.drawer(`
         <div class="modal-head"><h3>${OF.escape(c.name)}</h3><button class="x" data-close>&times;</button></div>
         <div class="modal-body" style="overflow:auto">
@@ -29,7 +39,7 @@ const OF = window.OF;
             <div class="stat"><div class="label">Open balance</div><div class="value" style="font-size:22px">${OF.money(d.balanceCents)}</div></div>
           </div>
           <div class="row wrap" style="gap:8px;margin-bottom:16px">
-            <a class="btn btn-primary btn-sm" href="/admin/appointments?new=1&name=${encodeURIComponent(c.name)}">${OF.icon('plus',15)} Appointment</a>
+            <a class="btn btn-primary btn-sm" href="/admin/appointments?new=1&customer=${c.id}">${OF.icon('plus',15)} Appointment</a>
             <a class="btn btn-secondary btn-sm" href="/admin/invoices?new=1&customer=${c.id}">${OF.icon('invoices',15)} Invoice</a>
             <a class="btn btn-secondary btn-sm" href="/admin/plans?enroll=${c.id}">${OF.icon('recurring',15)} Enroll plan</a>
             <button class="btn btn-ghost btn-sm" id="portalBtn">Portal link</button>
@@ -52,7 +62,7 @@ const OF = window.OF;
           ${section('Appointments', d.appointments.map(a=>`<div class="row between" style="padding:7px 0;border-bottom:1px solid var(--line-2)"><a href="/admin/appointments?id=${a.id}">${a.service_name?OF.escape(a.service_name):'Appointment'}</a><span class="muted small">${a.scheduled_start?OF.date(a.scheduled_start):'—'}</span>${OF.statusBadge(a.status)}</div>`).join(''))}
           ${section('Invoices', d.invoices.map(i=>`<div class="row between" style="padding:7px 0;border-bottom:1px solid var(--line-2)"><a href="/admin/invoices?id=${i.id}">${OF.escape(i.number)}</a>${OF.statusBadge(i.status)}<span class="mono">${OF.money(i.total_cents)}</span></div>`).join(''))}
           ${d.subscriptions.length?section('Subscriptions', d.subscriptions.map(su=>`<div class="row between" style="padding:7px 0;border-bottom:1px solid var(--line-2)"><span>${OF.escape(su.plan_name||'Plan')}</span><span class="mono">${OF.money(su.price_cents)}/${su.interval}</span>${OF.statusBadge(su.status)}</div>`).join('')):''}
-          <div style="margin-bottom:16px"><div class="row between" style="margin-bottom:6px"><span class="muted tiny" style="text-transform:uppercase;letter-spacing:.04em;font-weight:700">Cards on file</span>${d.cards.available?`<div class="row" style="gap:6px"><button class="btn btn-ghost btn-xs" id="cardLinkBtn">Send link</button><button class="btn btn-secondary btn-xs" id="addCardBtn">${d.cards.mock?'Add test card':'Add card'}</button></div>`:''}</div>
+          <div style="margin-bottom:16px"><div class="row between" style="margin-bottom:6px"><span class="muted tiny" style="text-transform:uppercase;letter-spacing:.04em;font-weight:700">Cards on file</span>${canPayments&&d.cards.available?`<div class="row" style="gap:6px"><button class="btn btn-ghost btn-xs" id="cardLinkBtn">Send link</button><button class="btn btn-secondary btn-xs" id="addCardBtn">${d.cards.mock?'Add test card':'Add card'}</button></div>`:''}</div>
             <div id="cardsBox"></div>
             ${d.cards.notConfigured?`<p class="tiny muted">Connect Stripe in Settings → Integrations to store cards on file.</p>`:''}
             ${d.cards.mock?`<p class="tiny muted">Demo mode — saved cards are simulated until a live processor is connected.</p>`:''}</div>
@@ -74,7 +84,7 @@ const OF = window.OF;
       loadDevices();
       function cardsHtml(pms){ return pms.length?pms.map(pm=>`<div class="row between" style="padding:7px 0;border-bottom:1px solid var(--line-2)">
         <span>${OF.icon('money',14)} ${OF.escape((pm.brand||'card'))} ••${OF.escape(pm.last4||'')} <span class="tiny muted">exp ${pm.exp_month}/${String(pm.exp_year).slice(-2)}</span>${pm.is_default?' <span class="badge ok no-dot">Default</span>':''}${pm.is_mock?' <span class="tiny muted">(test)</span>':''}</span>
-        <span class="row" style="gap:8px">${pm.is_default?'':`<button class="link-btn" data-default="${pm.id}">Make default</button>`}<button class="link-btn" data-remove="${pm.id}" style="color:var(--danger)">Remove</button></span></div>`).join(''):'<p class="muted small">No cards on file.</p>'; }
+        ${canPayments?`<span class="row" style="gap:8px">${pm.is_default?'':`<button class="link-btn" data-default="${pm.id}">Make default</button>`}<button class="link-btn" data-remove="${pm.id}" style="color:var(--danger)">Remove</button></span>`:''}</div>`).join(''):'<p class="muted small">No cards on file.</p>'; }
       async function reloadCards(){ const r = await OF.get('/api/admin/customers/'+id+'/payment-methods'); const box=dr.q('#cardsBox'); if(box){ box.innerHTML=cardsHtml(r.paymentMethods); bindCards(); } }
       function bindCards(){
         dr.el.querySelectorAll('[data-default]').forEach(b=>b.onclick=async()=>{ await OF.post(`/api/admin/customers/${id}/payment-methods/${b.dataset.default}/default`); OF.toast('Default updated','ok'); reloadCards(); });
@@ -189,10 +199,56 @@ const OF = window.OF;
         m.close(); OF.toast('Customer added','ok'); refresh(); };
     }
 
+    function exportCustomers() {
+      const p = new URLSearchParams();
+      if (state.q) p.set('q', state.q);
+      location.href = '/api/admin/customers/export.csv' + (p.toString() ? '?' + p : '');
+    }
+
+    function importCustomers() {
+      let csv = '';
+      let preview = null;
+      const m = OF.modal(`<div class="modal-head"><h3>Import customers</h3><button class="x" data-close>&times;</button></div>
+        <div class="modal-body">
+          <p class="muted small" style="margin-top:0">CSV columns: name, email, phone, address, notes. Dry-run checks duplicates by email or phone before anything is created.</p>
+          <div class="field"><label>CSV file</label><input type="file" id="ci_file" accept=".csv,text/csv"></div>
+          <div id="ci_preview"></div>
+        </div>
+        <div class="modal-foot"><button class="btn btn-secondary" data-close>Cancel</button><button class="btn btn-primary" id="ci_import" disabled>Confirm import</button></div>`, { wide:true });
+      function draw(r) {
+        preview = r;
+        const rows = (r.rows||[]).slice(0, 10);
+        m.q('#ci_preview').innerHTML = `<div class="row wrap" style="gap:8px;margin-bottom:10px">
+          <span class="badge ok no-dot">${r.summary.valid} valid</span>
+          <span class="badge warn no-dot">${r.summary.duplicates} duplicates</span>
+          <span class="badge danger no-dot">${r.summary.errors} errors</span>
+        </div>
+        <div class="table-wrap"><table class="tbl"><thead><tr><th>Row</th><th>Name</th><th>Email</th><th>Phone</th><th>Status</th></tr></thead><tbody>${rows.map(x=>`<tr><td>${x.row}</td><td>${OF.escape(x.name)}</td><td>${OF.escape(x.email)}</td><td>${OF.escape(x.phone)}</td><td>${x.status==='valid'?'<span class="badge ok no-dot">Valid</span>':`<span class="badge ${x.status==='duplicate'?'warn':'danger'} no-dot">${OF.escape(x.errors.join(' '))}</span>`}</td></tr>`).join('')}</tbody></table></div>
+        ${r.rows.length>10?`<p class="tiny muted">Showing first 10 of ${r.rows.length} rows.</p>`:''}`;
+        m.q('#ci_import').disabled = !r.summary.valid;
+      }
+      m.q('#ci_file').onchange = async (e) => {
+        const file = e.target.files[0]; if (!file) return;
+        csv = await file.text();
+        try { draw(await OF.post('/api/admin/customers/import', { csv, dryRun:true })); }
+        catch (err) { OF.toast(err.message, 'error'); }
+      };
+      m.q('#ci_import').onclick = async () => {
+        if (!preview || !preview.summary.valid) return;
+        try {
+          const r = await OF.post('/api/admin/customers/import', { csv, dryRun:false });
+          OF.toast(`Imported ${r.inserted} customer${r.inserted===1?'':'s'}`, 'ok');
+          m.close(); refresh();
+        } catch (err) { OF.toast(err.message, 'error'); }
+      };
+    }
+
     OF.page({ active:'customers', title:'Customers', subtitle:'Your customer book', render: async (root, ctx) => {
-      ctx.setActions(`<button class="btn btn-primary btn-sm" id="addBtn">${OF.icon('plus',15)} Add customer</button>`);
-      root.innerHTML = `<div class="row between" style="margin-bottom:16px"><div class="input-prefix" style="max-width:320px">${OF.icon('search',16).replace('<svg','<svg style="position:absolute;left:11px;top:50%;transform:translateY(-50%);color:var(--muted)"')}<input id="search" placeholder="Search customers…" style="padding-left:34px"></div></div><div id="list"><div class="loading-page"><span class="spinner"></span></div></div>`;
+      ctx.setActions(`<button class="btn btn-secondary btn-sm" id="importBtn">Import CSV</button><button class="btn btn-secondary btn-sm" id="exportBtn">Export CSV</button><button class="btn btn-primary btn-sm" id="addBtn">${OF.icon('plus',15)} Add customer</button>`);
+      root.innerHTML = `<div class="row between" style="margin-bottom:16px">${OF.searchInput({ placeholder:'Search customers…', value: state.q })}</div><div id="list"><div class="loading-page"><span class="spinner"></span></div></div>`;
       document.getElementById('addBtn').onclick=addCustomer;
+      document.getElementById('exportBtn').onclick=exportCustomers;
+      document.getElementById('importBtn').onclick=importCustomers;
       document.getElementById('search').addEventListener('input', OF.debounce(e=>{ state.q=e.target.value.trim(); refresh(); },300));
       await refresh();
       if (OF.qs('id')) openDrawer(OF.qs('id'));

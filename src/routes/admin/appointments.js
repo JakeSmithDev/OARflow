@@ -20,6 +20,7 @@ import { recordApplication, listApplications, deleteApplication, serviceReport }
 import { logAudit } from '../../lib/audit.js';
 import { formatDateLabel, formatTimeLabel } from '../../lib/dates.js';
 import { config } from '../../config.js';
+import { toCsv } from '../../lib/csv.js';
 
 const router = express.Router();
 router.use(requireAdmin());
@@ -93,17 +94,45 @@ router.get('/', asyncHandler(async (req, res) => {
   if (q) { params.push(`%${q}%`); where.push(`(c.name ILIKE $${params.length} OR c.email ILIKE $${params.length})`); }
   if (from) { params.push(from); where.push(`a.scheduled_start >= $${params.length}`); }
   if (to) { params.push(to); where.push(`a.scheduled_start < $${params.length}`); }
+  const countParams = params.slice();
   params.push(limit); params.push(offset);
   const rows = await query(
     `${SELECT} WHERE ${where.join(' AND ')} ORDER BY COALESCE(a.scheduled_start, a.created_at) DESC LIMIT $${params.length - 1} OFFSET $${params.length}`,
     params,
+  );
+  const total = await queryOne(
+    `SELECT count(*)::int n FROM appointments a JOIN customers c ON c.id=a.customer_id WHERE ${where.join(' AND ')}`,
+    countParams,
   );
   const counts = await query(
     `SELECT status, count(*)::int n FROM appointments WHERE tenant_id=$1 GROUP BY status`, [tenantId],
   );
   const countMap = { all: 0 };
   for (const r of counts.rows) { countMap[r.status] = r.n; countMap.all += r.n; }
-  res.json({ ok: true, appointments: rows.rows.map((a) => redactAppointment(req, a)), counts: countMap });
+  res.json({ ok: true, appointments: rows.rows.map((a) => redactAppointment(req, a)), counts: countMap, total: total.n });
+}));
+
+router.get('/export.csv', asyncHandler(async (req, res) => {
+  const { status, q, from, to } = req.query;
+  const where = ['a.tenant_id=$1']; const params = [req.tenant.id];
+  if (status && status !== 'all') { params.push(status); where.push(`a.status=$${params.length}`); }
+  if (q) { params.push(`%${q}%`); where.push(`(c.name ILIKE $${params.length} OR c.email ILIKE $${params.length})`); }
+  if (from) { params.push(from); where.push(`a.scheduled_start >= $${params.length}`); }
+  if (to) { params.push(to); where.push(`a.scheduled_start < $${params.length}`); }
+  const rows = await query(
+    `${SELECT} WHERE ${where.join(' AND ')} ORDER BY COALESCE(a.scheduled_start, a.created_at) DESC`,
+    params,
+  );
+  const csv = toCsv([
+    { key: 'id', label: 'id' }, { key: 'status', label: 'status' }, { key: 'scheduled_start', label: 'scheduled_start' },
+    { key: 'scheduled_end', label: 'scheduled_end' }, { key: 'customer_name', label: 'customer_name' },
+    { key: 'customer_email', label: 'customer_email' }, { key: 'customer_phone', label: 'customer_phone' },
+    { key: 'service_name', label: 'service_name' }, { key: 'service_address', label: 'service_address' },
+    { key: 'price_cents', label: 'price_cents' }, { key: 'source', label: 'source' }, { key: 'created_at', label: 'created_at' },
+  ], rows.rows.map((a) => redactAppointment(req, a)));
+  res.set('Content-Type', 'text/csv; charset=utf-8');
+  res.set('Content-Disposition', `attachment; filename="appointments_${new Date().toISOString().slice(0, 10)}.csv"`);
+  res.send(csv);
 }));
 
 // --- Calendar range (schedule view). Accepts either ISO from/to, or a single

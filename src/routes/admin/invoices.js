@@ -1,6 +1,7 @@
 // Admin invoicing. Build a customizable invoice (presets + custom lines), send
 // the balance ON DEMAND (never automatically), record payments, void.
 import express from 'express';
+import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { requireAdmin } from '../../lib/auth.js';
 import { asyncHandler, badRequest, notFound, toInt } from '../../lib/http.js';
 import { query, queryOne } from '../../lib/db.js';
@@ -14,6 +15,7 @@ import { requireWrite, requirePermission } from '../../lib/permissions.js';
 import { logAudit } from '../../lib/audit.js';
 import { formatCents } from '../../lib/money.js';
 import { config } from '../../config.js';
+import { toCsv } from '../../lib/csv.js';
 
 const router = express.Router();
 router.use(requireAdmin());
@@ -54,17 +56,22 @@ router.get('/', asyncHandler(async (req, res) => {
   const tenantId = req.tenant.id;
   const { status, q } = req.query;
   const customerId = toInt(req.query.customerId);
+  const limit = Math.min(toInt(req.query.limit) || 50, 200);
+  const offset = toInt(req.query.offset) || 0;
   const where = ['i.tenant_id=$1']; const params = [tenantId];
   if (status && status !== 'all') { params.push(status); where.push(`i.status=$${params.length}`); }
   if (customerId) { params.push(customerId); where.push(`i.customer_id=$${params.length}`); }
   if (q) { params.push(`%${q}%`); where.push(`(c.name ILIKE $${params.length} OR i.number ILIKE $${params.length})`); }
+  const countParams = params.slice();
+  params.push(limit); params.push(offset);
   const rows = await query(
     `SELECT i.id, i.number, i.status, i.total_cents, i.amount_paid_cents, i.created_at, i.sent_at, i.due_date,
             c.name AS customer_name
        FROM invoices i JOIN customers c ON c.id=i.customer_id
-      WHERE ${where.join(' AND ')} ORDER BY i.id DESC LIMIT 200`,
+      WHERE ${where.join(' AND ')} ORDER BY i.id DESC LIMIT $${params.length - 1} OFFSET $${params.length}`,
     params,
   );
+  const total = await queryOne(`SELECT count(*)::int n FROM invoices i JOIN customers c ON c.id=i.customer_id WHERE ${where.join(' AND ')}`, countParams);
   const summary = await query(
     `SELECT
         COALESCE(SUM(CASE WHEN status IN ('sent','partial') THEN total_cents-amount_paid_cents ELSE 0 END),0)::bigint AS outstanding,
@@ -73,7 +80,106 @@ router.get('/', asyncHandler(async (req, res) => {
        FROM invoices WHERE tenant_id=$1`,
     [tenantId],
   );
-  res.json({ ok: true, invoices: rows.rows, summary: summary.rows[0] });
+  res.json({ ok: true, invoices: rows.rows, summary: summary.rows[0], total: total.n });
+}));
+
+router.get('/export.csv', asyncHandler(async (req, res) => {
+  const { status, q } = req.query;
+  const customerId = toInt(req.query.customerId);
+  const where = ['i.tenant_id=$1']; const params = [req.tenant.id];
+  if (status && status !== 'all') { params.push(status); where.push(`i.status=$${params.length}`); }
+  if (customerId) { params.push(customerId); where.push(`i.customer_id=$${params.length}`); }
+  if (q) { params.push(`%${q}%`); where.push(`(c.name ILIKE $${params.length} OR i.number ILIKE $${params.length})`); }
+  const rows = await query(
+    `SELECT i.number, i.status, i.currency, i.total_cents, i.amount_paid_cents,
+            (i.total_cents-i.amount_paid_cents) AS balance_cents, i.created_at, i.sent_at, i.due_date,
+            c.name AS customer_name, c.email AS customer_email
+       FROM invoices i JOIN customers c ON c.id=i.customer_id
+      WHERE ${where.join(' AND ')} ORDER BY i.id DESC`,
+    params,
+  );
+  const csv = toCsv([
+    { key: 'number', label: 'number' }, { key: 'status', label: 'status' }, { key: 'customer_name', label: 'customer_name' },
+    { key: 'customer_email', label: 'customer_email' }, { key: 'currency', label: 'currency' }, { key: 'total_cents', label: 'total_cents' },
+    { key: 'amount_paid_cents', label: 'amount_paid_cents' }, { key: 'balance_cents', label: 'balance_cents' },
+    { key: 'created_at', label: 'created_at' }, { key: 'sent_at', label: 'sent_at' }, { key: 'due_date', label: 'due_date' },
+  ], rows.rows);
+  res.set('Content-Type', 'text/csv; charset=utf-8');
+  res.set('Content-Disposition', `attachment; filename="invoices_${new Date().toISOString().slice(0, 10)}.csv"`);
+  res.send(csv);
+}));
+
+router.get('/:id/pdf', asyncHandler(async (req, res) => {
+  const id = toInt(req.params.id);
+  const inv = await queryOne(
+    `SELECT i.*, c.name AS customer_name, c.email AS customer_email, c.phone AS customer_phone,
+            c.address AS customer_address, c.city AS customer_city, c.state AS customer_state, c.postal_code AS customer_postal
+       FROM invoices i JOIN customers c ON c.id=i.customer_id WHERE i.tenant_id=$1 AND i.id=$2`,
+    [req.tenant.id, id],
+  );
+  if (!inv) return notFound(res);
+  const pdf = await PDFDocument.create();
+  const page = pdf.addPage([612, 792]);
+  const font = await pdf.embedFont(StandardFonts.Helvetica);
+  const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
+  const brand = req.tenant.settings.branding || {};
+  const draw = (text, x, y, size = 10, f = font, color = rgb(0.08, 0.12, 0.2)) => page.drawText(String(text ?? ''), { x, y, size, font: f, color });
+  const line = (y) => page.drawLine({ start: { x: 48, y }, end: { x: 564, y }, thickness: 1, color: rgb(0.88, 0.9, 0.94) });
+  let y = 736;
+  draw(brand.logoText || req.tenant.name, 48, y, 18, bold, rgb(0.04, 0.15, 0.25));
+  draw('INVOICE', 468, y + 2, 16, bold);
+  y -= 22;
+  draw(req.tenant.address || '', 48, y, 9);
+  draw(inv.number, 468, y, 11, bold);
+  y -= 16;
+  draw(req.tenant.contact_phone || brand.supportPhone || '', 48, y, 9);
+  draw(`Status: ${inv.status}`, 468, y, 9);
+  y -= 34;
+  line(y + 16);
+  draw('Bill to', 48, y, 10, bold);
+  draw(inv.customer_name, 48, y - 16, 11, bold);
+  draw([inv.customer_address, inv.customer_city, inv.customer_state, inv.customer_postal].filter(Boolean).join(', '), 48, y - 31, 9);
+  draw('Created', 380, y, 9, bold); draw(String(inv.created_at).slice(0, 10), 468, y, 9);
+  if (inv.due_date) { draw('Due', 380, y - 15, 9, bold); draw(String(inv.due_date).slice(0, 10), 468, y - 15, 9); }
+  y -= 72;
+  line(y + 24);
+  draw('Description', 48, y, 10, bold);
+  draw('Qty', 360, y, 10, bold);
+  draw('Amount', 480, y, 10, bold);
+  line(y - 8);
+  y -= 28;
+  for (const li of inv.line_items || []) {
+    if (y < 170) break;
+    draw(li.label || 'Item', 48, y, 10);
+    draw(li.quantity || 1, 365, y, 10);
+    draw(formatCents(li.amount_cents || 0, inv.currency), 480, y, 10);
+    y -= 18;
+  }
+  y -= 8;
+  line(y);
+  y -= 20;
+  const totals = [
+    ['Subtotal', inv.subtotal_cents],
+    inv.discount_cents ? ['Discount', -inv.discount_cents] : null,
+    inv.tax_cents ? ['Tax', inv.tax_cents] : null,
+    ['Total', inv.total_cents],
+    inv.amount_paid_cents ? ['Paid', -inv.amount_paid_cents] : null,
+    ['Balance due', balanceCents(inv)],
+  ].filter(Boolean);
+  for (const [label, amount] of totals) {
+    draw(label, 380, y, label === 'Balance due' ? 12 : 10, label === 'Balance due' ? bold : font);
+    draw(formatCents(amount, inv.currency), 480, y, label === 'Balance due' ? 12 : 10, label === 'Balance due' ? bold : font);
+    y -= 17;
+  }
+  if (inv.terms || inv.notes) {
+    y -= 20; line(y + 12);
+    draw('Notes', 48, y, 10, bold);
+    draw([inv.terms, inv.notes].filter(Boolean).join('  '), 48, y - 16, 9);
+  }
+  const bytes = await pdf.save();
+  res.set('Content-Type', 'application/pdf');
+  res.set('Content-Disposition', `attachment; filename="${inv.number}.pdf"`);
+  res.send(Buffer.from(bytes));
 }));
 
 // --- Detail ---------------------------------------------------------------

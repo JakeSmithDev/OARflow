@@ -25,21 +25,26 @@ function summaryHtml(tenant, e) {
 
 router.get('/', asyncHandler(async (req, res) => {
   const { status, q } = req.query;
+  const limit = Math.min(toInt(req.query.limit) || 50, 200);
+  const offset = toInt(req.query.offset) || 0;
   const where = ['e.tenant_id=$1']; const params = [req.tenant.id];
   if (status && status !== 'all') { params.push(status); where.push(`e.status=$${params.length}`); }
   if (q) { params.push(`%${q}%`); where.push(`(c.name ILIKE $${params.length} OR e.number ILIKE $${params.length})`); }
+  const countParams = params.slice();
+  params.push(limit); params.push(offset);
   const rows = await query(
     `SELECT e.id, e.number, e.status, e.total_cents, e.created_at, e.sent_at, e.valid_until, c.name AS customer_name
-       FROM estimates e JOIN customers c ON c.id=e.customer_id WHERE ${where.join(' AND ')} ORDER BY e.id DESC LIMIT 200`,
+       FROM estimates e JOIN customers c ON c.id=e.customer_id WHERE ${where.join(' AND ')} ORDER BY e.id DESC LIMIT $${params.length - 1} OFFSET $${params.length}`,
     params,
   );
+  const total = await queryOne(`SELECT count(*)::int n FROM estimates e JOIN customers c ON c.id=e.customer_id WHERE ${where.join(' AND ')}`, countParams);
   const summary = await queryOne(
     `SELECT COALESCE(SUM(CASE WHEN status IN ('sent') THEN total_cents ELSE 0 END),0)::bigint AS outstanding,
             COALESCE(SUM(CASE WHEN status='accepted' THEN total_cents ELSE 0 END),0)::bigint AS accepted,
             COALESCE(SUM(CASE WHEN status='draft' THEN total_cents ELSE 0 END),0)::bigint AS draft FROM estimates WHERE tenant_id=$1`,
     [req.tenant.id],
   );
-  res.json({ ok: true, estimates: rows.rows, summary });
+  res.json({ ok: true, estimates: rows.rows, summary, total: total.n });
 }));
 
 router.get('/:id', asyncHandler(async (req, res) => {

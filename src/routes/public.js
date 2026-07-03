@@ -11,9 +11,9 @@ import {
   fetchDayConflicts, createAppointment, bookInstant, slotCapacity,
 } from '../lib/appointments.js';
 import { queryOne, query } from '../lib/db.js';
-import { sendTemplated, detailsTable } from '../lib/email_templates.js';
+import { sendTemplated, detailsTable, htmlEscape } from '../lib/email_templates.js';
 import { sendEmail } from '../lib/email.js';
-import { syncAppointment } from '../lib/google_calendar.js';
+import { syncAppointment, deleteAppointmentEvent } from '../lib/google_calendar.js';
 import { config } from '../config.js';
 import { formatDateLabel, formatTimeLabel, ymdInTimeZone } from '../lib/dates.js';
 import { emitEvent } from '../lib/events.js';
@@ -24,6 +24,7 @@ const router = express.Router();
 const limitBootstrap = rateLimit({ endpoint: 'public_bootstrap_get', windowMinutes: 10, maxCount: 120 });
 const limitCalendarLookup = rateLimit({ endpoint: 'public_calendar_get', windowMinutes: 10, maxCount: 180 });
 const limitAppointmentLookup = rateLimit({ endpoint: 'public_appointment_get', windowMinutes: 10, maxCount: 120 });
+const limitAppointmentChange = rateLimit({ endpoint: 'public_appointment_change', windowMinutes: 10, maxCount: 12 });
 
 async function resolveTenant(slug) {
   if (!slug || slug === 'default' || slug === '_') return getDefaultTenant();
@@ -69,6 +70,46 @@ function leadDetailsText(lead) {
   ].filter(Boolean).join('\n');
 }
 
+function tenantNotifyAddress(tenant) {
+  return tenant.contact_email || tenant.settings.branding.supportEmail || tenant.settings.integrations.email.replyTo;
+}
+
+function appointmentDetails(tenant, a) {
+  const when = a.scheduled_start
+    ? `${formatDateLabel(new Date(a.scheduled_start), tenant.timezone)} · ${formatTimeLabel(new Date(a.scheduled_start), tenant.timezone)}`
+    : 'To be confirmed';
+  return detailsTable([
+    ['Customer', a.customer_name],
+    ['Email', a.customer_email],
+    ['Service', a.service_name || 'Service'],
+    ['When', when],
+    ['Address', a.service_address || ''],
+  ]);
+}
+
+function appointmentChangeState(tenant, a) {
+  const terminal = ['completed', 'canceled', 'no_show'].includes(a.status);
+  const startMs = a.scheduled_start ? new Date(a.scheduled_start).getTime() : null;
+  const future = startMs ? startMs > Date.now() : a.status === 'requested';
+  const minimumCancelNoticeHours = Number(tenant.settings.booking.minimumCancelNoticeHours ?? 24);
+  const outsideCancelNotice = !startMs || (startMs - Date.now()) >= minimumCancelNoticeHours * 3600_000;
+  return {
+    minimumCancelNoticeHours,
+    canRequestReschedule: !terminal && future,
+    canCancel: !terminal && future && outsideCancelNotice,
+  };
+}
+
+async function loadAppointmentByToken(tenant, token) {
+  return queryOne(
+    `SELECT a.*, s.name AS service_name, c.name AS customer_name, c.email AS customer_email, c.phone AS customer_phone
+       FROM appointments a LEFT JOIN service_types s ON s.id=a.service_type_id
+       JOIN customers c ON c.id=a.customer_id
+      WHERE a.tenant_id=$1 AND a.access_token=$2`,
+    [tenant.id, token],
+  );
+}
+
 // --- Bootstrap ------------------------------------------------------------
 router.get('/:slug/bootstrap', limitBootstrap, asyncHandler(async (req, res) => {
   const tenant = await resolveTenant(req.params.slug);
@@ -96,7 +137,25 @@ router.get('/:slug/month', limitCalendarLookup, asyncHandler(async (req, res) =>
   const { rows } = await query('SELECT service_date, is_closed, hours_json FROM schedule_overrides WHERE tenant_id=$1', [tenant.id]);
   const overrides = {};
   for (const r of rows) overrides[ymdInTimeZone(new Date(r.service_date), 'UTC')] = r;
-  res.json({ ok: true, days: monthOpenDays(tenant, year, month, overrides) });
+  const days = monthOpenDays(tenant, year, month, overrides);
+  const serviceId = Number(req.query.serviceId);
+  if (serviceId) {
+    const service = await getService(tenant.id, serviceId);
+    if (!service) return notFound(res, 'Service not found.');
+    const detailed = {};
+    for (const [ymd, open] of Object.entries(days)) {
+      if (!open || !dateWithinBookingWindow(tenant, ymd)) {
+        detailed[ymd] = { open: false, available: false, full: false };
+        continue;
+      }
+      const conf = await fetchDayConflicts(tenant, ymd);
+      const slots = computeDayAvailability({ tenant, service, dateYmd: ymd, ...conf });
+      const available = slots.some((s) => s.available);
+      detailed[ymd] = { open: true, available, full: !available };
+    }
+    return res.json({ ok: true, days: detailed });
+  }
+  res.json({ ok: true, days });
 }));
 
 // --- Availability for a date ---------------------------------------------
@@ -285,23 +344,103 @@ router.post('/:slug/book', asyncHandler(async (req, res) => {
 router.get('/:slug/appointment/:token', limitAppointmentLookup, asyncHandler(async (req, res) => {
   const tenant = await resolveTenant(req.params.slug);
   if (!tenant) return notFound(res);
-  const a = await queryOne(
-    `SELECT a.*, s.name AS service_name, c.name AS customer_name, c.email AS customer_email
-       FROM appointments a LEFT JOIN service_types s ON s.id=a.service_type_id
-       JOIN customers c ON c.id=a.customer_id
-      WHERE a.tenant_id=$1 AND a.access_token=$2`,
-    [tenant.id, req.params.token],
-  );
+  const a = await loadAppointmentByToken(tenant, req.params.token);
   if (!a) return notFound(res, 'Appointment not found.');
+  const manage = appointmentChangeState(tenant, a);
   res.json({
     ok: true,
     appointment: {
       id: a.id, status: a.status, mode: a.booking_mode, serviceName: a.service_name,
       customerName: a.customer_name, scheduledStart: a.scheduled_start, scheduledEnd: a.scheduled_end,
       requestedSlots: a.requested_slots, serviceAddress: a.service_address, priceCents: a.price_cents,
+      ...manage,
     },
-    tenant: { name: tenant.name, branding: tenant.settings.branding, timezone: tenant.timezone },
+    tenant: { name: tenant.name, branding: tenant.settings.branding, timezone: tenant.timezone, address: tenant.address, contactPhone: tenant.contact_phone || tenant.settings.branding.supportPhone },
   });
+}));
+
+router.post('/:slug/appointment/:token/cancel', limitAppointmentChange, asyncHandler(async (req, res) => {
+  const tenant = await resolveTenant(req.params.slug);
+  if (!tenant) return notFound(res);
+  const a = await loadAppointmentByToken(tenant, req.params.token);
+  if (!a) return notFound(res, 'Appointment not found.');
+  const manage = appointmentChangeState(tenant, a);
+  if (!manage.canCancel) {
+    const msg = ['completed', 'canceled', 'no_show'].includes(a.status)
+      ? 'This appointment cannot be canceled online.'
+      : `Online cancellation requires at least ${manage.minimumCancelNoticeHours} hours notice. Please contact us.`;
+    return badRequest(res, msg);
+  }
+  const reason = trimCap((req.body || {}).reason || 'Canceled online by customer', 500);
+  await query(
+    "UPDATE appointments SET status='canceled', canceled_at=now(), canceled_reason=$3, updated_at=now() WHERE tenant_id=$1 AND id=$2",
+    [tenant.id, a.id, reason],
+  );
+  const updated = await loadAppointmentByToken(tenant, req.params.token);
+  deleteAppointmentEvent(tenant, updated).catch(() => {});
+  if (updated.customer_email) {
+    await sendTemplated(tenant, 'appointment_canceled', updated.customer_email, {
+      CUSTOMER_NAME: updated.customer_name, COMPANY_NAME: tenant.settings.branding.logoText || tenant.name,
+      SERVICE_NAME: updated.service_name || 'service',
+      APPOINTMENT_DATE: updated.scheduled_start ? formatDateLabel(new Date(updated.scheduled_start), tenant.timezone) : '',
+      APPOINTMENT_TIME: updated.scheduled_start ? formatTimeLabel(new Date(updated.scheduled_start), tenant.timezone) : '',
+      DETAILS: appointmentDetails(tenant, updated),
+      MANAGE_URL: manageUrl(tenant, updated.access_token),
+    }, { type: 'appointment', id: updated.id }).catch(() => {});
+  }
+  const notifyTo = tenantNotifyAddress(tenant);
+  if (notifyTo) {
+    await sendEmail({
+      tenant,
+      to: notifyTo,
+      subject: `Appointment canceled online: ${updated.customer_name}`,
+      html: `<p>${updated.customer_name} canceled an appointment online.</p>${appointmentDetails(tenant, updated)}<p><strong>Reason:</strong> ${htmlEscape(reason)}</p>`,
+      text: `${updated.customer_name} canceled an appointment online.\nReason: ${reason}`,
+      relatedType: 'appointment',
+      relatedId: updated.id,
+    }).catch(() => {});
+  }
+  await logAudit({ tenantId: tenant.id, action: 'public_appointment_cancel', entityType: 'appointment', entityId: updated.id, details: { ip: getClientIp(req), reason } });
+  emitEvent('appointment.canceled', { tenantId: tenant.id, appointmentId: updated.id, customerId: updated.customer_id, source: 'public' }).catch(() => {});
+  res.json({ ok: true, appointment: { id: updated.id, status: updated.status } });
+}));
+
+router.post('/:slug/appointment/:token/reschedule-request', limitAppointmentChange, asyncHandler(async (req, res) => {
+  const tenant = await resolveTenant(req.params.slug);
+  if (!tenant) return notFound(res);
+  const a = await loadAppointmentByToken(tenant, req.params.token);
+  if (!a) return notFound(res, 'Appointment not found.');
+  const manage = appointmentChangeState(tenant, a);
+  if (!manage.canRequestReschedule) return badRequest(res, 'This appointment cannot be changed online.');
+  const b = req.body || {};
+  const message = trimCap(b.message, 1500);
+  const preferredDates = Array.isArray(b.preferredDates) ? b.preferredDates.map((x) => trimCap(x, 120)).filter(Boolean).slice(0, 5) : [trimCap(b.preferredDates, 500)].filter(Boolean);
+  if (!message && !preferredDates.length) return badRequest(res, 'Add a short note or preferred dates.');
+  const note = [
+    `Customer requested a different time for appointment #${a.id}.`,
+    a.scheduled_start ? `Current time: ${formatDateLabel(new Date(a.scheduled_start), tenant.timezone)} ${formatTimeLabel(new Date(a.scheduled_start), tenant.timezone)}` : '',
+    preferredDates.length ? `Preferred dates/times: ${preferredDates.join('; ')}` : '',
+    message ? `Message: ${message}` : '',
+  ].filter(Boolean).join('\n');
+  const followUp = await queryOne(
+    `INSERT INTO follow_ups (tenant_id, customer_id, appointment_id, type, title, channel, due_at, note, created_by)
+     VALUES ($1,$2,$3,'task',$4,'task',now(),$5,'public_reschedule') RETURNING *`,
+    [tenant.id, a.customer_id, a.id, `Reschedule request from ${a.customer_name}`, note],
+  );
+  const notifyTo = tenantNotifyAddress(tenant);
+  if (notifyTo) {
+    await sendEmail({
+      tenant,
+      to: notifyTo,
+      subject: `Reschedule request: ${a.customer_name}`,
+      html: `<p>${a.customer_name} requested a different appointment time.</p>${appointmentDetails(tenant, a)}<pre style="white-space:pre-wrap">${htmlEscape(note)}</pre>`,
+      text: note,
+      relatedType: 'follow_up',
+      relatedId: followUp.id,
+    }).catch(() => {});
+  }
+  await logAudit({ tenantId: tenant.id, action: 'public_reschedule_request', entityType: 'appointment', entityId: a.id, details: { followUpId: followUp.id, ip: getClientIp(req), preferredDates } });
+  res.json({ ok: true, followUpId: followUp.id });
 }));
 
 export default router;
