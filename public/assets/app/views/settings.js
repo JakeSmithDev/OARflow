@@ -6,9 +6,13 @@ const OF = window.OF;
     const dollars = c => ((c||0)/100).toFixed(2);
     const toCents = v => Math.round((parseFloat(String(v).replace(/[^0-9.\-]/g,''))||0)*100);
     const TABS = [['business','Business'],['booking','Booking & Availability'],['services','Services'],['invoicing','Invoicing'],['integrations','Integrations'],['email','Email templates'],['team','Team']];
+    const CURRENCIES = ['USD','CAD','MXN','EUR','GBP','AUD','NZD'];
+    const FALLBACK_TIMEZONES = ['America/New_York','America/Chicago','America/Denver','America/Los_Angeles','America/Phoenix','America/Anchorage','Pacific/Honolulu','UTC'];
+    const TIMEZONES = (()=>{try{return Intl.supportedValuesOf ? Intl.supportedValuesOf('timeZone') : FALLBACK_TIMEZONES;}catch{return FALLBACK_TIMEZONES;}})();
 
     function field(label, inner, hint){ return `<div class="field"><label>${label}</label>${inner}${hint?`<span class="hint">${hint}</span>`:''}</div>`; }
     function card(title, inner, actions){ return `<div class="card" style="margin-bottom:18px"><div class="card-head"><h3>${title}</h3>${actions?`<div class="actions">${actions}</div>`:''}</div><div class="card-pad">${inner}</div></div>`; }
+    function selectOptions(values, selected){ const list=(selected&&!values.includes(selected))?[selected,...values]:values; return list.map(v=>`<option value="${OF.escape(v)}" ${v===selected?'selected':''}>${OF.escape(v)}</option>`).join(''); }
 
     // ---- Business ----
     function businessTab(root){
@@ -17,7 +21,7 @@ const OF = window.OF;
         ${field('Business name', `<input id="p_name" value="${OF.escape(p.name)}">`)}
         <div class="grid cols-2">${field('Contact email', `<input id="p_email" value="${OF.escape(p.contactEmail||'')}">`)}${field('Contact phone', `<input id="p_phone" value="${OF.escape(p.contactPhone||'')}">`)}</div>
         ${field('Address', `<input id="p_addr" value="${OF.escape(p.address||'')}">`)}
-        <div class="grid cols-2">${field('Timezone', `<input id="p_tz" value="${OF.escape(p.timezone)}">`,'IANA name e.g. America/New_York')}${field('Currency', `<input id="p_cur" value="${OF.escape(p.currency)}">`)}</div>
+        <div class="grid cols-2">${field('Timezone', `<select id="p_tz">${selectOptions(TIMEZONES,p.timezone)}</select>`)}${field('Currency', `<select id="p_cur">${selectOptions(CURRENCIES,String(p.currency||'USD').toUpperCase())}</select>`)}</div>
         <button class="btn btn-primary" id="saveProfile">Save profile</button>`)
         + card('Branding', `
         ${field('Display name (header & emails)', `<input id="b_logo" value="${OF.escape(b.logoText||'')}">`)}

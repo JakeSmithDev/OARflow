@@ -56,10 +56,16 @@ router.get('/', asyncHandler(async (req, res) => {
 
 router.patch('/profile', asyncHandler(async (req, res) => {
   const b = req.body || {};
-  const t = await updateTenantProfile(req.tenant.id, {
-    name: b.name, timezone: b.timezone, currency: b.currency,
-    contact_email: b.contactEmail, contact_phone: b.contactPhone, address: b.address,
-  });
+  let t;
+  try {
+    t = await updateTenantProfile(req.tenant.id, {
+      name: b.name, timezone: b.timezone, currency: b.currency,
+      contact_email: b.contactEmail, contact_phone: b.contactPhone, address: b.address,
+    });
+  } catch (err) {
+    if (err.statusCode === 400) return badRequest(res, err.message);
+    throw err;
+  }
   res.json({ ok: true, profile: { name: t.name, timezone: t.timezone, currency: t.currency, contactEmail: t.contact_email, contactPhone: t.contact_phone, address: t.address } });
 }));
 

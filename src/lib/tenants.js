@@ -6,6 +6,28 @@ import { defaultTenantSettings } from './defaults.js';
 import { config } from '../config.js';
 
 function isObj(v) { return v && typeof v === 'object' && !Array.isArray(v); }
+export const SUPPORTED_CURRENCIES = ['USD', 'CAD', 'MXN', 'EUR', 'GBP', 'AUD', 'NZD'];
+
+function validationError(message) {
+  const err = new Error(message);
+  err.statusCode = 400;
+  return err;
+}
+
+export function validTimezone(value) {
+  if (typeof value !== 'string' || !value.trim()) return false;
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: value.trim() }).format(new Date());
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function normalizeCurrency(value) {
+  const currency = String(value || '').trim().toUpperCase();
+  return SUPPORTED_CURRENCIES.includes(currency) ? currency : null;
+}
 
 export function deepMerge(base, override) {
   if (!isObj(base)) return override === undefined ? base : override;
@@ -53,7 +75,18 @@ export async function updateTenantProfile(tenantId, fields) {
   const sets = [];
   const params = [tenantId];
   for (const key of allowed) {
-    if (fields[key] !== undefined) { params.push(fields[key]); sets.push(`${key} = $${params.length}`); }
+    if (fields[key] !== undefined) {
+      let value = fields[key];
+      if (key === 'timezone') {
+        if (!validTimezone(value)) throw validationError('Enter a valid IANA timezone.');
+        value = String(value).trim();
+      } else if (key === 'currency') {
+        value = normalizeCurrency(value);
+        if (!value) throw validationError(`Currency must be one of: ${SUPPORTED_CURRENCIES.join(', ')}.`);
+      }
+      params.push(value);
+      sets.push(`${key} = $${params.length}`);
+    }
   }
   if (!sets.length) return getTenantById(tenantId);
   sets.push('updated_at = now()');
@@ -79,4 +112,4 @@ export async function nextEstimateNumber(tenantId) {
   return `EST-${row.estimate_seq}`;
 }
 
-export default { getTenantById, getTenantBySlug, getDefaultTenant, updateTenantSettings, updateTenantProfile, nextInvoiceNumber, nextEstimateNumber, deepMerge };
+export default { getTenantById, getTenantBySlug, getDefaultTenant, updateTenantSettings, updateTenantProfile, nextInvoiceNumber, nextEstimateNumber, deepMerge, validTimezone, normalizeCurrency, SUPPORTED_CURRENCIES };
