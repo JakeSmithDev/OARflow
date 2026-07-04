@@ -21,4 +21,8 @@ npm-debug.log*
 data/pgdata/
 .storage/
 dist/
-/assets/
+/assets/*
+!/assets/img/
+/assets/img/*
+!/assets/img/logo-full.svg
+!/assets/img/logo-full-white.svg
