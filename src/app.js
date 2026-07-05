@@ -59,6 +59,17 @@ export function createApp() {
     next();
   });
 
+  // Keep app/tool pages (booking, pay, portal, admin, …) out of search engines.
+  // Only the marketing site should be indexable; these pages are thin shells or
+  // token-gated and would only dilute search results (or expose the admin login).
+  const NOINDEX_PREFIXES = ['/admin', '/book', '/pay', '/quote', '/save-card', '/review', '/portal', '/field', '/document', '/device'];
+  app.use((req, res, next) => {
+    if (NOINDEX_PREFIXES.some((p) => req.path === p || req.path.startsWith(`${p}/`))) {
+      res.set('X-Robots-Tag', 'noindex, nofollow');
+    }
+    next();
+  });
+
   // Log production-critical config issues once per cold start (never throws).
   if (config.isProduction) {
     try {

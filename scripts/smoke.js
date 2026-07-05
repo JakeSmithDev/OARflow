@@ -42,6 +42,7 @@ async function collectFiles(dir, prefix = '') {
   const entries = await fs.readdir(dir, { withFileTypes: true });
   const files = [];
   for (const entry of entries) {
+    if (entry.name.startsWith('.')) continue; // OS junk (.DS_Store etc.) isn't mirrored
     const rel = path.posix.join(prefix, entry.name);
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) files.push(...await collectFiles(full, rel));
@@ -61,9 +62,17 @@ async function checkRootMirrors() {
     'sitemap.xml',
     'assets/img/apple-touch-icon.png',
   ]);
-  for (const file of await collectFiles(path.join(repoRoot, 'assets'))) {
-    mirrors.add(path.posix.join('assets', file));
-  }
+  // Compare git-tracked assets only: local-only files (brand source PDFs, OS
+  // junk) live at the repo root but are gitignored and never deployed.
+  let assetFiles = null;
+  try {
+    const { execFile } = await import('node:child_process');
+    const { promisify } = await import('node:util');
+    const out = await promisify(execFile)('git', ['ls-files', 'assets'], { cwd: repoRoot });
+    assetFiles = out.stdout.split('\n').map((s) => s.trim()).filter(Boolean);
+  } catch { /* no git available — fall back to walking the directory */ }
+  if (!assetFiles) assetFiles = (await collectFiles(path.join(repoRoot, 'assets'))).map((f) => path.posix.join('assets', f));
+  for (const file of assetFiles) mirrors.add(file);
   for (const rel of mirrors) {
     const parts = rel.split('/');
     const [rootBytes, publicBytes] = await Promise.all([
