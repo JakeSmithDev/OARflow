@@ -483,22 +483,22 @@ h3 { font-size: 1.3rem; }
 .hero--photo { padding: 0; }
 .hero--photo::after { display: none; }            /* drop dotted texture over the photo */
 .hero--photo .hero-bg { position: absolute; inset: 0; z-index: 0; display: block; }
-.hero--photo .hero-bg img { width: 100%; height: 100%; object-fit: cover; object-position: 70% 50%; }
+.hero--photo .hero-bg img { width: 100%; height: 100%; object-fit: cover; object-position: 72% 50%; }
 .hero-scrim {
   position: absolute; inset: 0; z-index: 1; pointer-events: none;
   background:
-    linear-gradient(90deg, rgba(8,28,49,.86) 16%, rgba(8,28,49,.5) 46%, rgba(8,28,49,0) 78%),
+    linear-gradient(90deg, rgba(8,28,49,.86) 22%, rgba(8,28,49,.5) 54%, rgba(8,28,49,0) 84%),
     linear-gradient(0deg, rgba(8,28,49,.55) 0%, rgba(8,28,49,0) 42%);
 }
 .hero--photo .container { position: relative; z-index: 2; }
-.hero-copy--photo { max-width: 560px; margin-right: auto; padding: clamp(64px, 11vw, 132px) 0; }
+.hero-copy--photo { max-width: 560px; margin-left: 0; margin-right: auto; padding: clamp(64px, 11vw, 132px) 0; }
 .hero-copy--photo h1, .hero-copy--photo .lead { text-shadow: 0 1px 14px rgba(8,28,49,.5); }
 @media (max-width: 860px){
-  .hero--photo .hero-bg img { object-position: 60% 50%; }
+  .hero--photo .hero-bg img { object-position: 70% 50%; }
   .hero-scrim {
     background:
       linear-gradient(0deg, rgba(8,28,49,.9), rgba(8,28,49,.72)),
-      linear-gradient(90deg, rgba(8,28,49,.34), rgba(8,28,49,.82));
+      linear-gradient(90deg, rgba(8,28,49,.82), rgba(8,28,49,.34));
   }
   .hero-copy--photo { max-width: 100%; margin-left: 0; padding: clamp(46px, 12vw, 72px) 0 44px; }
   .hero--photo .hero-badges { gap: 8px 14px; margin-top: 24px; padding-top: 18px; }
