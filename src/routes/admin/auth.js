@@ -61,6 +61,7 @@ router.get('/session', requireAdmin(), asyncHandler(async (req, res) => {
     tenant: {
       id: t.id, slug: t.slug, name: t.name, timezone: t.timezone, currency: t.currency,
       branding: t.settings.branding,
+      ui: t.settings.ui,
     },
   });
 }));

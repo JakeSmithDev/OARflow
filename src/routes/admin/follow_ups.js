@@ -9,6 +9,7 @@ import { zonedWallTimeToUtc } from '../../lib/dates.js';
 import { randomToken } from '../../lib/crypto.js';
 import { ownsId } from '../../lib/ownership.js';
 import { requireWrite } from '../../lib/permissions.js';
+import { assignmentsForAppointments } from '../../lib/technicians.js';
 
 const router = express.Router();
 router.use(requireAdmin());
@@ -24,6 +25,10 @@ router.get('/', asyncHandler(async (req, res) => {
       ORDER BY f.due_at ${status === 'done' ? 'DESC' : 'ASC'} LIMIT 200`,
     status !== 'all' ? [req.tenant.id, status] : [req.tenant.id],
   );
+  if (req.query.includeAssignments === '1') {
+    const assignMap = await assignmentsForAppointments(req.tenant, rows.rows.map((followUp) => followUp.appointment_id));
+    for (const followUp of rows.rows) followUp.technicians = assignMap[followUp.appointment_id] || [];
+  }
   const counts = await query("SELECT status, count(*)::int n FROM follow_ups WHERE tenant_id=$1 GROUP BY status", [req.tenant.id]);
   const countMap = {}; for (const r of counts.rows) countMap[r.status] = r.n;
   res.json({ ok: true, followUps: rows.rows, counts: countMap, rules: req.tenant.settings.followups.rules || [] });

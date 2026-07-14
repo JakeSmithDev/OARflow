@@ -31,25 +31,122 @@ export async function updateTechnician(tenant, id, fields) {
   return queryOne(`UPDATE technicians SET ${sets.join(', ')} WHERE id=$1 AND tenant_id=$2 RETURNING *`, params);
 }
 
-/** Replace an appointment's assignment set. leadId becomes the lead (or first). */
-export async function setAssignments(tenant, appointmentId, technicianIds = [], leadId = null) {
+/** Return the first scheduled job that would overlap one of the selected reps. */
+export async function findTechnicianConflict(tenant, { appointmentId, technicianIds = [], start, end }, cx = null) {
   const ids = [...new Set(technicianIds.map(Number).filter(Boolean))];
-  return withTx(async (cx) => {
+  if (!ids.length || !start || !end) return null;
+  const run = cx ? (sql, params) => cx.query(sql, params) : query;
+  const result = await run(
+    `SELECT aa.technician_id, t.name AS technician_name, other.id AS appointment_id,
+            other.scheduled_start, other.scheduled_end
+       FROM appointment_assignments aa
+       JOIN appointments other ON other.id=aa.appointment_id AND other.tenant_id=aa.tenant_id
+       JOIN technicians t ON t.id=aa.technician_id AND t.tenant_id=aa.tenant_id
+      WHERE aa.tenant_id=$1 AND aa.technician_id = ANY($2::bigint[])
+        AND aa.appointment_id <> $3 AND other.status IN ('scheduled','completed')
+        AND other.scheduled_start < $4 AND other.scheduled_end > $5
+      ORDER BY other.scheduled_start, other.id
+      LIMIT 1`,
+    [tenant.id, ids, appointmentId, end, start],
+  );
+  return result.rows[0] || null;
+}
+
+function normalizedAssignmentIds(rows) {
+  return rows.map((row) => Number(row.technician_id)).filter(Boolean).sort((a, b) => a - b);
+}
+
+function sameAssignmentIds(a, b) {
+  return a.length === b.length && a.every((id, index) => id === b[index]);
+}
+
+/**
+ * Lock an appointment together with its current crew using the same lock order
+ * as assignment writes (technicians first, appointment second). Retry when the
+ * crew changes between the optimistic read and the locked re-read.
+ */
+export async function withLockedAppointmentSchedule(tenant, appointmentId, fn, { maxAttempts = 4 } = {}) {
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const snapshot = await query(
+      'SELECT technician_id FROM appointment_assignments WHERE tenant_id=$1 AND appointment_id=$2 ORDER BY technician_id',
+      [tenant.id, appointmentId],
+    );
+    const expectedIds = normalizedAssignmentIds(snapshot.rows);
+    try {
+      return await withTx(async (cx) => {
+        if (expectedIds.length) {
+          await cx.query(
+            'SELECT id FROM technicians WHERE tenant_id=$1 AND id = ANY($2::bigint[]) ORDER BY id FOR UPDATE',
+            [tenant.id, expectedIds],
+          );
+        }
+        const appointment = await cx.query(
+          `SELECT id, status, scheduled_start, scheduled_end, requested_slots
+             FROM appointments WHERE tenant_id=$1 AND id=$2 FOR UPDATE`,
+          [tenant.id, appointmentId],
+        );
+        if (!appointment.rows.length) return { notFound: true };
+        const currentAssignments = await cx.query(
+          'SELECT technician_id FROM appointment_assignments WHERE tenant_id=$1 AND appointment_id=$2 ORDER BY technician_id',
+          [tenant.id, appointmentId],
+        );
+        const currentIds = normalizedAssignmentIds(currentAssignments.rows);
+        if (!sameAssignmentIds(expectedIds, currentIds)) {
+          const error = new Error('Appointment crew changed while locking the schedule.');
+          error.code = 'APPOINTMENT_CREW_CHANGED';
+          throw error;
+        }
+        return fn({ cx, appointment: appointment.rows[0], technicianIds: currentIds });
+      });
+    } catch (error) {
+      if (error.code !== 'APPOINTMENT_CREW_CHANGED') throw error;
+    }
+  }
+  return { scheduleBusy: true };
+}
+
+/** Replace an appointment's assignment set. leadId becomes the lead (or first). */
+export async function setAssignments(tenant, appointmentId, technicianIds = [], leadId = null, { cx = null } = {}) {
+  const ids = [...new Set(technicianIds.map(Number).filter(Boolean))];
+  const run = async (tx) => {
     // appointment must belong to this tenant
-    const appt = await cx.query('SELECT id FROM appointments WHERE id=$1 AND tenant_id=$2', [appointmentId, tenant.id]);
+    let appt = await tx.query(
+      'SELECT id, status, scheduled_start, scheduled_end FROM appointments WHERE id=$1 AND tenant_id=$2',
+      [appointmentId, tenant.id],
+    );
     if (!appt.rows.length) return { ok: false, notFound: true };
     // all techs must belong to this tenant
     if (ids.length) {
-      const owned = await cx.query('SELECT id FROM technicians WHERE tenant_id=$1 AND id = ANY($2::bigint[])', [tenant.id, ids]);
+      // Lock selected reps so concurrent manual/automatic assignments cannot
+      // both pass the overlap check and double-book the same person.
+      const owned = await tx.query(
+        'SELECT id FROM technicians WHERE tenant_id=$1 AND id = ANY($2::bigint[]) ORDER BY id FOR UPDATE',
+        [tenant.id, ids],
+      );
       if (owned.rows.length !== ids.length) return { ok: false, error: 'Unknown technician.' };
     }
-    await cx.query('DELETE FROM appointment_assignments WHERE tenant_id=$1 AND appointment_id=$2', [tenant.id, appointmentId]);
+    // Re-read under lock after the rep locks so every assignment path uses the
+    // same lock order (technicians, then appointments).
+    appt = await tx.query(
+      'SELECT id, status, scheduled_start, scheduled_end FROM appointments WHERE id=$1 AND tenant_id=$2 FOR UPDATE',
+      [appointmentId, tenant.id],
+    );
+    if (!appt.rows.length) return { ok: false, notFound: true };
+    const current = appt.rows[0];
+    if (ids.length && current.status === 'scheduled' && current.scheduled_start && current.scheduled_end) {
+      const conflict = await findTechnicianConflict(tenant, {
+        appointmentId, technicianIds: ids, start: current.scheduled_start, end: current.scheduled_end,
+      }, tx);
+      if (conflict) return { ok: false, conflict: true, error: `${conflict.technician_name} already has an overlapping appointment.` };
+    }
+    await tx.query('DELETE FROM appointment_assignments WHERE tenant_id=$1 AND appointment_id=$2', [tenant.id, appointmentId]);
     const lead = leadId && ids.includes(Number(leadId)) ? Number(leadId) : ids[0] || null;
     for (const tid of ids) {
-      await cx.query('INSERT INTO appointment_assignments (tenant_id, appointment_id, technician_id, is_lead) VALUES ($1,$2,$3,$4)', [tenant.id, appointmentId, tid, tid === lead]);
+      await tx.query('INSERT INTO appointment_assignments (tenant_id, appointment_id, technician_id, is_lead) VALUES ($1,$2,$3,$4)', [tenant.id, appointmentId, tid, tid === lead]);
     }
     return { ok: true, lead };
-  });
+  };
+  return cx ? run(cx) : withTx(run);
 }
 
 export async function getAssignments(tenant, appointmentId) {
@@ -127,5 +224,6 @@ export async function technicianJobs(tenant, technicianId, { from, to }) {
 
 export default {
   listTechnicians, createTechnician, updateTechnician, setAssignments, getAssignments,
-  assignmentsForAppointments, ensureFieldToken, revokeFieldToken, technicianByFieldToken,
+  assignmentsForAppointments, findTechnicianConflict, withLockedAppointmentSchedule,
+  ensureFieldToken, revokeFieldToken, technicianByFieldToken,
 };

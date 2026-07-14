@@ -15,7 +15,7 @@ const { fileURLToPath } = await import('node:url');
 const { runMigrations } = await import('./migrate.js');
 const { runSeed } = await import('./seed.js');
 const { createApp } = await import('../src/app.js');
-const { closeDb } = await import('../src/lib/db.js');
+const { closeDb, query } = await import('../src/lib/db.js');
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const base = process.env.BASE_URL;
@@ -317,6 +317,78 @@ async function main() {
     const { status } = await call(`/api/admin/appointments/${assignApptId}/assign`, { method: 'POST', body: { technicianIds: [999999] } });
     assert.equal(status, 400);
   });
+  await check('rep assignment blocks overlapping appointments', async () => {
+    const detail = (await call('/api/admin/appointments/' + assignApptId)).data.appointment;
+    const created = await call('/api/admin/appointments', { method: 'POST', body: {
+      customerId: detail.customer_id, serviceId: detail.service_type_id, start: detail.scheduled_start,
+      end: detail.scheduled_end, serviceAddress: 'Overlap test', force: true,
+    } });
+    assert.ok(created.data.ok, JSON.stringify(created.data));
+    const blocked = await call(`/api/admin/appointments/${created.data.appointment.id}/assign`, { method: 'POST', body: { technicianIds: [techId], leadId: techId } });
+    assert.equal(blocked.status, 400); assert.match(blocked.data.error, /overlapping appointment/i);
+    await call(`/api/admin/appointments/${created.data.appointment.id}`, { method: 'PATCH', body: { status: 'canceled' } });
+  });
+  await check('manual create + rep assignment is atomic on conflict', async () => {
+    const detail = (await call('/api/admin/appointments/' + assignApptId)).data.appointment;
+    const before = (await call('/api/admin/appointments')).data.total;
+    const customersBefore = (await query('SELECT count(*)::int n FROM customers WHERE tenant_id=1')).rows[0].n;
+    const blocked = await call('/api/admin/appointments', { method: 'POST', body: {
+      customer: { name: 'Atomic Rollback Customer', email: 'atomic.rollback@example.com' },
+      serviceId: detail.service_type_id, start: detail.scheduled_start,
+      end: detail.scheduled_end, serviceAddress: 'Atomic overlap test', technicianId: techId, force: true,
+    } });
+    assert.equal(blocked.status, 400); assert.match(blocked.data.error, /overlapping appointment/i);
+    const after = (await call('/api/admin/appointments')).data.total;
+    assert.equal(after, before, 'failed assignment must roll back appointment creation');
+    const customersAfter = (await query('SELECT count(*)::int n FROM customers WHERE tenant_id=1')).rows[0].n;
+    assert.equal(customersAfter, customersBefore, 'failed assignment must roll back new customer creation');
+  });
+  await check('confirming a preassigned request checks rep conflicts atomically', async () => {
+    const detail = (await call('/api/admin/appointments/' + assignApptId)).data.appointment;
+    const requestedSlots = [{ start: detail.scheduled_start, end: detail.scheduled_end }];
+    const requested = (await query(
+      `INSERT INTO appointments
+         (tenant_id, customer_id, service_type_id, status, booking_mode, source, requested_slots, service_address)
+       VALUES ($1,$2,$3,'requested','request','admin',$4::jsonb,$5) RETURNING id`,
+      [1, detail.customer_id, detail.service_type_id, JSON.stringify(requestedSlots), 'Preassigned request test'],
+    )).rows[0];
+    const assigned = await call(`/api/admin/appointments/${requested.id}/assign`, {
+      method: 'POST', body: { technicianIds: [techId], leadId: techId },
+    });
+    assert.ok(assigned.data.ok, JSON.stringify(assigned.data));
+    const blocked = await call(`/api/admin/appointments/${requested.id}/confirm`, {
+      method: 'POST', body: { slotIndex: 0, notify: false },
+    });
+    assert.equal(blocked.status, 409); assert.match(blocked.data.error, /overlapping appointment/i);
+    const stillRequested = (await call(`/api/admin/appointments/${requested.id}`)).data.appointment;
+    assert.equal(stillRequested.status, 'requested', 'conflicting confirmation must not partially update');
+    const forced = await call(`/api/admin/appointments/${requested.id}/confirm`, {
+      method: 'POST', body: { slotIndex: 0, notify: false, force: true },
+    });
+    assert.equal(forced.data.appointment.status, 'scheduled', 'explicit force remains supported');
+    await call(`/api/admin/appointments/${requested.id}`, { method: 'PATCH', body: { status: 'canceled' } });
+    await call(`/api/admin/appointments/${requested.id}/assign`, { method: 'POST', body: { technicianIds: [] } });
+  });
+  await check('rescheduling an assigned job checks rep conflicts under lock', async () => {
+    const detail = (await call('/api/admin/appointments/' + assignApptId)).data.appointment;
+    const laterStart = new Date(new Date(detail.scheduled_start).getTime() + 86_400_000).toISOString();
+    const laterEnd = new Date(new Date(detail.scheduled_end).getTime() + 86_400_000).toISOString();
+    const created = await call('/api/admin/appointments', { method: 'POST', body: {
+      customerId: detail.customer_id, serviceId: detail.service_type_id,
+      start: laterStart, end: laterEnd, serviceAddress: 'Reschedule lock test', technicianId: techId, force: true,
+    } });
+    assert.ok(created.data.ok, JSON.stringify(created.data));
+    const blocked = await call(`/api/admin/appointments/${created.data.appointment.id}`, { method: 'PATCH', body: {
+      start: detail.scheduled_start, end: detail.scheduled_end,
+    } });
+    assert.equal(blocked.status, 409); assert.match(blocked.data.error, /overlapping appointment/i);
+    const forced = await call(`/api/admin/appointments/${created.data.appointment.id}`, { method: 'PATCH', body: {
+      start: detail.scheduled_start, end: detail.scheduled_end, force: true,
+    } });
+    assert.equal(forced.data.appointment.scheduled_start, detail.scheduled_start, 'explicit force remains supported');
+    await call(`/api/admin/appointments/${created.data.appointment.id}`, { method: 'PATCH', body: { status: 'canceled' } });
+    await call(`/api/admin/appointments/${created.data.appointment.id}/assign`, { method: 'POST', body: { technicianIds: [] } });
+  });
   await check('technician field-app link is generated', async () => {
     const { data } = await call(`/api/admin/technicians/${techId}/field-link`, { method: 'POST' });
     assert.ok(data.url.includes('/field?token='));
@@ -481,11 +553,58 @@ async function main() {
     assert.equal((await call('/api/admin/routing')).status, 400);
   });
   await check('route lists the tech stops + builds a maps link', async () => {
+    await query('UPDATE appointments SET service_lat=39.0000, service_lng=-76.0000 WHERE id=$1', [assignApptId]);
     await call(`/api/admin/appointments/${assignApptId}`, { method: 'PATCH', body: { serviceAddress: '123 Main St, Baltimore, MD' } });
+    const changed = (await call('/api/admin/appointments/' + assignApptId)).data.appointment;
+    assert.equal(changed.service_lat, null); assert.equal(changed.service_lng, null);
     const { data } = await call(`/api/admin/routing?technicianId=${techId}&date=2026-07-15`);
     assert.ok(data.ok); assert.ok(data.stops.some((s) => s.appointmentId === assignApptId));
     assert.equal(data.geocoder, false); // no geocoder in dev
     assert.ok(data.mapsUrl && data.mapsUrl.includes('google.com/maps/dir'));
+  });
+  await check('customer address edits clear only fallback appointment coordinates', async () => {
+    const customer = (await call('/api/admin/customers', { method: 'POST', body: {
+      name: 'Coordinate Cache Customer', address: '1 Old Address', city: 'Annapolis', state: 'MD', postalCode: '21401',
+    } })).data.customer;
+    const fallback = (await query(
+      `INSERT INTO appointments
+         (tenant_id, customer_id, status, booking_mode, source, scheduled_start, scheduled_end, service_lat, service_lng)
+       VALUES (1,$1,'canceled','instant','admin','2026-09-01T13:00:00Z','2026-09-01T14:00:00Z',39.0,-76.0) RETURNING id`,
+      [customer.id],
+    )).rows[0];
+    const explicit = (await query(
+      `INSERT INTO appointments
+         (tenant_id, customer_id, status, booking_mode, source, scheduled_start, scheduled_end, service_address, service_lat, service_lng)
+       VALUES (1,$1,'canceled','instant','admin','2026-09-01T15:00:00Z','2026-09-01T16:00:00Z','99 Explicit Site',38.0,-77.0) RETURNING id`,
+      [customer.id],
+    )).rows[0];
+    const changed = await call(`/api/admin/customers/${customer.id}`, { method: 'PATCH', body: {
+      address: '2 New Address', city: 'Baltimore', postalCode: '21201',
+    } });
+    assert.ok(changed.data.ok, JSON.stringify(changed.data));
+    const rows = (await query(
+      'SELECT id, service_lat, service_lng FROM appointments WHERE id = ANY($1::bigint[]) ORDER BY id',
+      [[fallback.id, explicit.id]],
+    )).rows;
+    const fallbackAfter = rows.find((row) => row.id === fallback.id);
+    const explicitAfter = rows.find((row) => row.id === explicit.id);
+    assert.equal(fallbackAfter.service_lat, null); assert.equal(fallbackAfter.service_lng, null);
+    assert.equal(Number(explicitAfter.service_lat), 38); assert.equal(Number(explicitAfter.service_lng), -77);
+  });
+  await check('route overlap anchors include prior-day cross-midnight jobs', async () => {
+    const anchor = (await call('/api/admin/appointments', { method: 'POST', body: {
+      customerId: 1, serviceId: 1, start: '2026-07-14T03:30:00.000Z', end: '2026-07-14T04:30:00.000Z',
+      serviceAddress: '1 Midnight Way, Annapolis, MD', technicianId: techId, force: true,
+    } })).data.appointment;
+    const candidate = (await call('/api/admin/appointments', { method: 'POST', body: {
+      customerId: 1, serviceId: 1, start: '2026-07-14T04:00:00.000Z', end: '2026-07-14T05:00:00.000Z',
+      serviceAddress: '2 Midnight Way, Annapolis, MD', force: true,
+    } })).data.appointment;
+    const plan = (await call(`/api/admin/routing/plan?date=2026-07-14&technicianIds=${techId}&includeUnassigned=1`)).data;
+    assert.ok(plan.routes[0].stops.some((stop) => stop.appointmentId === anchor.id), 'cross-midnight anchor included');
+    assert.ok(plan.unplaced.some((stop) => stop.appointmentId === candidate.id), 'overlapping candidate left unassigned');
+    await call(`/api/admin/appointments/${anchor.id}`, { method: 'PATCH', body: { status: 'canceled' } });
+    await call(`/api/admin/appointments/${candidate.id}`, { method: 'PATCH', body: { status: 'canceled' } });
   });
   await check('field /me includes a route map link', async () => {
     const { data } = await call(`/api/field/me?token=${fieldToken}&date=2026-07-15`, { auth: false });

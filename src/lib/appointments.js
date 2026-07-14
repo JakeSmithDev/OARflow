@@ -23,16 +23,19 @@ export function effectiveBookingMode(tenant, service) {
 }
 
 /** Match an existing customer by email (case-insensitive) or create a new one. */
-export async function findOrCreateCustomer(tenantId, info) {
+export async function findOrCreateCustomer(tenantId, info, { cx = null } = {}) {
+  if (!cx) return withTx((tx) => findOrCreateCustomer(tenantId, info, { cx: tx }));
+  const run = cx ? (sql, params) => cx.query(sql, params) : query;
+  const one = async (sql, params) => (await run(sql, params)).rows[0] || null;
   const email = (info.email || '').trim().toLowerCase();
   if (email) {
-    const existing = await queryOne(
+    const existing = await one(
       'SELECT * FROM customers WHERE tenant_id=$1 AND lower(email)=$2 ORDER BY id LIMIT 1',
       [tenantId, email],
     );
     if (existing) {
       // Backfill any missing contact details.
-      await query(
+      await run(
         `UPDATE customers SET
            phone = COALESCE(NULLIF($3,''), phone),
            address = COALESCE(NULLIF($4,''), address),
@@ -40,10 +43,17 @@ export async function findOrCreateCustomer(tenantId, info) {
          WHERE id=$1 AND tenant_id=$2`,
         [existing.id, tenantId, info.phone || '', info.address || ''],
       );
+      if (String(info.address || '').trim()) {
+        await run(
+          `UPDATE appointments SET service_lat=NULL, service_lng=NULL
+            WHERE tenant_id=$1 AND customer_id=$2 AND NULLIF(BTRIM(service_address),'') IS NULL`,
+          [tenantId, existing.id],
+        );
+      }
       return existing.id;
     }
   }
-  const row = await queryOne(
+  const row = await one(
     `INSERT INTO customers (tenant_id, name, email, phone, address, city, state, postal_code, notes)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
     [tenantId, info.name || 'Customer', info.email || null, info.phone || null, info.address || null,
@@ -181,23 +191,10 @@ export async function bookInstant(tenant, data, { dateYmd, capacity }) {
 }
 
 /** Create an appointment row. `data` is already validated by the caller. */
-export async function createAppointment(tenantId, data) {
-  const row = await queryOne(
-    `INSERT INTO appointments
-       (tenant_id, customer_id, service_type_id, subscription_id, status, booking_mode, source,
-        scheduled_start, scheduled_end, requested_slots, service_address, notes, internal_notes, price_cents, access_token)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12,$13,$14,$15)
-     RETURNING *`,
-    [
-      tenantId, data.customerId, data.serviceTypeId || null, data.subscriptionId || null,
-      data.status, data.bookingMode, data.source || 'online',
-      data.scheduledStart || null, data.scheduledEnd || null,
-      JSON.stringify(data.requestedSlots || []),
-      data.serviceAddress || null, data.notes || null, data.internalNotes || null,
-      data.priceCents || 0, data.accessToken || randomToken(),
-    ],
-  );
-  return row;
+export async function createAppointment(tenantId, data, { cx = null } = {}) {
+  const params = insertParams(tenantId, data);
+  if (cx) return (await cx.query(INSERT_SQL, params)).rows[0] || null;
+  return queryOne(INSERT_SQL, params);
 }
 
 export default {

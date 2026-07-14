@@ -17,7 +17,7 @@ const OF = window.OF;
 
     // ---- Business ----
     function businessTab(root){
-      const p = S.profile, b = S.settings.branding;
+      const p = S.profile, b = S.settings.branding, ui = S.settings.ui || {};
       root.innerHTML = card('Business profile', `
         ${field('Business name', `<input id="p_name" value="${OF.escape(p.name)}">`)}
         <div class="grid cols-2">${field('Contact email', `<input id="p_email" value="${OF.escape(p.contactEmail||'')}">`)}${field('Contact phone', `<input id="p_phone" value="${OF.escape(p.contactPhone||'')}">`)}</div>
@@ -28,9 +28,16 @@ const OF = window.OF;
         ${field('Display name (header & emails)', `<input id="b_logo" value="${OF.escape(b.logoText||'')}">`)}
         ${field('Tagline', `<input id="b_tag" value="${OF.escape(b.tagline||'')}">`)}
         <div class="grid cols-2">${field('Brand color', `<input id="b_color" type="color" value="${b.primaryColor||'#0e7c4b'}" style="height:42px;padding:4px">`)}${field('Support phone (public)', `<input id="b_phone" value="${OF.escape(b.supportPhone||'')}">`)}</div>
-        <button class="btn btn-primary" id="saveBrand">Save branding</button>`);
+        <button class="btn btn-primary" id="saveBrand">Save branding</button>`)
+        + card('Workspace preferences', `
+        <div class="row between" style="align-items:flex-start;gap:18px">
+          <div><div class="cell-strong">Always show “New appointment”</div><div class="small muted" style="margin-top:3px">Keeps the scheduling shortcut in the top bar throughout the admin.</div></div>
+          <label class="switch" aria-label="Always show New appointment"><input id="ui_new_appt" type="checkbox" ${ui.alwaysShowNewAppointment !== false ? 'checked' : ''}><span class="track"></span></label>
+        </div>
+        <button class="btn btn-primary" id="saveWorkspace" style="margin-top:16px">Save workspace preferences</button>`);
       root.querySelector('#saveProfile').onclick=async()=>{await OF.patch('/api/admin/settings/profile',{name:root.querySelector('#p_name').value,contactEmail:root.querySelector('#p_email').value,contactPhone:root.querySelector('#p_phone').value,address:root.querySelector('#p_addr').value,timezone:root.querySelector('#p_tz').value,currency:root.querySelector('#p_cur').value});OF.toast('Saved','ok');};
       root.querySelector('#saveBrand').onclick=async()=>{await OF.put('/api/admin/settings/settings',{branding:{logoText:root.querySelector('#b_logo').value,tagline:root.querySelector('#b_tag').value,primaryColor:root.querySelector('#b_color').value,supportPhone:root.querySelector('#b_phone').value}});OF.toast('Saved','ok');};
+      root.querySelector('#saveWorkspace').onclick=async()=>{const next={alwaysShowNewAppointment:root.querySelector('#ui_new_appt').checked};await OF.put('/api/admin/settings/settings',{ui:next});S.settings.ui={...(S.settings.ui||{}),...next};OF.updateTenantUI(next);OF.toast('Workspace preferences saved','ok');};
     }
 
     // ---- Booking & availability ----

@@ -62,6 +62,46 @@
   OF.qs = (k) => new URLSearchParams(location.search).get(k);
   OF.listLimit = 50;
 
+  // Friendly scheduling selects shared by admin forms. Dates stay in the
+  // tenant timezone while option labels remain readable at a glance.
+  OF.localYmd = (date = new Date()) => {
+    const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+      timeZone: tz(), year: 'numeric', month: '2-digit', day: '2-digit',
+    }).formatToParts(date).filter((p) => p.type !== 'literal').map((p) => [p.type, p.value]));
+    return `${parts.year}-${parts.month}-${parts.day}`;
+  };
+  const CUSTOM_DATE_VALUE = '__custom_date__';
+  OF.dateSelectOptions = (selected = '', days = 120) => {
+    const today = OF.localYmd();
+    const start = new Date(`${today}T12:00:00Z`);
+    const rows = [];
+    for (let i = 0; i < days; i += 1) {
+      const d = new Date(start.getTime() + i * 86_400_000);
+      const value = d.toISOString().slice(0, 10);
+      const prefix = i === 0 ? 'Today — ' : i === 1 ? 'Tomorrow — ' : '';
+      const label = prefix + new Intl.DateTimeFormat('en-US', {
+        timeZone: 'UTC', weekday: 'short', month: 'short', day: 'numeric', ...(d.getUTCFullYear() !== start.getUTCFullYear() ? { year: 'numeric' } : {}),
+      }).format(d);
+      rows.push({ value, label });
+    }
+    if (selected && !rows.some((r) => r.value === selected)) {
+      const d = new Date(`${selected}T12:00:00Z`);
+      rows.unshift({ value: selected, label: Number.isNaN(d.getTime()) ? selected : new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }).format(d) });
+    }
+    return `${selected ? '' : '<option value="">Choose a date…</option>'}${rows.map((r) => `<option value="${r.value}" ${r.value === selected ? 'selected' : ''}>${OF.escape(r.label)}</option>`).join('')}<option value="${CUSTOM_DATE_VALUE}">Choose another date…</option>`;
+  };
+  OF.timeSelectOptions = (selected = '09:00', step = 15) => {
+    const values = [];
+    for (let minutes = 0; minutes < 24 * 60; minutes += step) values.push(`${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`);
+    if (selected && !values.includes(selected)) values.push(selected);
+    values.sort();
+    return values.map((value) => {
+      const [hour, minute] = value.split(':').map(Number);
+      const label = new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', hour: 'numeric', minute: '2-digit' }).format(new Date(Date.UTC(2000, 0, 1, hour, minute)));
+      return `<option value="${value}" ${value === selected ? 'selected' : ''}>${label}</option>`;
+    }).join('');
+  };
+
   OF.searchInput = ({ id = 'search', placeholder = 'Search…', value = '' } = {}) =>
     `<div class="input-prefix" style="max-width:320px">${OF.icon('search', 16).replace('<svg', '<svg style="position:absolute;left:11px;top:50%;transform:translateY(-50%);color:var(--muted)"')}<input id="${OF.escape(id)}" placeholder="${OF.escape(placeholder)}" value="${OF.escape(value)}" style="padding-left:34px"></div>`;
 
@@ -204,6 +244,51 @@
     return { el: ov, close, q: (sel) => ov.querySelector(sel) };
   };
 
+  // Every friendly date select includes a native-picker escape hatch so admin
+  // scheduling is quick for near-term work without limiting farther dates.
+  document.addEventListener('focusin', (event) => {
+    const select = event.target;
+    if (select instanceof HTMLSelectElement && select.querySelector(`option[value="${CUSTOM_DATE_VALUE}"]`) && select.value !== CUSTOM_DATE_VALUE) {
+      select.dataset.previousDate = select.value;
+    }
+  });
+  document.addEventListener('change', (event) => {
+    const select = event.target;
+    if (!(select instanceof HTMLSelectElement) || select.value !== CUSTOM_DATE_VALUE) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    const previous = select.dataset.previousDate || '';
+    let settled = false;
+    let picker;
+    const finish = (value = '') => {
+      if (settled) return;
+      settled = true;
+      if (value) {
+        let option = [...select.options].find((row) => row.value === value);
+        if (!option) {
+          option = document.createElement('option');
+          option.value = value;
+          option.textContent = new Intl.DateTimeFormat('en-US', { timeZone:'UTC', weekday:'short', month:'short', day:'numeric', year:'numeric' }).format(new Date(`${value}T12:00:00Z`));
+          select.insertBefore(option, select.querySelector(`option[value="${CUSTOM_DATE_VALUE}"]`));
+        }
+        select.value = value;
+        select.dataset.previousDate = value;
+      } else select.value = previous;
+      picker.close();
+      select.dispatchEvent(new Event('change', { bubbles:true }));
+      select.focus();
+    };
+    picker = OF.modal(`<div class="modal-head"><h3>Choose another date</h3><button class="x" data-close>&times;</button></div>
+      <div class="modal-body"><div class="field"><label for="customDateValue">Date</label><input id="customDateValue" type="date" value="${OF.escape(previous || OF.localYmd())}"></div></div>
+      <div class="modal-foot"><button class="btn btn-secondary" data-close>Cancel</button><button class="btn btn-primary" id="customDateUse">Use date</button></div>`, { onClose: () => finish('') });
+    picker.q('#customDateUse').addEventListener('click', () => {
+      const value = picker.q('#customDateValue').value;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return OF.toast('Choose a valid date.', 'error');
+      finish(value);
+    });
+    picker.q('#customDateValue').focus();
+  }, true);
+
   OF.drawer = (innerHtml, { wide } = {}) => {
     const ov = document.createElement('div'); ov.className = 'drawer-overlay';
     const dr = document.createElement('div'); dr.className = 'drawer ' + (wide ? 'wide' : '');
@@ -312,7 +397,10 @@
         <div class="topbar">
           <button class="menu-toggle" id="menuToggle" aria-label="Open menu">${OF.icon('menu', 20)}</button>
           <div><h1 id="pageTitle">…</h1><div class="sub" id="pageSub"></div></div>
-          <div class="actions" id="pageActions"></div>
+          <div class="actions">
+            <div class="page-actions" id="pageActions"></div>
+            ${OF.hasCap('appointments.manage') ? `<a class="btn btn-primary btn-sm${t.ui?.alwaysShowNewAppointment === false ? ' hidden' : ''}" id="globalNewAppointment" href="/admin/appointments?new=1">${OF.icon('plus', 15)} New appointment</a>` : ''}
+          </div>
         </div>
         <div class="content" id="content"><div class="loading-page"><span class="spinner"></span></div></div>
       </main>`;
@@ -326,9 +414,28 @@
   function shellSignature(session, tenant) {
     return JSON.stringify({
       user: session ? { id: session.userId, username: session.username, displayName: session.displayName, role: session.role, capabilities: session.capabilities || [] } : null,
-      tenant: tenant ? { id: tenant.id, slug: tenant.slug, name: tenant.name, timezone: tenant.timezone, currency: tenant.currency, branding: tenant.branding || {} } : null,
+      tenant: tenant ? { id: tenant.id, slug: tenant.slug, name: tenant.name, timezone: tenant.timezone, currency: tenant.currency, branding: tenant.branding || {}, ui: tenant.ui || {} } : null,
     });
   }
+
+  function syncGlobalAction() {
+    const global = document.getElementById('globalNewAppointment');
+    if (!global) return;
+    const pageActions = document.getElementById('pageActions');
+    const hasPageNewAction = !!pageActions?.querySelector('#newBtn, [data-new-appointment], a[href*="/appointments?new=1"]');
+    const alwaysShow = OF.tenant?.ui?.alwaysShowNewAppointment !== false;
+    global.classList.toggle('hidden', !alwaysShow || hasPageNewAction);
+  }
+
+  // Apply a saved workspace preference immediately and keep the instant-paint
+  // session cache in sync so a refresh cannot briefly show the old action.
+  OF.updateTenantUI = (ui = {}) => {
+    if (!OF.tenant) return;
+    OF.tenant.ui = { ...(OF.tenant.ui || {}), ...ui };
+    const cached = readCache() || {};
+    writeCache({ session: OF.session, tenant: OF.tenant, counts: cached.counts || {} });
+    syncGlobalAction();
+  };
 
   function applyCounts(counts) {
     document.querySelectorAll('.badge-count[data-count]').forEach((el) => {
@@ -429,6 +536,7 @@
     const content = document.getElementById('content');
     if (!content) return;
     document.getElementById('pageActions').innerHTML = '';
+    syncGlobalAction();
     OF.refreshCounts();
     const seq = ++routeSeq;
     const loading = '<div class="loading-page"><span class="spinner"></span></div>';
@@ -474,7 +582,11 @@
     OF.go(url.pathname + url.search);
   }
 
-  OF.setActions = (html) => { const a = document.getElementById('pageActions'); if (a) a.innerHTML = html; };
+  OF.setActions = (html) => {
+    const a = document.getElementById('pageActions');
+    if (a) a.innerHTML = html;
+    syncGlobalAction();
+  };
 
   /** Boot the admin SPA: render the persistent shell once, validate session,
    *  wire routing, then render the current route. */

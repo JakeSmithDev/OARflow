@@ -3,7 +3,7 @@
 import express from 'express';
 import { requireAdmin } from '../../lib/auth.js';
 import { asyncHandler, badRequest, notFound, toInt } from '../../lib/http.js';
-import { query, queryOne } from '../../lib/db.js';
+import { query, queryOne, withTx } from '../../lib/db.js';
 import { getService, findOrCreateCustomer, createAppointment, fetchDayConflicts, overlapCount, slotCapacity } from '../../lib/appointments.js';
 import { ownsId } from '../../lib/ownership.js';
 import { zonedWallTimeToUtc, ymdInTimeZone } from '../../lib/dates.js';
@@ -13,7 +13,10 @@ import { sendAppointmentReminder } from '../../lib/reminders.js';
 import { emitEvent } from '../../lib/events.js';
 import { sendTemplated, detailsTable } from '../../lib/email_templates.js';
 import { hasCapability, requirePermission, requireWrite } from '../../lib/permissions.js';
-import { setAssignments, getAssignments, assignmentsForAppointments } from '../../lib/technicians.js';
+import {
+  setAssignments, getAssignments, assignmentsForAppointments, findTechnicianConflict,
+  withLockedAppointmentSchedule,
+} from '../../lib/technicians.js';
 import { saveFile, listFiles, getFile, deleteFile, signedUrl } from '../../lib/storage.js';
 import { decodeUpload } from '../../lib/uploads.js';
 import { recordApplication, listApplications, deleteApplication, serviceReport } from '../../lib/compliance.js';
@@ -100,6 +103,10 @@ router.get('/', asyncHandler(async (req, res) => {
     `${SELECT} WHERE ${where.join(' AND ')} ORDER BY COALESCE(a.scheduled_start, a.created_at) DESC LIMIT $${params.length - 1} OFFSET $${params.length}`,
     params,
   );
+  if (req.query.includeAssignments === '1') {
+    const assignMap = await assignmentsForAppointments(req.tenant, rows.rows.map((a) => a.id));
+    for (const appointment of rows.rows) appointment.technicians = assignMap[appointment.id] || [];
+  }
   const total = await queryOne(
     `SELECT count(*)::int n FROM appointments a JOIN customers c ON c.id=a.customer_id WHERE ${where.join(' AND ')}`,
     countParams,
@@ -257,30 +264,57 @@ router.post('/:id/assign', requirePermission('dispatch.manage'), asyncHandler(as
 router.post('/', asyncHandler(async (req, res) => {
   const tenant = req.tenant;
   const b = req.body || {};
+  const technicianId = b.technicianId == null || b.technicianId === '' ? null : toInt(b.technicianId);
+  if (b.technicianId != null && b.technicianId !== '' && !technicianId) return badRequest(res, 'Unknown technician.');
+  if (technicianId && !hasCapability(req.admin, 'dispatch.manage')) {
+    return res.status(403).json({ ok: false, error: 'You do not have permission to assign reps.' });
+  }
   let customerId = toInt(b.customerId);
   if (customerId) {
     if (!(await ownsId(tenant.id, 'customers', customerId))) return badRequest(res, 'Unknown customer.');
   } else {
     if (!b.customer?.name) return badRequest(res, 'Customer is required.');
-    customerId = await findOrCreateCustomer(tenant.id, b.customer);
   }
   const service = b.serviceId ? await getService(tenant.id, toInt(b.serviceId)) : null;
   const times = resolveTimes(tenant, b, service?.duration_minutes);
   if (!times) return badRequest(res, 'A date and time are required.');
   const block = await schedulingBlock(tenant, times.start.toISOString(), times.end.toISOString(), null, b.force);
   if (block) return res.status(409).json({ ok: false, code: 'SCHEDULE_WARN', error: `${block.reason} Book anyway?` });
-  const appt = await createAppointment(tenant.id, {
-    customerId, serviceTypeId: service?.id || null, status: 'scheduled', bookingMode: 'instant', source: 'admin',
-    scheduledStart: times.start.toISOString(), scheduledEnd: times.end.toISOString(),
-    serviceAddress: b.serviceAddress || null, notes: b.notes || null, internalNotes: b.internalNotes || null,
-    priceCents: service?.base_price_cents || 0,
-  });
+  let appt;
+  try {
+    const createdResult = await withTx(async (cx) => {
+      const resolvedCustomerId = customerId || await findOrCreateCustomer(tenant.id, b.customer, { cx });
+      const created = await createAppointment(tenant.id, {
+        customerId: resolvedCustomerId, serviceTypeId: service?.id || null, status: 'scheduled', bookingMode: 'instant', source: 'admin',
+        scheduledStart: times.start.toISOString(), scheduledEnd: times.end.toISOString(),
+        serviceAddress: b.serviceAddress || null, notes: b.notes || null, internalNotes: b.internalNotes || null,
+        priceCents: service?.base_price_cents || 0,
+      }, { cx });
+      if (technicianId) {
+        const assignment = await setAssignments(tenant, created.id, [technicianId], technicianId, { cx });
+        if (!assignment.ok) {
+          const error = new Error(assignment.error || 'Rep assignment failed.');
+          error.code = 'ASSIGNMENT_INVALID';
+          throw error;
+        }
+      }
+      return { appointment: created, customerId: resolvedCustomerId };
+    });
+    appt = createdResult.appointment;
+    customerId = createdResult.customerId;
+  } catch (error) {
+    if (error.code === 'ASSIGNMENT_INVALID') return badRequest(res, error.message);
+    throw error;
+  }
   const full = await queryOne(`${SELECT} WHERE a.id=$1`, [appt.id]);
   syncAppointment(tenant, full).catch(() => {});
   if (b.notify && full.customer_email) {
     await sendTemplated(tenant, 'booking_confirmation', full.customer_email, emailVars(tenant, full), { type: 'appointment', id: appt.id }).catch(() => {});
   }
   await logAudit({ tenantId: tenant.id, adminUsername: req.admin.username, action: 'appointment_create', entityType: 'appointment', entityId: appt.id });
+  if (technicianId) {
+    await logAudit({ tenantId: tenant.id, adminUsername: req.admin.username, action: 'appointment_assign', entityType: 'appointment', entityId: appt.id, details: { technicianIds: [technicianId], lead: technicianId } });
+  }
   if (b.notify) emitEvent('appointment.scheduled', { tenantId: tenant.id, appointmentId: appt.id, customerId, source: 'admin' }).catch(() => {});
   res.json({ ok: true, appointment: full });
 }));
@@ -294,16 +328,23 @@ router.patch('/:id', asyncHandler(async (req, res) => {
   const b = req.body || {};
   const sets = []; const params = [id];
   const set = (col, val) => { params.push(val); sets.push(`${col}=$${params.length}`); };
+  let scheduleTimes = null;
 
   if (b.date || b.start) {
     const times = resolveTimes(tenant, b, a.duration_minutes);
     if (times) {
       const block = await schedulingBlock(tenant, times.start.toISOString(), times.end.toISOString(), id, b.force);
       if (block) return res.status(409).json({ ok: false, code: 'SCHEDULE_WARN', error: `${block.reason} Reschedule anyway?` });
+      scheduleTimes = times;
       set('scheduled_start', times.start.toISOString()); set('scheduled_end', times.end.toISOString()); set('status', 'scheduled');
     }
   }
-  if (b.serviceAddress !== undefined) set('service_address', b.serviceAddress);
+  if (b.serviceAddress !== undefined) {
+    set('service_address', b.serviceAddress);
+    // Coordinates describe the old address. Force the route planner to
+    // geocode/fallback-group the new address instead of reusing stale data.
+    set('service_lat', null); set('service_lng', null);
+  }
   if (b.internalNotes !== undefined) set('internal_notes', b.internalNotes);
   if (b.notes !== undefined) set('notes', b.notes);
   let completing = false; let canceling = false;
@@ -314,7 +355,28 @@ router.patch('/:id', asyncHandler(async (req, res) => {
   }
   if (!sets.length) return badRequest(res, 'Nothing to update.');
   set('updated_at', new Date().toISOString());
-  await query(`UPDATE appointments SET ${sets.join(', ')} WHERE id=$1`, params);
+  if (scheduleTimes) {
+    const locked = await withLockedAppointmentSchedule(tenant, id, async ({ cx, technicianIds }) => {
+      if (!b.force) {
+        const conflict = await findTechnicianConflict(tenant, {
+          appointmentId: id,
+          technicianIds,
+          start: scheduleTimes.start.toISOString(),
+          end: scheduleTimes.end.toISOString(),
+        }, cx);
+        if (conflict) return { conflict };
+      }
+      await cx.query(`UPDATE appointments SET ${sets.join(', ')} WHERE id=$1`, params);
+      return { updated: true };
+    });
+    if (locked.notFound) return notFound(res);
+    if (locked.scheduleBusy) return res.status(409).json({ ok: false, code: 'SCHEDULE_CHANGED', error: 'The assigned crew changed. Refresh and try again.' });
+    if (locked.conflict) {
+      return res.status(409).json({ ok: false, code: 'SCHEDULE_WARN', error: `${locked.conflict.technician_name} already has an overlapping appointment. Reschedule anyway?` });
+    }
+  } else {
+    await query(`UPDATE appointments SET ${sets.join(', ')} WHERE id=$1`, params);
+  }
   const updated = await queryOne(`${SELECT} WHERE a.id=$1`, [id]);
 
   if (canceling) { deleteAppointmentEvent(tenant, updated).catch(() => {}); if (b.notify && updated.customer_email) await sendTemplated(tenant, 'appointment_canceled', updated.customer_email, emailVars(tenant, updated), { type: 'appointment', id }).catch(() => {}); }
@@ -366,10 +428,29 @@ router.post('/:id/confirm', asyncHandler(async (req, res) => {
 
   const block = await schedulingBlock(tenant, start.toISOString(), end.toISOString(), id, b.force);
   if (block) return res.status(409).json({ ok: false, code: 'SCHEDULE_WARN', error: `${block.reason} Confirm anyway?` });
-  await query(
-    "UPDATE appointments SET status='scheduled', scheduled_start=$2, scheduled_end=$3, updated_at=now() WHERE id=$1",
-    [id, start.toISOString(), end.toISOString()],
-  );
+  const locked = await withLockedAppointmentSchedule(tenant, id, async ({ cx, appointment, technicianIds }) => {
+    if (appointment.status !== 'requested') return { notRequested: true };
+    if (!b.force) {
+      const conflict = await findTechnicianConflict(tenant, {
+        appointmentId: id,
+        technicianIds,
+        start: start.toISOString(),
+        end: end.toISOString(),
+      }, cx);
+      if (conflict) return { conflict };
+    }
+    await cx.query(
+      "UPDATE appointments SET status='scheduled', scheduled_start=$3, scheduled_end=$4, updated_at=now() WHERE tenant_id=$1 AND id=$2",
+      [tenant.id, id, start.toISOString(), end.toISOString()],
+    );
+    return { updated: true };
+  });
+  if (locked.notFound) return notFound(res);
+  if (locked.notRequested) return badRequest(res, 'This booking is not awaiting confirmation.');
+  if (locked.scheduleBusy) return res.status(409).json({ ok: false, code: 'SCHEDULE_CHANGED', error: 'The assigned crew changed. Refresh and try again.' });
+  if (locked.conflict) {
+    return res.status(409).json({ ok: false, code: 'SCHEDULE_WARN', error: `${locked.conflict.technician_name} already has an overlapping appointment. Confirm anyway?` });
+  }
   const updated = await queryOne(`${SELECT} WHERE a.id=$1`, [id]);
   syncAppointment(tenant, updated).catch(() => {});
   if (updated.customer_email && b.notify !== false) {

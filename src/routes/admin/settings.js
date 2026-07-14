@@ -72,7 +72,7 @@ router.patch('/profile', asyncHandler(async (req, res) => {
 router.put('/settings', asyncHandler(async (req, res) => {
   const patch = req.body || {};
   // only allow known top-level config sections
-  const allowed = ['branding', 'booking', 'availability', 'invoicing', 'notifications'];
+  const allowed = ['branding', 'ui', 'booking', 'availability', 'invoicing', 'notifications'];
   const clean = {};
   for (const k of allowed) if (patch[k] !== undefined) clean[k] = patch[k];
   if (clean.branding?.primaryColor !== undefined) clean.branding = { ...clean.branding, primaryColor: hexColor(clean.branding.primaryColor, '#0e7c4b') };

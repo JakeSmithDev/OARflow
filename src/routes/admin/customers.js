@@ -2,7 +2,7 @@
 import express from 'express';
 import { requireAdmin } from '../../lib/auth.js';
 import { asyncHandler, badRequest, notFound, toInt, getClientIp } from '../../lib/http.js';
-import { query, queryOne } from '../../lib/db.js';
+import { query, queryOne, withTx } from '../../lib/db.js';
 import { logAudit } from '../../lib/audit.js';
 import { requireWrite, requirePermission } from '../../lib/permissions.js';
 import { randomToken } from '../../lib/crypto.js';
@@ -214,7 +214,18 @@ router.patch('/:id', asyncHandler(async (req, res) => {
   for (const [k, v] of Object.entries(cols)) { if (v !== undefined) { params.push(v); sets.push(`${k}=$${params.length}`); } }
   if (!sets.length) return badRequest(res, 'Nothing to update.');
   sets.push('updated_at=now()');
-  const row = await queryOne(`UPDATE customers SET ${sets.join(', ')} WHERE id=$1 AND tenant_id=$2 RETURNING *`, params);
+  const locationChanged = ['address', 'city', 'state', 'postalCode'].some((key) => b[key] !== undefined);
+  const row = await withTx(async (cx) => {
+    const updated = (await cx.query(`UPDATE customers SET ${sets.join(', ')} WHERE id=$1 AND tenant_id=$2 RETURNING *`, params)).rows[0] || null;
+    if (updated && locationChanged) {
+      await cx.query(
+        `UPDATE appointments SET service_lat=NULL, service_lng=NULL
+          WHERE tenant_id=$1 AND customer_id=$2 AND NULLIF(BTRIM(service_address),'') IS NULL`,
+        [req.tenant.id, id],
+      );
+    }
+    return updated;
+  });
   if (!row) return notFound(res);
   res.json({ ok: true, customer: row });
 }));

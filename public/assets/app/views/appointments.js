@@ -10,7 +10,7 @@ const OF = window.OF;
     }
 
     async function loadServices() { if (!SERVICES.length) SERVICES = (await OF.get('/api/admin/appointments/meta/services')).services; return SERVICES; }
-    async function loadTechs() { if (!TECHS) TECHS = (await OF.get('/api/admin/technicians')).technicians; return TECHS; }
+    async function loadTechs(refresh = false) { if (!TECHS || refresh) TECHS = (await OF.get('/api/admin/technicians')).technicians; return TECHS; }
     function techChip(t) { const c = OF.color(t.color); return `<span class="badge no-dot" style="background:${c}1a;color:${c}">${t.is_lead ? '★ ' : ''}${OF.escape(t.name)}</span>`; }
     function localInputs(iso) {
       if (!iso) return { date: '', time: '' };
@@ -94,7 +94,7 @@ const OF = window.OF;
             ${a.notes?`<div><span class="muted small">Customer notes</span><p style="margin:4px 0 0">${OF.escape(a.notes)}</p></div>`:''}
           </div>
           ${isReq?`<div class="card card-pad" style="margin-bottom:16px"><h4 style="margin-bottom:10px">Confirm a time</h4>
-            ${slots.length?slots.map((s,i)=>`<label class="row" style="gap:10px;padding:8px 0;cursor:pointer"><input type="radio" name="slot" value="${i}" style="width:auto"><b>${OF.dateTime(s.start)}</b></label>`).join(''):`<p class="muted small">No proposed times.</p><div class="grid cols-2"><div class="field"><label>Date</label><input type="date" id="confirmDate"></div><div class="field"><label>Time</label><input type="time" id="confirmTime"></div></div>`}
+            ${slots.length?slots.map((s,i)=>`<label class="row" style="gap:10px;padding:8px 0;cursor:pointer"><input type="radio" name="slot" value="${i}" style="width:auto"><b>${OF.dateTime(s.start)}</b></label>`).join(''):`<p class="muted small">No proposed times.</p><div class="grid cols-2"><div class="field"><label>Date</label><select id="confirmDate">${OF.dateSelectOptions()}</select></div><div class="field"><label>Time</label><select id="confirmTime">${OF.timeSelectOptions('09:00')}</select></div></div>`}
             <button class="btn btn-primary btn-block" id="confirmBtn" style="margin-top:10px">Confirm appointment</button></div>`:''}
           ${a.status!=='canceled'?`<div class="card card-pad" style="margin-bottom:16px"><div class="row between" style="margin-bottom:8px"><h4 style="margin:0">Assigned crew</h4>${canDispatch?'<button class="btn btn-ghost btn-xs" id="assignBtn">Assign</button>':''}</div>
             <div id="crewBox" class="row wrap" style="gap:6px">${crew.length?crew.map(techChip).join(''):'<span class="muted small">No one assigned yet.</span>'}</div></div>`:''}
@@ -107,7 +107,7 @@ const OF = window.OF;
           <hr class="divider">
           <div class="stack">
             ${!isReq && a.status!=='canceled'?`<div class="card card-pad"><h4 style="margin-bottom:10px">Reschedule</h4>
-              <div class="grid cols-2"><div class="field"><label>Date</label><input type="date" id="rDate" value="${rescheduleAt.date}"></div><div class="field"><label>Time</label><input type="time" id="rTime" value="${rescheduleAt.time}"></div></div>
+              <div class="grid cols-2"><div class="field"><label>Date</label><select id="rDate">${OF.dateSelectOptions(rescheduleAt.date)}</select></div><div class="field"><label>Time</label><select id="rTime">${OF.timeSelectOptions(rescheduleAt.time)}</select></div></div>
               <button class="btn btn-secondary btn-sm" id="rescheduleBtn">Update time</button></div>`:''}
             <div class="row wrap" style="gap:8px">
               ${a.status==='scheduled'?`<button class="btn btn-primary btn-sm" data-act="completed">${OF.icon('check',15)} Mark completed</button>`:''}
@@ -222,7 +222,7 @@ const OF = window.OF;
     }
 
     async function newAppointment(root, prefill={}) {
-      await loadServices();
+      await Promise.all([loadServices(), OF.hasCap('dispatch.manage') ? loadTechs(true) : Promise.resolve([])]);
       let picked = prefill.customerId ? { id: prefill.customerId, name: prefill.name || '', address: prefill.address || '' } : null;
       const m = OF.modal(`
         <div class="modal-head"><h3>New appointment</h3><button class="x" data-close>&times;</button></div>
@@ -230,7 +230,8 @@ const OF = window.OF;
           <div class="field"><label>Customer *</label><input id="n_customer" placeholder="Search existing or type a new name…" value="${OF.escape(prefill.name||'')}" autocomplete="off"><div id="n_results" class="card" style="display:none;position:relative;z-index:5"></div><div id="n_selected" class="${picked?'':'hidden'}" style="margin-top:8px"></div><span class="hint">Pick an existing customer to avoid creating a duplicate, or type a new customer name.</span></div>
           <div id="n_newFields" class="${picked?'hidden':''}"><div class="grid cols-2"><div class="field"><label>Email</label><input id="n_email" type="email"></div><div class="field"><label>Phone</label><input id="n_phone" type="tel"></div></div></div>
           <div class="field"><label>Service</label><select id="n_service">${SERVICES.map(s=>`<option value="${s.id}">${OF.escape(s.name)} · ${OF.money(s.base_price_cents)}</option>`).join('')}</select></div>
-          <div class="grid cols-2"><div class="field"><label>Date *</label><input id="n_date" type="date"></div><div class="field"><label>Time *</label><input id="n_time" type="time" value="09:00"></div></div>
+          <div class="grid cols-2"><div class="field"><label>Date *</label><select id="n_date">${OF.dateSelectOptions()}</select></div><div class="field"><label>Time *</label><select id="n_time">${OF.timeSelectOptions('09:00')}</select></div></div>
+          ${OF.hasCap('dispatch.manage') && TECHS?.length ? `<div class="field"><label>Assign rep <span class="muted" style="font-weight:500">(optional)</span></label><select id="n_tech"><option value="">Unassigned — route later</option>${TECHS.filter(t=>t.is_active).map(t=>`<option value="${t.id}">${OF.escape(t.name)}</option>`).join('')}</select><span class="hint">You can also assign or optimize reps from Schedule → Route.</span></div>` : ''}
           <div class="field"><label>Service address</label><input id="n_addr" value="${OF.escape(prefill.address||'')}"></div>
           <div class="field"><label>Notes</label><textarea id="n_notes"></textarea></div>
           <label class="row" style="gap:8px"><input type="checkbox" id="n_notify" checked style="width:auto"> Email confirmation to customer</label>
@@ -255,11 +256,15 @@ const OF = window.OF;
       });
       m.q('#n_save').addEventListener('click', async()=>{
         const name = m.q('#n_customer').value.trim();
+        const technicianId = +m.q('#n_tech')?.value || null;
         const body={ customerId:picked?.id || null, customer:picked?undefined:{name,email:m.q('#n_email').value.trim(),phone:m.q('#n_phone').value.trim(),address:m.q('#n_addr').value.trim()},
-          serviceId:+m.q('#n_service').value, date:m.q('#n_date').value, time:m.q('#n_time').value, serviceAddress:m.q('#n_addr').value.trim(), notes:m.q('#n_notes').value.trim(), notify:m.q('#n_notify').checked };
+          serviceId:+m.q('#n_service').value, date:m.q('#n_date').value, time:m.q('#n_time').value, technicianId,
+          serviceAddress:m.q('#n_addr').value.trim(), notes:m.q('#n_notes').value.trim(), notify:m.q('#n_notify').checked };
         if(!picked && !name) return OF.toast('Customer, date and time are required','error');
         if(!body.date||!body.time) return OF.toast('Customer, date and time are required','error');
-        if(await doForce(force=>OF.post('/api/admin/appointments',{...body,force}))){ m.close(); OF.toast('Appointment created','ok'); refresh(root); }
+        if(await doForce(async force=>{await OF.post('/api/admin/appointments',{...body,force});})){
+          m.close(); OF.toast('Appointment created','ok'); refresh(root);
+        }
       });
     }
 

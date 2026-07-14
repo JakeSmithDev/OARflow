@@ -12,6 +12,10 @@ export function defaultTenantSettings(overrides = {}) {
       supportEmail: 'office@pasternackpest.com',
       supportPhone: '(410) 446-1169',
     },
+    ui: {
+      // Keep the primary scheduling action within reach on every admin page.
+      alwaysShowNewAppointment: true,
+    },
     booking: {
       defaultMode: 'instant',       // 'instant' | 'request'
       requestSlotCount: 3,
