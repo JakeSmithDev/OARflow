@@ -704,6 +704,56 @@ async function main() {
     const r = await call('/api/admin/documents', { method: 'POST', body: { customerId: 2, templateId: tplId, appointmentId: assignApptId } });
     assert.equal(r.status, 400);
   });
+  await check('customer WDII PDF autofills known fields and stays editable', async () => {
+    const customer = (await call('/api/admin/customers/1')).data.customer;
+    const res = await fetch(base + '/api/admin/documents/customer/1/generate', {
+      method: 'POST', headers: { Cookie: cookie, 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'wdii' }),
+    });
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get('content-type'), 'application/pdf');
+    assert.match(res.headers.get('content-disposition'), /WDII_Inspection_Report\.pdf/);
+    assert.match(res.headers.get('cache-control'), /no-store/);
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    assert.ok(bytes.length > 100_000 && bytes.length < 4_500_000, `unexpected WDII size ${bytes.length}`);
+    const { PDFDocument } = await import('pdf-lib');
+    const pdf = await PDFDocument.load(bytes);
+    assert.equal(pdf.getPageCount(), 2);
+    const form = pdf.getForm();
+    assert.equal(form.getTextField('lic_no').getText(), '33560');
+    assert.match(form.getTextField('address_inspected').getText(), new RegExp(customer.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    assert.equal(form.getTextField('seller_print_name').getText(), customer.name);
+    assert.ok(form.getFields().length >= 48, 'inspection fields remain editable');
+  });
+  await check('customer service agreement generates a clean cadence-specific PDF', async () => {
+    const customer = (await call('/api/admin/customers/1')).data.customer;
+    const res = await fetch(base + '/api/admin/documents/customer/1/generate', {
+      method: 'POST', headers: { Cookie: cookie, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'service_agreement', frequency: 'quarterly', notes: 'Exterior service and bait station maintenance.', initialServiceFeeCents: 0, serviceFeeCents: 12_500 }),
+    });
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get('content-type'), 'application/pdf');
+    assert.match(res.headers.get('content-disposition'), /Pest_Control_Service_Agreement\.pdf/);
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    assert.equal(Buffer.from(bytes.slice(0, 4)).toString(), '%PDF');
+    const { PDFDocument } = await import('pdf-lib');
+    const pdf = await PDFDocument.load(bytes);
+    assert.equal(pdf.getPageCount(), 1);
+    assert.match(pdf.getTitle(), new RegExp(customer.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    assert.match(pdf.getSubject(), /Quarterly/);
+    assert.ok(!Buffer.from(bytes).toString('latin1').includes('Thomas Park Management'), 'prior customer PII is absent');
+  });
+  await check('customer PDF generation validates cadence and tenant-scoped customer', async () => {
+    const invalid = await call('/api/admin/documents/customer/1/generate', { method: 'POST', body: { type: 'service_agreement', frequency: 'weekly' } });
+    assert.equal(invalid.status, 400);
+    const missing = await call('/api/admin/documents/customer/999999/generate', { method: 'POST', body: { type: 'wdii' } });
+    assert.equal(missing.status, 404);
+  });
+  await check('customer PDF downloads are audited without storing note contents', async () => {
+    const row = await query("SELECT details FROM audit_log WHERE tenant_id=1 AND action='customer_pdf_generate' ORDER BY id DESC LIMIT 1");
+    assert.equal(row.rows.length, 1);
+    assert.ok(['wdii', 'service_agreement'].includes(row.rows[0].details.type));
+    assert.equal(JSON.stringify(row.rows[0].details).includes('bait station'), false);
+  });
 
   // --- Route optimization + GPS ---
   await check('keyless route estimates expose geometry, legs, drive time, and fuel cost', async () => {

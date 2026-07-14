@@ -236,6 +236,10 @@
   OF.modal = (innerHtml, { wide, onClose } = {}) => {
     const ov = document.createElement('div');
     ov.className = 'overlay';
+    // A modal can be opened from a drawer (customer details, appointment
+    // details, etc.). Lift each nested layer above the fixed drawer z-index so
+    // the dialog is never partially hidden behind its parent surface.
+    if (closeStack.length) ov.style.zIndex = String(100 + closeStack.length * 2);
     ov.innerHTML = `<div class="modal ${wide ? 'wide' : ''}">${innerHtml}</div>`;
     document.body.appendChild(ov);
     let closed = false;

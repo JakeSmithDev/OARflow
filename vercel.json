@@ -6,7 +6,7 @@
   "functions": {
     "api/index.js": {
       "maxDuration": 30,
-      "includeFiles": "node_modules/leaflet/dist/**"
+      "includeFiles": "{node_modules/leaflet/dist/**,public/assets/pdf-templates/**}"
     }
   },
   "crons": [

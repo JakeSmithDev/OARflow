@@ -11,6 +11,88 @@ const OF = window.OF;
       if (state.q) p.set('q', state.q);
       return p;
     }
+    function downloadName(res, fallback) {
+      const header = res.headers.get('content-disposition') || '';
+      const encoded = /filename\*=UTF-8''([^;]+)/i.exec(header)?.[1];
+      if (encoded) { try { return decodeURIComponent(encoded); } catch { /* use the ordinary filename */ } }
+      return /filename="([^"]+)"/i.exec(header)?.[1] || fallback;
+    }
+    async function downloadCustomerDocument(customerId, payload, button) {
+      const original = button?.innerHTML;
+      if (button) { button.disabled = true; button.innerHTML = '<span class="spinner"></span> Building PDF…'; }
+      try {
+        const res = await fetch(`/api/admin/documents/customer/${customerId}/generate`, {
+          method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+        });
+        if (res.status === 401) {
+          location.href = '/admin/login?next=' + encodeURIComponent(location.pathname + location.search);
+          return false;
+        }
+        if (!res.ok) {
+          let data = null; try { data = await res.json(); } catch { /* PDF endpoints normally return JSON only on errors */ }
+          throw new Error(data?.error || `Could not build the PDF (${res.status}).`);
+        }
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = downloadName(res, payload.type === 'wdii' ? 'WDII Inspection Report.pdf' : 'Pest Control Service Agreement.pdf');
+        document.body.appendChild(link); link.click(); link.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 30_000);
+        OF.toast('PDF ready to download', 'ok');
+        return true;
+      } catch (error) {
+        OF.toast(error.message || 'Could not build the PDF.', 'error');
+        return false;
+      } finally {
+        if (button) { button.disabled = false; button.innerHTML = original; }
+      }
+    }
+    function serviceAgreementModal(customer, subscriptions = []) {
+      const active = subscriptions.find((sub) => sub.status === 'active' && ['monthly', 'quarterly'].includes(sub.interval))
+        || subscriptions.find((sub) => sub.status === 'active');
+      const startingFrequency = ['monthly', 'quarterly'].includes(active?.interval) ? active.interval : 'monthly';
+      const startingServiceFee = Number.isFinite(Number(active?.price_cents)) ? Number(active.price_cents) / 100 : 100;
+      const startingNotes = active?.notes || customer.notes || '';
+      const m = OF.modal(`<div class="modal-head customer-doc-modal-head"><div><span class="customer-doc-kicker">Autofill document</span><h3>Pest Control Service Agreement</h3><p>${OF.escape(customer.name)} · ${OF.escape(OF.serviceAddress(customer))}</p></div><button class="x" data-close>&times;</button></div>
+        <div class="modal-body customer-doc-form">
+          <div class="field"><label>Service frequency</label><div class="doc-frequency" role="radiogroup" aria-label="Service frequency">
+            <label><input type="radio" name="doc_frequency" value="monthly" ${startingFrequency === 'monthly' ? 'checked' : ''}><span>Monthly<small>12 visits / year</small></span></label>
+            <label><input type="radio" name="doc_frequency" value="quarterly" ${startingFrequency === 'quarterly' ? 'checked' : ''}><span>Quarterly<small>4 visits / year</small></span></label>
+          </div></div>
+          <div class="grid cols-2">
+            <div class="field"><label for="doc_initial_fee">Initial service fee</label><div class="money-input"><span>$</span><input id="doc_initial_fee" type="number" min="0" max="100000" step="0.01" value="0.00"></div></div>
+            <div class="field"><label for="doc_service_fee">Cost per service</label><div class="money-input"><span>$</span><input id="doc_service_fee" type="number" min="0" max="100000" step="0.01" value="${startingServiceFee.toFixed(2)}"></div></div>
+          </div>
+          <div class="doc-total-preview"><span>12-month agreement total</span><strong id="doc_total">${OF.money(Math.round(startingServiceFee * (startingFrequency === 'monthly' ? 12 : 4) * 100))}</strong></div>
+          <div class="field"><label for="doc_pests">Initially covered pests</label><input id="doc_pests" maxlength="300" value="Rodents, Roaches and General Pest"></div>
+          <div class="field"><div class="row between"><label for="doc_notes">Additional comments / service notes</label><span class="tiny muted" id="doc_notes_count">${String(startingNotes).slice(0, 500).length}/500</span></div><textarea id="doc_notes" maxlength="500" rows="4" placeholder="Exterior-only service, bait station locations, exclusions, access notes…">${OF.escape(String(startingNotes).slice(0, 500))}</textarea><span class="hint">Customer or plan notes are prefilled. Edit them before generating if needed.</span></div>
+          <div class="doc-autofill-note">${OF.icon('documents',16)} Customer contact information, service address, company details, agreement date and term language will be filled automatically.</div>
+        </div>
+        <div class="modal-foot"><button class="btn btn-secondary" data-close>Cancel</button><button class="btn btn-primary" id="doc_generate">${OF.icon('documents',16)} Generate PDF</button></div>`, { wide:true });
+      m.el.querySelector('.modal')?.classList.add('customer-doc-modal');
+      const frequency = () => m.el.querySelector('input[name="doc_frequency"]:checked')?.value || 'monthly';
+      const dollars = (selector) => Number(m.q(selector).value);
+      const updateTotal = () => {
+        const initial = dollars('#doc_initial_fee'); const service = dollars('#doc_service_fee');
+        const visits = frequency() === 'quarterly' ? 4 : 12;
+        m.q('#doc_total').textContent = OF.money(Math.round(((Number.isFinite(initial) ? initial : 0) + (Number.isFinite(service) ? service : 0) * visits) * 100));
+      };
+      m.el.querySelectorAll('input[name="doc_frequency"]').forEach((input) => input.addEventListener('change', updateTotal));
+      ['#doc_initial_fee', '#doc_service_fee'].forEach((selector) => m.q(selector).addEventListener('input', updateTotal));
+      m.q('#doc_notes').addEventListener('input', (event) => { m.q('#doc_notes_count').textContent = `${event.target.value.length}/500`; });
+      m.q('#doc_generate').onclick = async () => {
+        const initial = dollars('#doc_initial_fee'); const service = dollars('#doc_service_fee');
+        if (![initial, service].every((value) => Number.isFinite(value) && value >= 0 && value <= 100000)) return OF.toast('Enter valid service prices.', 'error');
+        const coveredPests = m.q('#doc_pests').value.trim();
+        if (!coveredPests) return OF.toast('List the pests covered by this agreement.', 'error');
+        const ok = await downloadCustomerDocument(customer.id, {
+          type: 'service_agreement', frequency: frequency(), notes: m.q('#doc_notes').value.trim(), coveredPests,
+          initialServiceFeeCents: Math.round(initial * 100), serviceFeeCents: Math.round(service * 100),
+        }, m.q('#doc_generate'));
+        if (ok) m.close();
+      };
+    }
     async function refresh(root, { append = false } = {}) {
       const offset = append ? state.rows.length : 0;
       const d = await OF.get('/api/admin/customers?' + params(offset));
@@ -36,6 +118,7 @@ const OF = window.OF;
       const d = await OF.get('/api/admin/customers/'+id);
       const c = d.customer;
       const canPayments = OF.hasCap('payments.manage');
+      const canDocuments = OF.hasCap('documents.manage');
       const dr = OF.drawer(`
         <div class="modal-head"><h3>${OF.escape(c.name)}</h3><button class="x" data-close>&times;</button></div>
         <div class="modal-body" style="overflow:auto">
@@ -64,6 +147,13 @@ const OF = window.OF;
             ${c.address?`<div class="row between"><span class="muted">Service address</span><span>${OF.escape(OF.serviceAddress(c))}</span></div>`:''}
             ${c.notes?`<div><span class="muted small">Notes</span><p style="margin:4px 0 0">${OF.escape(c.notes)}</p></div>`:''}
           </div>
+          ${canDocuments ? `<div class="customer-doc-card" style="margin-bottom:16px">
+            <div class="customer-doc-card-head"><div><span class="customer-doc-kicker">Customer documents</span><h4>Autofill &amp; download</h4></div><span class="customer-doc-ready">${OF.icon('documents',14)} Ready</span></div>
+            <div class="customer-doc-grid">
+              <button type="button" class="customer-doc-button" id="wdiiDocBtn"><span class="customer-doc-icon">${OF.icon('documents',20)}</span><span><strong>WDII inspection report</strong><small>Fills the customer, property, license and today’s date. Inspection fields stay editable.</small></span><span class="customer-doc-arrow">&darr;</span></button>
+              <button type="button" class="customer-doc-button" id="serviceAgreementBtn"><span class="customer-doc-icon agreement">${OF.icon('recurring',20)}</span><span><strong>Service agreement</strong><small>Choose monthly or quarterly, review pricing and use customer or plan notes.</small></span><span class="customer-doc-arrow">&rarr;</span></button>
+            </div>
+          </div>` : ''}
           ${section('Appointments', d.appointments.map(a=>`<div class="row between" style="padding:7px 0;border-bottom:1px solid var(--line-2)"><a href="/admin/appointments?id=${a.id}">${a.service_name?OF.escape(a.service_name):'Appointment'}</a><span class="muted small">${a.scheduled_start?OF.date(a.scheduled_start):'—'}</span>${OF.statusBadge(a.status)}</div>`).join(''))}
           ${section('Invoices', d.invoices.map(i=>`<div class="row between" style="padding:7px 0;border-bottom:1px solid var(--line-2)"><a href="/admin/invoices?id=${i.id}">${OF.escape(i.number)}</a>${OF.statusBadge(i.status)}<span class="mono">${OF.money(i.total_cents)}</span></div>`).join(''))}
           ${d.subscriptions.length?section('Subscriptions', d.subscriptions.map(su=>`<div class="row between" style="padding:7px 0;border-bottom:1px solid var(--line-2)"><span>${OF.escape(su.plan_name||'Plan')}</span><span class="mono">${OF.money(su.price_cents)}/${su.interval}</span>${OF.statusBadge(su.status)}</div>`).join('')):''}
@@ -101,6 +191,8 @@ const OF = window.OF;
         else { const r=await OF.post(`/api/admin/customers/${id}/card-link`); navigator.clipboard?.writeText(r.url); window.open(r.url,'_blank'); OF.toast('Secure card link opened & copied','ok'); }
       });
       dr.q('#cardLinkBtn')?.addEventListener('click', async()=>{ const r=await OF.post(`/api/admin/customers/${id}/card-link`); navigator.clipboard?.writeText(r.url); OF.toast('Card link copied — text or email it to the customer','ok'); });
+      dr.q('#wdiiDocBtn')?.addEventListener('click', (event) => downloadCustomerDocument(c.id, { type: 'wdii' }, event.currentTarget));
+      dr.q('#serviceAgreementBtn')?.addEventListener('click', () => serviceAgreementModal(c, d.subscriptions));
       dr.q('#editBtn').onclick=()=>dr.q('#editForm').classList.toggle('hidden');
       dr.q('#portalBtn').onclick=async()=>{ const r=await OF.post(`/api/admin/customers/${id}/portal-link`); navigator.clipboard?.writeText(r.url); OF.toast('Portal link copied — share it with the customer','ok'); };
       dr.q('#saveCust').onclick=async()=>{

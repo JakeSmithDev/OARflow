@@ -12,6 +12,9 @@ import {
 import { sendTemplated } from '../../lib/email_templates.js';
 import { logAudit } from '../../lib/audit.js';
 import { config } from '../../config.js';
+import {
+  AGREEMENT_DEFAULTS, generateServiceAgreementPdf, generateWdiiInspectionPdf, safePdfFilename,
+} from '../../lib/customer_pdfs.js';
 
 const router = express.Router();
 router.use(requireAdmin());
@@ -35,6 +38,65 @@ router.patch('/templates/:id', requirePermission('documents.manage'), asyncHandl
   const b = req.body || {};
   const t = await updateTemplate(req.tenant, toInt(req.params.id), { name: b.name, body: b.body, requiresSignature: b.requiresSignature, isActive: b.isActive });
   if (!t) return notFound(res); res.json({ ok: true, template: t });
+}));
+
+const PDF_TYPES = new Set(['wdii', 'service_agreement']);
+const AGREEMENT_FREQUENCIES = new Set(['monthly', 'quarterly']);
+function pdfMoney(value, fallback, label) {
+  if (value === undefined) return { value: fallback };
+  if (typeof value !== 'number' && typeof value !== 'string') return { error: `${label} must be a number.` };
+  const amount = Number(value);
+  if (!Number.isFinite(amount) || amount < 0 || amount > 10_000_000) return { error: `${label} must be between $0 and $100,000.` };
+  return { value: Math.round(amount) };
+}
+function pdfAttachment(res, bytes, filename) {
+  res.set('Content-Type', 'application/pdf');
+  res.set('Content-Disposition', `attachment; filename="${filename}"`);
+  res.set('Cache-Control', 'private, no-store, max-age=0');
+  res.send(bytes);
+}
+
+// Built-in customer forms. These stream directly instead of relying on object
+// storage, so document generation also works when S3/R2 is not configured.
+router.post('/customer/:customerId/generate', requirePermission('documents.manage'), asyncHandler(async (req, res) => {
+  const customerId = toInt(req.params.customerId);
+  const customer = await queryOne('SELECT * FROM customers WHERE tenant_id=$1 AND id=$2', [req.tenant.id, customerId]);
+  if (!customer) return notFound(res);
+  const body = req.body || {};
+  if (!PDF_TYPES.has(body.type)) return badRequest(res, 'Choose a supported customer document.');
+
+  let bytes; let filename; let details;
+  if (body.type === 'wdii') {
+    bytes = await generateWdiiInspectionPdf(req.tenant, customer);
+    filename = safePdfFilename(customer.name, 'WDII_Inspection_Report');
+    details = { type: 'wdii' };
+  } else {
+    const subscription = await queryOne(
+      `SELECT interval, price_cents, notes FROM subscriptions
+        WHERE tenant_id=$1 AND customer_id=$2 AND status='active'
+        ORDER BY started_at DESC, id DESC LIMIT 1`,
+      [req.tenant.id, customerId],
+    );
+    const frequency = body.frequency ?? (AGREEMENT_FREQUENCIES.has(subscription?.interval) ? subscription.interval : AGREEMENT_DEFAULTS.frequency);
+    if (!AGREEMENT_FREQUENCIES.has(frequency)) return badRequest(res, 'Frequency must be monthly or quarterly.');
+    if (body.notes !== undefined && typeof body.notes !== 'string') return badRequest(res, 'Additional comments must be text.');
+    if (String(body.notes ?? '').length > 500) return badRequest(res, 'Additional comments must be 500 characters or fewer.');
+    if (body.coveredPests !== undefined && typeof body.coveredPests !== 'string') return badRequest(res, 'Covered pests must be text.');
+    const coveredPests = String(body.coveredPests ?? AGREEMENT_DEFAULTS.coveredPests).trim();
+    if (!coveredPests || coveredPests.length > 300) return badRequest(res, 'Covered pests must be between 1 and 300 characters.');
+    const initial = pdfMoney(body.initialServiceFeeCents, AGREEMENT_DEFAULTS.initialServiceFeeCents, 'Initial service fee');
+    if (initial.error) return badRequest(res, initial.error);
+    const service = pdfMoney(body.serviceFeeCents, subscription?.price_cents ?? AGREEMENT_DEFAULTS.serviceFeeCents, 'Cost per service');
+    if (service.error) return badRequest(res, service.error);
+    const notes = body.notes ?? subscription?.notes ?? customer.notes ?? '';
+    bytes = await generateServiceAgreementPdf(req.tenant, customer, {
+      frequency, notes, coveredPests, initialServiceFeeCents: initial.value, serviceFeeCents: service.value,
+    });
+    filename = safePdfFilename(customer.name, 'Pest_Control_Service_Agreement');
+    details = { type: 'service_agreement', frequency, initialServiceFeeCents: initial.value, serviceFeeCents: service.value };
+  }
+  await logAudit({ tenantId: req.tenant.id, adminUsername: req.admin.username, action: 'customer_pdf_generate', entityType: 'customer', entityId: customerId, details });
+  return pdfAttachment(res, bytes, filename);
 }));
 
 // --- Documents ---
