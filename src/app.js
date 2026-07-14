@@ -135,7 +135,12 @@ export function createApp() {
     extensions: ['html'],
     maxAge: '1h',
     setHeaders(res, filePath) {
-      if (filePath.endsWith('.html')) res.set('Cache-Control', 'no-cache');
+      // The admin shell dynamically imports un-hashed modules. Revalidate its
+      // CSS/JS on reload so a deployment never leaves dispatchers running a
+      // stale UI for the static-assets max-age window.
+      if (filePath.endsWith('.html') || filePath.includes('/assets/app/')) {
+        res.set('Cache-Control', 'no-cache');
+      }
     },
   }));
 

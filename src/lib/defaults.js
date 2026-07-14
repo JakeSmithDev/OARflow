@@ -2,6 +2,17 @@
 // these; the admin suite edits them. Centralized so new tenants get sane,
 // resale-ready defaults.
 
+export const DEFAULT_ROUTING_SETTINGS = Object.freeze({
+  // Keyless route estimates use straight-line coordinates adjusted by a
+  // conservative road factor. These assumptions are always shown alongside
+  // the result so mileage, time, and fuel cost are never presented as GPS data.
+  averageSpeedMph: 28,
+  roadDistanceFactor: 1.22,
+  vehicleMpg: 22,
+  fuelPricePerGallon: 3.50,
+  includeReturnToBase: false,
+});
+
 export function defaultTenantSettings(overrides = {}) {
   return {
     branding: {
@@ -52,6 +63,7 @@ export function defaultTenantSettings(overrides = {}) {
         6: [{ start: '09:00', end: '13:00' }],
       },
     },
+    routing: { ...DEFAULT_ROUTING_SETTINGS },
     invoicing: {
       taxRatePercent: 6.0,
       terms: 'Payment due upon receipt.',
@@ -255,4 +267,4 @@ export function defaultEmailTemplates() {
   ];
 }
 
-export default { defaultTenantSettings, defaultEmailTemplates };
+export default { DEFAULT_ROUTING_SETTINGS, defaultTenantSettings, defaultEmailTemplates };

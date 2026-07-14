@@ -6,7 +6,7 @@ import { requireAdmin, requireRole } from '../../lib/auth.js';
 import { asyncHandler, badRequest, notFound, toInt, hexColor } from '../../lib/http.js';
 import { query, queryOne } from '../../lib/db.js';
 import { updateTenantProfile, updateTenantSettings, getTenantById } from '../../lib/tenants.js';
-import { hashPassword, encryptSecret } from '../../lib/crypto.js';
+import { hashPassword, encryptSecret, decryptSecret, isEncrypted } from '../../lib/crypto.js';
 import { defaultEmailTemplates } from '../../lib/defaults.js';
 import { isConfigured as stripeConfigured } from '../../lib/stripe.js';
 import { isSmsConfigured as smsConfigured } from '../../lib/sms.js';
@@ -29,9 +29,54 @@ function redactSettings(settings) {
   return clone;
 }
 
+const GEOCODING_PROVIDERS = new Set(['none', 'google', 'mapbox']);
+const ROUTING_FIELDS = Object.freeze({
+  averageSpeedMph: { min: 5, max: 80, label: 'Average driving speed' },
+  roadDistanceFactor: { min: 1, max: 3, label: 'Road-distance factor' },
+  vehicleMpg: { min: 1, max: 200, label: 'Vehicle fuel economy' },
+  fuelPricePerGallon: { min: 0, max: 25, label: 'Fuel price' },
+});
+
+function geocodingSummary(tenant) {
+  const integration = tenant?.settings?.integrations?.geocoding || {};
+  const provider = GEOCODING_PROVIDERS.has(integration.provider) ? integration.provider : 'none';
+  return {
+    geocodingProvider: provider,
+    geocodingEnabled: provider !== 'none' && Boolean(decryptSecret(integration.apiKey || '')),
+  };
+}
+
+function normalizeRoutingPatch(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return { error: 'Routing assumptions must be an object.' };
+  }
+  const known = new Set([...Object.keys(ROUTING_FIELDS), 'includeReturnToBase']);
+  const unknown = Object.keys(value).find((key) => !known.has(key));
+  if (unknown) return { error: `Unknown routing setting: ${unknown}.` };
+  const routing = {};
+  for (const [key, rule] of Object.entries(ROUTING_FIELDS)) {
+    if (value[key] === undefined) continue;
+    const raw = value[key];
+    if ((typeof raw !== 'number' && typeof raw !== 'string') || (typeof raw === 'string' && !raw.trim())) {
+      return { error: `${rule.label} must be a number from ${rule.min} to ${rule.max}.` };
+    }
+    const number = Number(raw);
+    if (!Number.isFinite(number) || number < rule.min || number > rule.max) {
+      return { error: `${rule.label} must be from ${rule.min} to ${rule.max}.` };
+    }
+    routing[key] = number;
+  }
+  if (value.includeReturnToBase !== undefined) {
+    if (typeof value.includeReturnToBase !== 'boolean') return { error: 'Return-to-base must be true or false.' };
+    routing.includeReturnToBase = value.includeReturnToBase;
+  }
+  return { routing };
+}
+
 // --- Overview -------------------------------------------------------------
 router.get('/', asyncHandler(async (req, res) => {
   const t = req.tenant;
+  const geocoding = geocodingSummary(t);
   res.json({
     ok: true,
     profile: { name: t.name, slug: t.slug, timezone: t.timezone, currency: t.currency, contactEmail: t.contact_email, contactPhone: t.contact_phone, address: t.address },
@@ -50,6 +95,7 @@ router.get('/', asyncHandler(async (req, res) => {
       smsMessagingServiceSid: t.settings.integrations.sms?.messagingServiceSid || '',
       smsProvider: t.settings.integrations.sms?.provider || 'twilio',
       smsBrandStatus: t.settings.integrations.sms?.brandStatus || 'not_started',
+      ...geocoding,
     },
   });
 }));
@@ -72,7 +118,7 @@ router.patch('/profile', asyncHandler(async (req, res) => {
 router.put('/settings', asyncHandler(async (req, res) => {
   const patch = req.body || {};
   // only allow known top-level config sections
-  const allowed = ['branding', 'ui', 'booking', 'availability', 'invoicing', 'notifications'];
+  const allowed = ['branding', 'ui', 'booking', 'availability', 'routing', 'invoicing', 'notifications'];
   const clean = {};
   for (const k of allowed) if (patch[k] !== undefined) clean[k] = patch[k];
   if (clean.branding?.primaryColor !== undefined) clean.branding = { ...clean.branding, primaryColor: hexColor(clean.branding.primaryColor, '#0e7c4b') };
@@ -82,6 +128,11 @@ router.put('/settings', asyncHandler(async (req, res) => {
       return badRequest(res, 'Suggested start-time interval must be 15, 30, 45, 60, 90, or 120 minutes.');
     }
     clean.availability = { ...clean.availability, startTimeIntervalMinutes: interval };
+  }
+  if (clean.routing !== undefined) {
+    const normalized = normalizeRoutingPatch(clean.routing);
+    if (normalized.error) return badRequest(res, normalized.error);
+    clean.routing = normalized.routing;
   }
   const t = await updateTenantSettings(req.tenant.id, clean);
   await logAudit({ tenantId: req.tenant.id, adminUsername: req.admin.username, action: 'settings_update', details: { sections: Object.keys(clean) } });
@@ -301,6 +352,62 @@ router.put('/integrations/sms', asyncHandler(async (req, res) => {
     );
   }
   res.json({ ok: true, smsEnabled: smsConfigured(await getTenantById(req.tenant.id)) });
+}));
+
+router.put('/integrations/geocoding', asyncHandler(async (req, res) => {
+  const b = req.body || {};
+  const provider = typeof b.provider === 'string' ? b.provider.trim().toLowerCase() : '';
+  if (!GEOCODING_PROVIDERS.has(provider)) return badRequest(res, 'Geocoding provider must be none, google, or mapbox.');
+  if (b.apiKey !== undefined && typeof b.apiKey !== 'string') return badRequest(res, 'Geocoding API key must be text.');
+  let routing;
+  if (b.routing !== undefined) {
+    const normalized = normalizeRoutingPatch(b.routing);
+    if (normalized.error) return badRequest(res, normalized.error);
+    routing = normalized.routing;
+  }
+
+  const suppliedKey = typeof b.apiKey === 'string' ? b.apiKey.trim() : '';
+  let updated;
+  try {
+    updated = await updateTenantSettings(req.tenant.id, (currentSettings) => {
+      const current = currentSettings.integrations?.geocoding || {};
+      const sameProvider = current.provider === provider;
+      const currentPlaintext = sameProvider ? decryptSecret(current.apiKey || '') : '';
+      let apiKey = '';
+      if (provider !== 'none') {
+        if (suppliedKey) apiKey = encryptSecret(suppliedKey);
+        else if (sameProvider && currentPlaintext) {
+          // Preserve an existing key when the password-style input is left blank.
+          // Opportunistically encrypt legacy plaintext credentials during the save.
+          apiKey = isEncrypted(current.apiKey) ? current.apiKey : encryptSecret(current.apiKey);
+        }
+        if (!apiKey) {
+          const err = new Error(`Enter a ${provider === 'google' ? 'Google Maps' : 'Mapbox'} API key to enable map pins.`);
+          err.statusCode = 400;
+          throw err;
+        }
+      }
+
+      // Credentials and assumptions are one locked settings write so a failed
+      // or concurrent provider change cannot partially overwrite this form.
+      const patch = { integrations: { geocoding: { provider, apiKey } } };
+      if (routing !== undefined) patch.routing = routing;
+      return patch;
+    });
+  } catch (err) {
+    if (err.statusCode === 400) return badRequest(res, err.message);
+    throw err;
+  }
+  const summary = geocodingSummary(updated);
+  await logAudit({
+    tenantId: req.tenant.id,
+    adminUsername: req.admin.username,
+    action: 'geocoding_settings_update',
+    entityType: 'tenant',
+    entityId: req.tenant.id,
+    details: { provider: summary.geocodingProvider, enabled: summary.geocodingEnabled, routingUpdated: routing !== undefined },
+  });
+  res.json({ ok: true, ...summary, routing: updated.settings.routing });
 }));
 
 export default router;

@@ -1,7 +1,7 @@
 // Tenant resolution + settings. Settings are stored as JSONB on the tenant row
 // and deep-merged over defaults so older tenants automatically gain new config
 // keys. config_version bumps on every settings write (cache-busting hook).
-import { query, queryOne } from './db.js';
+import { query, queryOne, withTx } from './db.js';
 import { defaultTenantSettings } from './defaults.js';
 import { config } from '../config.js';
 
@@ -57,16 +57,26 @@ export async function getDefaultTenant() {
   return getTenantBySlug(config.defaultTenantSlug);
 }
 
-/** Merge a partial settings patch into the stored settings and bump the version. */
-export async function updateTenantSettings(tenantId, patch) {
-  const current = await queryOne('SELECT settings FROM tenants WHERE id = $1', [tenantId]);
-  const merged = deepMerge(current?.settings || {}, patch);
-  const row = await queryOne(
-    `UPDATE tenants SET settings = $2::jsonb, config_version = config_version + 1, updated_at = now()
-     WHERE id = $1 RETURNING *`,
-    [tenantId, JSON.stringify(merged)],
-  );
-  return hydrate(row);
+/**
+ * Merge a partial settings patch into the stored settings and bump the version.
+ * A callback is evaluated after the row lock is acquired so credential-preserving
+ * writes can make their decision from the same snapshot they update.
+ */
+export async function updateTenantSettings(tenantId, patchOrUpdater) {
+  return withTx(async (cx) => {
+    const current = (await cx.query('SELECT settings FROM tenants WHERE id = $1 FOR UPDATE', [tenantId])).rows[0];
+    const currentSettings = deepMerge(defaultTenantSettings(), current?.settings || {});
+    const patch = typeof patchOrUpdater === 'function'
+      ? await patchOrUpdater(currentSettings)
+      : patchOrUpdater;
+    const merged = deepMerge(current?.settings || {}, patch);
+    const row = (await cx.query(
+      `UPDATE tenants SET settings = $2::jsonb, config_version = config_version + 1, updated_at = now()
+       WHERE id = $1 RETURNING *`,
+      [tenantId, JSON.stringify(merged)],
+    )).rows[0];
+    return hydrate(row);
+  });
 }
 
 /** Update top-level tenant columns (name, contact info, timezone, etc.). */

@@ -61,6 +61,7 @@ router.get('/', asyncHandler(async (req, res) => {
   const date = String(req.query.date || '');
   if (!technicianId || !validDate(date)) return badRequest(res, 'technicianId and date (YYYY-MM-DD) are required.');
   const route = await optimizeRoute(req.tenant, { technicianId, date });
+  if (route.invalidTechnicianIds.length) return badRequest(res, 'Technician is unavailable.');
   res.json({ ok: true, geocoder: geocodingConfigured(req.tenant), ...route });
 }));
 

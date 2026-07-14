@@ -92,6 +92,11 @@ async function main() {
   console.log(`\nRunning smoke tests against ${base}\n`);
 
   await check('root/public mirrored files match', checkRootMirrors);
+  await check('admin app assets revalidate after deployments', async () => {
+    const response = await fetch(base + '/assets/app/app.css');
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('cache-control'), 'no-cache');
+  });
 
   // --- Public booking ---
   let svcInstant; let svcRequest; let token;
@@ -657,8 +662,67 @@ async function main() {
   });
 
   // --- Route optimization + GPS ---
+  await check('keyless route estimates expose geometry, legs, drive time, and fuel cost', async () => {
+    const { buildEstimatedRoute, geocode, haversine, mapsUrl, routingAssumptions, summarizeEstimatedRoutes } = await import('../src/lib/routing.js');
+    const assumptions = {
+      averageSpeedMph: 28, roadDistanceFactor: 1.22, vehicleMpg: 22,
+      fuelPricePerGallon: 3.50, includeReturnToBase: true,
+    };
+    const origin = { address: 'Base', lat: 39, lng: -76 };
+    const stops = [
+      { appointmentId: 10, address: 'North', lat: 39.1, lng: -76 },
+      { appointmentId: 11, address: 'West', lat: 39.1, lng: -76.1 },
+    ];
+    const estimate = buildEstimatedRoute(stops, origin, assumptions);
+    assert.equal(estimate.quality, 'estimate');
+    assert.deepEqual(estimate.geometry.coordinates, [[-76, 39], [-76, 39.1], [-76.1, 39.1], [-76, 39]]);
+    assert.equal(estimate.legs.length, 3);
+    assert.ok(estimate.legs.every((leg) => leg.quality === 'estimate'));
+    const straight = haversine(origin, stops[0]) + haversine(stops[0], stops[1]) + haversine(stops[1], origin);
+    const road = straight * assumptions.roadDistanceFactor;
+    assert.equal(estimate.metrics.estimatedRoadMiles, Math.round(road * 10) / 10);
+    assert.equal(estimate.metrics.estimatedDriveMinutes, Math.round(road / assumptions.averageSpeedMph * 60));
+    assert.equal(estimate.metrics.estimatedFuelCostCents, Math.round(road / assumptions.vehicleMpg * 350));
+
+    const partial = buildEstimatedRoute([...stops, { appointmentId: 12, address: 'Missing coordinates' }], origin, assumptions);
+    assert.equal(partial.quality, 'partial');
+    assert.equal(partial.metrics.measuredLegCount, 2);
+    assert.equal(partial.metrics.totalLegCount, 4);
+    assert.equal(partial.legs.at(-1).quality, 'unavailable');
+    assert.equal(partial.geometry.type, 'MultiLineString');
+    assert.deepEqual(partial.geometry.coordinates, [
+      [[-76, 39], [-76, 39.1]],
+      [[-76, 39.1], [-76.1, 39.1]],
+    ], 'partial geometry includes only adjacent measured legs');
+    const crewSummary = summarizeEstimatedRoutes([
+      { stops:[{ appointmentId:10 }], metrics:estimate.metrics },
+      { stops:[{ appointmentId:10 }], metrics:estimate.metrics },
+    ]);
+    assert.equal(crewSummary.stopCount, 1, 'a crew visit is counted once in the board total');
+    assert.equal(crewSummary.routedStopCount, 2, 'per-rep route stops remain visible');
+    const loopUrl = new URL(mapsUrl(stops, 'Base', true));
+    assert.equal(loopUrl.searchParams.get('origin'), 'Base');
+    assert.equal(loopUrl.searchParams.get('destination'), 'Base');
+    assert.equal(loopUrl.searchParams.get('waypoints'), 'North|West');
+
+    const geoTenant = { id:99, settings:{ integrations:{ geocoding:{ provider:'google', apiKey:'test-key' } } } };
+    const originalFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = async () => ({ ok:true, json:async()=>({ results:[{ geometry:{ location:{ lat:999, lng:-76 } } }] }) });
+      assert.equal(await geocode(geoTenant, 'Invalid coordinate'), null, 'provider coordinates are range-checked');
+      globalThis.fetch = async (_url, { signal }) => new Promise((resolve, reject) => {
+        if (signal.aborted) reject(signal.reason);
+        else signal.addEventListener('abort', () => reject(signal.reason), { once:true });
+      });
+      const timeoutStarted = Date.now();
+      assert.equal(await geocode(geoTenant, 'Slow provider', { timeoutMs:20 }), null);
+      assert.ok(Date.now() - timeoutStarted < 1_000, 'provider timeout is bounded');
+    } finally { globalThis.fetch = originalFetch; }
+    assert.equal(routingAssumptions({ averageSpeedMph: 0 }).averageSpeedMph, 28, 'invalid stored assumptions fail safe');
+  });
   await check('routing requires technicianId + date', async () => {
     assert.equal((await call('/api/admin/routing')).status, 400);
+    assert.equal((await call('/api/admin/routing?technicianId=99999999&date=2026-07-15')).status, 400);
   });
   await check('route lists the tech stops + builds a maps link', async () => {
     await query('UPDATE appointments SET service_lat=39.0000, service_lng=-76.0000 WHERE id=$1', [assignApptId]);
@@ -669,6 +733,11 @@ async function main() {
     assert.ok(data.ok); assert.ok(data.stops.some((s) => s.appointmentId === assignApptId));
     assert.equal(data.geocoder, false); // no geocoder in dev
     assert.ok(data.mapsUrl && data.mapsUrl.includes('google.com/maps/dir'));
+    assert.equal(data.assumptions.averageSpeedMph, 28);
+    assert.ok(['estimate', 'partial', 'unavailable'].includes(data.quality));
+    assert.ok(Array.isArray(data.legs)); assert.ok(data.metrics);
+    assert.ok(Object.prototype.hasOwnProperty.call(data, 'geometry'));
+    assert.ok(Object.prototype.hasOwnProperty.call(data, 'totalMiles'));
   });
   await check('appointment address PATCH rejects blank values but permits legacy unrelated edits', async () => {
     const legacy = (await query(
@@ -724,6 +793,13 @@ async function main() {
     const plan = (await call(`/api/admin/routing/plan?date=2026-07-14&technicianIds=${techId}&includeUnassigned=1`)).data;
     assert.ok(plan.routes[0].stops.some((stop) => stop.appointmentId === anchor.id), 'cross-midnight anchor included');
     assert.ok(plan.unplaced.some((stop) => stop.appointmentId === candidate.id), 'overlapping candidate left unassigned');
+    assert.deepEqual(plan.assumptions, {
+      averageSpeedMph: 28, roadDistanceFactor: 1.22, vehicleMpg: 22,
+      fuelPricePerGallon: 3.5, includeReturnToBase: false,
+    });
+    assert.ok(plan.summary); assert.equal(plan.summary.routeCount, 1);
+    assert.ok(['estimate', 'partial', 'unavailable'].includes(plan.summary.quality));
+    assert.ok(plan.routes[0].metrics); assert.ok(Object.prototype.hasOwnProperty.call(plan.routes[0], 'geometry'));
     await call(`/api/admin/appointments/${anchor.id}`, { method: 'PATCH', body: { status: 'canceled' } });
     await call(`/api/admin/appointments/${candidate.id}`, { method: 'PATCH', body: { status: 'canceled' } });
   });
@@ -1005,7 +1081,16 @@ async function main() {
   await check('run due follow-up emails', async () => { const { data } = await call('/api/admin/follow-ups/run-due', { method: 'POST' }); assert.ok(data.ok); });
 
   // --- Settings + integrations ---
-  await check('settings overview', async () => { const { data } = await call('/api/admin/settings'); assert.ok(data.profile && data.settings.booking && data.integrations); });
+  await check('settings overview', async () => {
+    const { data } = await call('/api/admin/settings');
+    assert.ok(data.profile && data.settings.booking && data.integrations);
+    assert.deepEqual(data.settings.routing, {
+      averageSpeedMph: 28, roadDistanceFactor: 1.22, vehicleMpg: 22,
+      fuelPricePerGallon: 3.5, includeReturnToBase: false,
+    });
+    assert.equal(data.integrations.geocodingProvider, 'none');
+    assert.equal(data.integrations.geocodingEnabled, false);
+  });
   await check('update business profile', async () => { const { data } = await call('/api/admin/settings/profile', { method: 'PATCH', body: { contactPhone: '(410) 555-9999' } }); assert.equal(data.profile.contactPhone, '(410) 555-9999'); });
   await check('update availability settings', async () => { const { data } = await call('/api/admin/settings/settings', { method: 'PUT', body: { availability: { capacityPerSlot: 3, startTimeIntervalMinutes: 45 } } }); assert.equal(data.settings.availability.capacityPerSlot, 3); assert.equal(data.settings.availability.startTimeIntervalMinutes, 45); });
   await check('appointment form metadata exposes start-time settings', async () => {
@@ -1018,6 +1103,34 @@ async function main() {
     assert.equal(invalid.status, 400); assert.match(invalid.data.error, /15, 30, 45, 60, 90, or 120/);
     const unchanged = await call('/api/admin/settings');
     assert.equal(unchanged.data.settings.availability.startTimeIntervalMinutes, 45);
+  });
+  await check('routing assumptions update with strict range and type validation', async () => {
+    const desired = {
+      averageSpeedMph: 32, roadDistanceFactor: 1.3, vehicleMpg: 19.5,
+      fuelPricePerGallon: 3.79, includeReturnToBase: true,
+    };
+    const saved = await call('/api/admin/settings/settings', { method:'PUT', body:{ routing:desired } });
+    assert.equal(saved.status, 200); assert.deepEqual(saved.data.settings.routing, desired);
+    const invalid = [
+      { averageSpeedMph:0 }, { roadDistanceFactor:0.9 }, { vehicleMpg:'many' },
+      { fuelPricePerGallon:-1 }, { includeReturnToBase:'yes' }, { typoSetting:1 },
+    ];
+    for (const routing of invalid) {
+      const rejected = await call('/api/admin/settings/settings', { method:'PUT', body:{ routing } });
+      assert.equal(rejected.status, 400, JSON.stringify(routing));
+    }
+    const unchanged = await call('/api/admin/settings');
+    assert.deepEqual(unchanged.data.settings.routing, desired);
+  });
+  await check('concurrent settings writes preserve unrelated sections', async () => {
+    const [branding, notifications] = await Promise.all([
+      call('/api/admin/settings/settings', { method:'PUT', body:{ branding:{ concurrencyProbe:'branding' } } }),
+      call('/api/admin/settings/settings', { method:'PUT', body:{ notifications:{ concurrencyProbe:'notifications' } } }),
+    ]);
+    assert.equal(branding.status, 200); assert.equal(notifications.status, 200);
+    const overview = await call('/api/admin/settings');
+    assert.equal(overview.data.settings.branding.concurrencyProbe, 'branding');
+    assert.equal(overview.data.settings.notifications.concurrencyProbe, 'notifications');
   });
   await check('admin suggested times honor hours, overrides, capacity, and blackouts', async () => {
     const services = (await call('/api/admin/appointments/meta/services')).data.services;
@@ -1147,6 +1260,63 @@ async function main() {
     assert.ok(stored.startsWith('enc:v1:'), 'secret stored encrypted');
     const { decryptSecret } = await import('../src/lib/crypto.js');
     assert.equal(decryptSecret(stored), 'sk_test_supersecret');
+  });
+  await check('geocoding integration validates, encrypts, preserves, redacts, and clears its key', async () => {
+    assert.equal((await call('/api/admin/settings/integrations/geocoding', { method:'PUT', body:{ provider:'other' } })).status, 400);
+    assert.equal((await call('/api/admin/settings/integrations/geocoding', { method:'PUT', body:{ provider:'google', apiKey:123 } })).status, 400);
+
+    const atomicRouting = {
+      averageSpeedMph: 31, roadDistanceFactor: 1.25, vehicleMpg: 21,
+      fuelPricePerGallon: 3.65, includeReturnToBase: false,
+    };
+    const saved = await call('/api/admin/settings/integrations/geocoding', { method:'PUT', body:{ provider:'google', apiKey:'maps-super-secret', routing:atomicRouting } });
+    assert.equal(saved.status, 200); assert.equal(saved.data.geocodingProvider, 'google'); assert.equal(saved.data.geocodingEnabled, true);
+    assert.deepEqual(saved.data.routing, atomicRouting);
+    const dbmod = await import('../src/lib/db.js');
+    const { decryptSecret } = await import('../src/lib/crypto.js');
+    let raw = (await dbmod.queryOne("SELECT settings FROM tenants WHERE slug='pasternack'")).settings.integrations.geocoding;
+    assert.ok(raw.apiKey.startsWith('enc:v1:')); assert.equal(decryptSecret(raw.apiKey), 'maps-super-secret');
+    let encrypted = raw.apiKey;
+
+    const overview = await call('/api/admin/settings');
+    assert.equal(overview.data.integrations.geocodingProvider, 'google'); assert.equal(overview.data.integrations.geocodingEnabled, true);
+    assert.ok(!JSON.stringify(overview.data).includes('maps-super-secret'));
+    assert.ok(!JSON.stringify(overview.data).includes(encrypted));
+
+    const preserved = await call('/api/admin/settings/integrations/geocoding', { method:'PUT', body:{ provider:'google', apiKey:'   ' } });
+    assert.equal(preserved.data.geocodingEnabled, true);
+    raw = (await dbmod.queryOne("SELECT settings FROM tenants WHERE slug='pasternack'")).settings.integrations.geocoding;
+    assert.equal(raw.apiKey, encrypted, 'blank input for the same provider preserves the encrypted key');
+
+    const [disabledRace, blankRace] = await Promise.all([
+      call('/api/admin/settings/integrations/geocoding', { method:'PUT', body:{ provider:'none' } }),
+      call('/api/admin/settings/integrations/geocoding', { method:'PUT', body:{ provider:'google', apiKey:'' } }),
+    ]);
+    assert.equal(disabledRace.status, 200);
+    assert.ok([200, 400].includes(blankRace.status), `unexpected concurrent save status ${blankRace.status}`);
+    raw = (await dbmod.queryOne("SELECT settings FROM tenants WHERE slug='pasternack'")).settings.integrations.geocoding;
+    assert.equal(raw.provider, 'none'); assert.equal(raw.apiKey, '', 'a stale blank save cannot resurrect a disabled key');
+
+    const restored = await call('/api/admin/settings/integrations/geocoding', { method:'PUT', body:{ provider:'google', apiKey:'maps-super-secret' } });
+    assert.equal(restored.status, 200);
+    raw = (await dbmod.queryOne("SELECT settings FROM tenants WHERE slug='pasternack'")).settings.integrations.geocoding;
+    encrypted = raw.apiKey;
+
+    const switchedWithoutKey = await call('/api/admin/settings/integrations/geocoding', { method:'PUT', body:{ provider:'mapbox', routing:{ averageSpeedMph:45 } } });
+    assert.equal(switchedWithoutKey.status, 400);
+    raw = (await dbmod.queryOne("SELECT settings FROM tenants WHERE slug='pasternack'")).settings.integrations.geocoding;
+    assert.equal(raw.provider, 'google'); assert.equal(raw.apiKey, encrypted, 'a failed provider change preserves the existing credential');
+    let overviewAfterFailure = await call('/api/admin/settings');
+    assert.equal(overviewAfterFailure.data.settings.routing.averageSpeedMph, atomicRouting.averageSpeedMph, 'atomic save prevents a partial routing update');
+
+    const switched = await call('/api/admin/settings/integrations/geocoding', { method:'PUT', body:{ provider:'mapbox', apiKey:'mapbox-super-secret' } });
+    assert.equal(switched.data.geocodingProvider, 'mapbox'); assert.equal(switched.data.geocodingEnabled, true);
+    raw = (await dbmod.queryOne("SELECT settings FROM tenants WHERE slug='pasternack'")).settings.integrations.geocoding;
+    assert.equal(decryptSecret(raw.apiKey), 'mapbox-super-secret');
+    const cleared = await call('/api/admin/settings/integrations/geocoding', { method:'PUT', body:{ provider:'none', apiKey:'ignored' } });
+    assert.equal(cleared.data.geocodingProvider, 'none'); assert.equal(cleared.data.geocodingEnabled, false);
+    raw = (await dbmod.queryOne("SELECT settings FROM tenants WHERE slug='pasternack'")).settings.integrations.geocoding;
+    assert.equal(raw.apiKey, '');
   });
   await check('[fix] settings response leaks NO secrets or tokens', async () => {
     // Plant a Google refresh token (plaintext in settings) to prove it is redacted.

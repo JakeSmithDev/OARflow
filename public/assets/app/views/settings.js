@@ -11,7 +11,11 @@ const OF = window.OF;
     const FALLBACK_TIMEZONES = ['America/New_York','America/Chicago','America/Denver','America/Los_Angeles','America/Phoenix','America/Anchorage','Pacific/Honolulu','UTC'];
     const TIMEZONES = (()=>{try{return Intl.supportedValuesOf ? Intl.supportedValuesOf('timeZone') : FALLBACK_TIMEZONES;}catch{return FALLBACK_TIMEZONES;}})();
 
-    function field(label, inner, hint){ return `<div class="field"><label>${label}</label>${inner}${hint?`<span class="hint">${hint}</span>`:''}</div>`; }
+    function field(label, inner, hint){
+      const id=inner.match(/\bid="([^"]+)"/)?.[1]; const hintId=id&&hint?`${id}_hint`:'';
+      const control=hintId&&!/\baria-describedby=/.test(inner) ? inner.replace(`id="${id}"`,`id="${id}" aria-describedby="${hintId}"`) : inner;
+      return `<div class="field"><label${id?` for="${id}"`:''}>${label}</label>${control}${hint?`<span class="hint"${hintId?` id="${hintId}"`:''}>${hint}</span>`:''}</div>`;
+    }
     function card(title, inner, actions){ return `<div class="card" style="margin-bottom:18px"><div class="card-head"><h3>${title}</h3>${actions?`<div class="actions">${actions}</div>`:''}</div><div class="card-pad">${inner}</div></div>`; }
     function selectOptions(values, selected){ const list=(selected&&!values.includes(selected))?[selected,...values]:values; return list.map(v=>`<option value="${OF.escape(v)}" ${v===selected?'selected':''}>${OF.escape(v)}</option>`).join(''); }
 
@@ -161,7 +165,17 @@ const OF = window.OF;
 
     // ---- Integrations ----
     function integrationsTab(root){
-      const ig = S.integrations;
+      const ig = S.integrations || {};
+      const integrationRouting = ig.routing && Object.keys(ig.routing).length ? ig.routing : null;
+      const routing = integrationRouting || S.settings?.routing || {};
+      const numberOr = (value, fallback) => { const parsed = Number(value); return Number.isFinite(parsed) ? parsed : fallback; };
+      const savedMapProvider = ['google','mapbox'].includes(ig.geocodingProvider) ? ig.geocodingProvider : 'none';
+      const mapEnabled = Boolean(ig.geocodingEnabled && savedMapProvider !== 'none');
+      const averageSpeedMph = numberOr(routing.averageSpeedMph, 28);
+      const roadDistanceFactor = numberOr(routing.roadDistanceFactor, 1.22);
+      const vehicleMpg = numberOr(routing.vehicleMpg, 22);
+      const fuelPricePerGallon = numberOr(routing.fuelPricePerGallon, 3.5);
+      const includeReturnToBase = routing.includeReturnToBase === true;
       root.innerHTML = card('Stripe payments', `<p class="muted small" style="margin-top:0">Accept card payments on invoices and bill recurring plans. ${ig.stripeEnabled?'<span class="badge ok no-dot">Connected</span>':'<span class="badge neutral no-dot">Not connected</span>'}</p>
         ${field('Secret key',`<input id="st_secret" type="password" placeholder="${ig.stripeEnabled?'•••••••• (set)':'sk_live_…'}">`)}
         ${field('Publishable key',`<input id="st_pub" value="${OF.escape(ig.stripePublishable||'')}" placeholder="pk_live_…">`)}
@@ -171,6 +185,30 @@ const OF = window.OF;
         ${ig.googleConnected
           ? `${field('Calendar ID',`<input id="g_cal" value="${OF.escape(ig.googleCalendarId||'primary')}">`,'Use "primary" or a specific calendar ID.')}<div class="row" style="gap:8px"><button class="btn btn-secondary" id="saveCal">Save calendar</button><button class="btn btn-danger-soft" id="discG">Disconnect</button></div>`
           : `<a class="btn btn-primary" href="/api/integrations/google/connect">${OF.icon('cal',15)} Connect Google Calendar</a>`}`)
+        + card('Maps &amp; route estimates', `
+        <div class="row between wrap" style="gap:12px;margin:-2px 0 16px;padding:12px 14px;border:1px solid color-mix(in srgb,var(--brand) 20%,var(--line));border-radius:11px;background:var(--brand-tint-2)">
+          <div class="row" style="gap:10px;align-items:flex-start;min-width:0"><span style="width:34px;height:34px;border-radius:10px;background:var(--surface);color:var(--brand);display:grid;place-items:center;flex:none">${OF.icon('pin',17)}</span><div><div class="cell-strong">Accurate service-location pins</div><div class="tiny muted" style="margin-top:2px">Google or Mapbox converts service addresses into coordinates used by the dispatch map.</div></div></div>
+          ${mapEnabled?'<span class="badge ok no-dot">Configured</span>':'<span class="badge neutral no-dot">Not configured</span>'}
+        </div>
+        <div class="grid cols-2">
+          ${field('Address geocoding provider',`<select id="map_provider"><option value="none" ${savedMapProvider==='none'?'selected':''}>Off — use address grouping</option><option value="google" ${savedMapProvider==='google'?'selected':''}>Google Maps</option><option value="mapbox" ${savedMapProvider==='mapbox'?'selected':''}>Mapbox</option></select>`,'This enables map pins; it does not add live traffic or road directions.')}
+          ${field('Provider API key',`<input id="map_key" type="password" autocomplete="new-password" spellcheck="false" placeholder="${mapEnabled?'•••••••• (saved — leave blank to keep)':'Paste a provider API key'}">`,'Required when enabling a provider. Keys are write-only and never displayed again; leave blank to keep a saved key for the same provider.')}
+        </div>
+        <div id="map_provider_note" class="small muted" style="margin:-2px 0 18px;padding:10px 12px;border-radius:9px;background:var(--surface-2)"></div>
+        <div style="border-top:1px solid var(--line-2);padding-top:16px">
+          <div class="cell-strong">Planning assumptions</div>
+          <p class="muted small" style="margin:4px 0 14px">Until a directions provider is added, distance, drive time, and fuel cost are estimates based on straight-line coordinates and the assumptions below.</p>
+          <div class="grid cols-2">
+            ${field('Average driving speed (MPH)',`<input id="route_speed" type="number" min="5" max="80" step="0.1" value="${averageSpeedMph}">`,'Used to estimate drive time between stops.')}
+            ${field('Road-distance factor',`<input id="route_factor" type="number" min="1" max="3" step="0.01" value="${roadDistanceFactor.toFixed(2)}">`,'1.20 adds 20% to straight-line mileage for an estimated road distance.')}
+          </div>
+          <div class="grid cols-2">
+            ${field('Vehicle fuel economy (MPG)',`<input id="route_mpg" type="number" min="1" max="200" step="0.1" value="${vehicleMpg}">`,'Company-wide average used for route cost estimates.')}
+            ${field('Fuel price per gallon',`<div class="input-prefix"><span>$</span><input id="route_fuel" type="number" min="0" max="25" step="0.01" value="${fuelPricePerGallon.toFixed(2)}"></div>`,'Update this as local fuel prices change.')}
+          </div>
+          <label class="row between" style="gap:18px;padding:12px 14px;margin:2px 0 16px;border:1px solid var(--line);border-radius:10px;background:var(--surface-2);cursor:pointer"><span><span class="cell-strong">Include return to base</span><span class="small muted" style="display:block;margin-top:2px">Add the final estimated leg back to the Business profile address.</span></span><span class="switch"><input id="route_return" type="checkbox" ${includeReturnToBase?'checked':''}><span class="track"></span></span></label>
+        </div>
+        <button class="btn btn-primary" id="saveMaps">Save maps &amp; route estimates</button>`)
         + card('Text messaging (SMS)', `<p class="muted small" style="margin-top:0">Send confirmations, reminders, On-My-Way texts, and two-way messages. ${ig.smsEnabled?'<span class="badge ok no-dot">Connected</span>':'<span class="badge neutral no-dot">Not connected — texts log to console in dev</span>'}</p>
         ${field('Provider',`<select id="sm_provider"><option value="twilio" ${ig.smsProvider==='twilio'?'selected':''}>Twilio</option></select>`,'Telnyx/Bandwidth can be added later.')}
         <div class="grid cols-2">${field('Account SID',`<input id="sm_sid" placeholder="AC…">`)}${field('Auth token',`<input id="sm_token" type="password" placeholder="${ig.smsEnabled?'•••••••• (set)':'token'}">`)}</div>
@@ -182,6 +220,55 @@ const OF = window.OF;
         ${field('From address',`<input id="em_from" value="${OF.escape(ig.emailFrom||'')}" placeholder="Pasternack Pest <office@…>">`)}
         ${field('Reply-to address',`<input id="em_reply" value="${OF.escape(ig.emailReplyTo||'')}" placeholder="office@example.com">`)}
         <button class="btn btn-primary" id="saveEmail">Save email settings</button>`);
+      const syncMapProvider = () => {
+        const provider = root.querySelector('#map_provider').value;
+        const key = root.querySelector('#map_key');
+        const off = provider === 'none';
+        key.setCustomValidity('');
+        key.disabled = off;
+        key.placeholder = off
+          ? 'Not needed while address geocoding is off'
+          : (mapEnabled && provider === savedMapProvider ? '•••••••• (saved — leave blank to keep)' : 'Paste a provider API key');
+        root.querySelector('#map_provider_note').textContent = off
+          ? 'Appointments can still be grouped by ZIP, city, and address similarity. Precise route pins and mileage require a geocoding provider.'
+          : `${provider === 'google' ? 'Google Maps' : 'Mapbox'} will geocode service addresses for route pins. Route distance, time, and fuel remain planning estimates.`;
+      };
+      root.querySelector('#map_provider').onchange=syncMapProvider;
+      syncMapProvider();
+      root.querySelector('#saveMaps').onclick=async()=>{
+        const numericInputs = ['#route_speed','#route_factor','#route_mpg','#route_fuel'].map(selector=>root.querySelector(selector));
+        const invalid = numericInputs.find(input=>!input.checkValidity() || input.value.trim()==='');
+        if(invalid){ invalid.reportValidity(); invalid.focus(); return; }
+        const provider=root.querySelector('#map_provider').value;
+        const keyInput=root.querySelector('#map_key');
+        const key=keyInput.value.trim();
+        if(provider!=='none'&&!key&&!(mapEnabled&&provider===savedMapProvider)){
+          keyInput.setCustomValidity('Enter an API key for the selected provider.');
+          keyInput.reportValidity(); keyInput.focus();
+          keyInput.addEventListener('input',()=>keyInput.setCustomValidity(''),{once:true});
+          return;
+        }
+        const credentials={provider};
+        if(key)credentials.apiKey=key;
+        const nextRouting={
+          averageSpeedMph:+root.querySelector('#route_speed').value,
+          roadDistanceFactor:+root.querySelector('#route_factor').value,
+          vehicleMpg:+root.querySelector('#route_mpg').value,
+          fuelPricePerGallon:+root.querySelector('#route_fuel').value,
+          includeReturnToBase:root.querySelector('#route_return').checked,
+        };
+        credentials.routing=nextRouting;
+        const button=root.querySelector('#saveMaps'); const original=button.textContent;
+        button.disabled=true; button.textContent='Saving…';
+        try {
+          await OF.put('/api/admin/settings/integrations/geocoding',credentials);
+          OF.toast('Maps and route estimates saved','ok');
+          await reload();
+        } catch(e) {
+          button.disabled=false; button.textContent=original;
+          OF.toast(e.message,'error');
+        }
+      };
       root.querySelector('#saveSms').onclick=async()=>{const body={provider:root.querySelector('#sm_provider').value,fromNumber:root.querySelector('#sm_from').value.trim(),messagingServiceSid:root.querySelector('#sm_mss').value.trim(),brandStatus:root.querySelector('#sm_brand').value};const sid=root.querySelector('#sm_sid').value.trim();const tok=root.querySelector('#sm_token').value.trim();if(sid)body.accountSid=sid;if(tok)body.authToken=tok;const r=await OF.put('/api/admin/settings/integrations/sms',body);OF.toast(r.smsEnabled?'SMS connected ✓':'Saved','ok');reload();};
       root.querySelector('#saveStripe').onclick=async()=>{const body={};const s=root.querySelector('#st_secret').value.trim();const p=root.querySelector('#st_pub').value.trim();const w=root.querySelector('#st_wh').value.trim();if(s)body.secretKey=s;body.publishableKey=p;if(w)body.webhookSecret=w;const r=await OF.put('/api/admin/settings/integrations/stripe',body);OF.toast(r.stripeEnabled?'Stripe connected ✓':'Saved','ok');reload();};
       root.querySelector('#saveCal')?.addEventListener('click',async()=>{await OF.put('/api/integrations/google/calendar',{calendarId:root.querySelector('#g_cal').value});OF.toast('Saved','ok');});

@@ -8,10 +8,11 @@ import { query, withTx } from './db.js';
 import { decryptSecret } from './crypto.js';
 import { zonedWallTimeToUtc } from './dates.js';
 import { findTechnicianConflict } from './technicians.js';
+import { DEFAULT_ROUTING_SETTINGS } from './defaults.js';
 
 export function geocodingConfigured(tenant) {
   const g = tenant?.settings?.integrations?.geocoding || {};
-  return ['google', 'mapbox'].includes(g.provider) && Boolean(g.apiKey);
+  return ['google', 'mapbox'].includes(g.provider) && Boolean(decryptSecret(g.apiKey || ''));
 }
 
 function geocodeKey(tenant) {
@@ -20,6 +21,12 @@ function geocodeKey(tenant) {
 }
 
 const EARTH_RADIUS_MILES = 3958.8;
+const GEOCODE_TIMEOUT_MS = 6_000;
+const GEOCODE_PLAN_BUDGET_MS = 5_500;
+const MAX_GEOCODES_PER_PLAN = 12;
+const GEOCODE_SUCCESS_TTL_MS = 24 * 60 * 60 * 1_000;
+const GEOCODE_FAILURE_TTL_MS = 5 * 60 * 1_000;
+const geocodeCache = new Map();
 
 export function haversine(a, b) {
   const dLat = (b.lat - a.lat) * Math.PI / 180;
@@ -30,38 +37,250 @@ export function haversine(a, b) {
   return 2 * EARTH_RADIUS_MILES * Math.asin(Math.sqrt(h));
 }
 
+const ASSUMPTION_RANGES = Object.freeze({
+  averageSpeedMph: [5, 80],
+  roadDistanceFactor: [1, 3],
+  vehicleMpg: [1, 200],
+  fuelPricePerGallon: [0, 25],
+});
+
+function safeNumber(value, fallback, [min, max]) {
+  const number = Number(value);
+  return Number.isFinite(number) && number >= min && number <= max ? number : fallback;
+}
+
+export function routingAssumptions(tenantOrSettings = {}) {
+  const input = tenantOrSettings?.settings?.routing || tenantOrSettings?.routing || tenantOrSettings || {};
+  const assumptions = {};
+  for (const [key, range] of Object.entries(ASSUMPTION_RANGES)) {
+    assumptions[key] = safeNumber(input[key], DEFAULT_ROUTING_SETTINGS[key], range);
+  }
+  assumptions.includeReturnToBase = typeof input.includeReturnToBase === 'boolean'
+    ? input.includeReturnToBase
+    : DEFAULT_ROUTING_SETTINGS.includeReturnToBase;
+  return assumptions;
+}
+
+function coordinate(point) {
+  if (point?.lat == null || point?.lng == null) return null;
+  const lat = Number(point.lat); const lng = Number(point.lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
+  return { lat, lng };
+}
+
+function round(value, places = 1) {
+  if (!Number.isFinite(value)) return null;
+  const scale = 10 ** places;
+  return Math.round((value + Number.EPSILON) * scale) / scale;
+}
+
+function routePoint(point, kind) {
+  const coords = coordinate(point);
+  return {
+    kind,
+    appointmentId: kind === 'stop' ? point.appointmentId : null,
+    address: point?.address || null,
+    lat: coords?.lat ?? null,
+    lng: coords?.lng ?? null,
+  };
+}
+
+function qualityFor(measuredLegCount, totalLegCount) {
+  if (!totalLegCount || !measuredLegCount) return 'unavailable';
+  return measuredLegCount === totalLegCount ? 'estimate' : 'partial';
+}
+
+/**
+ * Calculate transparent, keyless route estimates. Geometry is deliberately
+ * straight-line GeoJSON; road miles are a configurable multiplier and must be
+ * displayed as an estimate, never as live turn-by-turn routing.
+ */
+export function buildEstimatedRoute(stops = [], origin = null, inputAssumptions = {}) {
+  const assumptions = routingAssumptions(inputAssumptions);
+  const nodes = [];
+  if (origin) nodes.push(routePoint(origin, 'base'));
+  for (const stop of stops) nodes.push(routePoint(stop, 'stop'));
+  if (assumptions.includeReturnToBase && origin && stops.length) nodes.push(routePoint(origin, 'base'));
+
+  const legs = [];
+  let straightLineMiles = 0;
+  let estimatedRoadMiles = 0;
+  let estimatedDriveMinutes = 0;
+  let estimatedFuelGallons = 0;
+  let estimatedFuelCostCents = 0;
+  let measuredLegCount = 0;
+  const fuelPriceCents = Math.round(assumptions.fuelPricePerGallon * 100);
+
+  for (let index = 1; index < nodes.length; index += 1) {
+    const from = nodes[index - 1]; const to = nodes[index];
+    const fromCoordinate = coordinate(from); const toCoordinate = coordinate(to);
+    if (!fromCoordinate || !toCoordinate) {
+      legs.push({
+        index, from, to, quality: 'unavailable', straightLineMiles: null,
+        estimatedRoadMiles: null, estimatedDriveMinutes: null,
+        estimatedFuelGallons: null, estimatedFuelCostCents: null,
+      });
+      continue;
+    }
+    const direct = haversine(fromCoordinate, toCoordinate);
+    const road = direct * assumptions.roadDistanceFactor;
+    const driveMinutes = road / assumptions.averageSpeedMph * 60;
+    const fuelGallons = road / assumptions.vehicleMpg;
+    const fuelCostCents = fuelGallons * fuelPriceCents;
+    straightLineMiles += direct;
+    estimatedRoadMiles += road;
+    estimatedDriveMinutes += driveMinutes;
+    estimatedFuelGallons += fuelGallons;
+    estimatedFuelCostCents += fuelCostCents;
+    measuredLegCount += 1;
+    legs.push({
+      index, from, to, quality: 'estimate',
+      straightLineMiles: round(direct, 1),
+      estimatedRoadMiles: round(road, 1),
+      estimatedDriveMinutes: Math.round(driveMinutes),
+      estimatedFuelGallons: round(fuelGallons, 3),
+      estimatedFuelCostCents: Math.round(fuelCostCents),
+    });
+  }
+
+  const totalLegCount = legs.length;
+  const quality = qualityFor(measuredLegCount, totalLegCount);
+  // Never bridge across an address whose coordinates are missing. A complete
+  // route is one LineString; a partial route is a set of only the measurable,
+  // adjacent legs so the map cannot imply a false A → C hop over missing B.
+  const completeCoordinates = nodes.map((node) => coordinate(node) ? [node.lng, node.lat] : null);
+  const measuredLines = legs
+    .filter((leg) => leg.quality === 'estimate')
+    .map((leg) => [[leg.from.lng, leg.from.lat], [leg.to.lng, leg.to.lat]]);
+  let geometry = null;
+  if (quality === 'estimate' && completeCoordinates.length >= 2) {
+    geometry = { type: 'LineString', coordinates: completeCoordinates };
+  } else if (measuredLines.length) {
+    geometry = { type: 'MultiLineString', coordinates: measuredLines };
+  }
+  const metrics = {
+    quality,
+    measuredLegCount,
+    totalLegCount,
+    straightLineMiles: measuredLegCount ? round(straightLineMiles, 1) : null,
+    estimatedRoadMiles: measuredLegCount ? round(estimatedRoadMiles, 1) : null,
+    estimatedDriveMinutes: measuredLegCount ? Math.round(estimatedDriveMinutes) : null,
+    estimatedFuelGallons: measuredLegCount ? round(estimatedFuelGallons, 3) : null,
+    estimatedFuelCostCents: measuredLegCount ? Math.round(estimatedFuelCostCents) : null,
+  };
+  // Short aliases keep consumers simple while the explicit estimated names make
+  // the source/quality unmistakable in API inspection.
+  metrics.distanceMiles = metrics.estimatedRoadMiles;
+  metrics.driveMinutes = metrics.estimatedDriveMinutes;
+  metrics.fuelGallons = metrics.estimatedFuelGallons;
+  metrics.fuelCostCents = metrics.estimatedFuelCostCents;
+  return { quality, geometry, legs, metrics };
+}
+
+export function summarizeEstimatedRoutes(routes = []) {
+  const metrics = routes.map((route) => route.metrics || {});
+  const measuredLegCount = metrics.reduce((sum, item) => sum + (item.measuredLegCount || 0), 0);
+  const totalLegCount = metrics.reduce((sum, item) => sum + (item.totalLegCount || 0), 0);
+  const sumKnown = (key) => metrics.reduce((sum, item) => sum + (Number(item[key]) || 0), 0);
+  const quality = qualityFor(measuredLegCount, totalLegCount);
+  const hasEstimate = measuredLegCount > 0;
+  const routedStopCount = routes.reduce((sum, route) => sum + (route.stops?.length || 0), 0);
+  const stopIds = new Set(); let stopsWithoutIds = 0;
+  for (const route of routes) {
+    for (const stop of route.stops || []) {
+      if (stop.appointmentId == null) stopsWithoutIds += 1;
+      else stopIds.add(String(stop.appointmentId));
+    }
+  }
+  const summary = {
+    quality,
+    routeCount: routes.length,
+    // A crew job can appear on multiple per-rep routes. Count the customer
+    // visit once in the board total while retaining the route-stop total for
+    // consumers that model one vehicle per rep.
+    stopCount: stopIds.size + stopsWithoutIds,
+    routedStopCount,
+    measuredLegCount,
+    totalLegCount,
+    totalMiles: quality === 'estimate' ? round(sumKnown('estimatedRoadMiles'), 1) : null,
+    estimatedRoadMiles: hasEstimate ? round(sumKnown('estimatedRoadMiles'), 1) : null,
+    estimatedDriveMinutes: hasEstimate ? Math.round(sumKnown('estimatedDriveMinutes')) : null,
+    estimatedFuelGallons: hasEstimate ? round(sumKnown('estimatedFuelGallons'), 3) : null,
+    estimatedFuelCostCents: hasEstimate ? Math.round(sumKnown('estimatedFuelCostCents')) : null,
+  };
+  summary.distanceMiles = summary.estimatedRoadMiles;
+  summary.driveMinutes = summary.estimatedDriveMinutes;
+  summary.fuelGallons = summary.estimatedFuelGallons;
+  summary.fuelCostCents = summary.estimatedFuelCostCents;
+  summary.totalDriveMinutes = summary.estimatedDriveMinutes;
+  summary.totalFuelGallons = summary.estimatedFuelGallons;
+  summary.totalFuelCostCents = summary.estimatedFuelCostCents;
+  return summary;
+}
+
 /** Geocode an address via the configured provider. Returns {lat,lng} or null. */
-export async function geocode(tenant, address) {
+export async function geocode(tenant, address, { timeoutMs = GEOCODE_TIMEOUT_MS } = {}) {
   if (!address || !geocodingConfigured(tenant)) return null;
   const g = tenant.settings.integrations.geocoding;
   const key = geocodeKey(tenant);
   try {
     if (g.provider === 'mapbox') {
       const u = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(address)}.json?limit=1&access_token=${key}`;
-      const response = await fetch(u);
+      const response = await fetch(u, { signal: AbortSignal.timeout(Math.max(1, timeoutMs)) });
       if (!response.ok) return null;
       const j = await response.json();
       const c = j?.features?.[0]?.center;
-      return c ? { lat: c[1], lng: c[0] } : null;
+      return c ? coordinate({ lat: c[1], lng: c[0] }) : null;
     }
     if (g.provider === 'google') {
       const u = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(address)}&key=${key}`;
-      const response = await fetch(u);
+      const response = await fetch(u, { signal: AbortSignal.timeout(Math.max(1, timeoutMs)) });
       if (!response.ok) return null;
       const j = await response.json();
       const c = j?.results?.[0]?.geometry?.location;
-      return c ? { lat: c.lat, lng: c.lng } : null;
+      return c ? coordinate({ lat: c.lat, lng: c.lng }) : null;
     }
   } catch { /* provider error -> use address-based grouping */ }
   return null;
 }
 
+function geocodeCacheKey(tenant, address) {
+  const provider = tenant?.settings?.integrations?.geocoding?.provider || 'none';
+  // A settings save bumps config_version, immediately invalidating cached
+  // provider failures after an API key is corrected or rotated.
+  return `${tenant?.id || 'tenant'}:${tenant?.config_version || 0}:${provider}:${String(address || '').trim().toLowerCase()}`;
+}
+
+async function cachedGeocode(tenant, address, deadline) {
+  const key = geocodeCacheKey(tenant, address); const now = Date.now();
+  const cached = geocodeCache.get(key);
+  if (cached?.promise) return cached.promise;
+  if (cached && cached.expiresAt > now) return cached.value;
+  const remaining = Math.min(GEOCODE_TIMEOUT_MS, deadline - now);
+  if (remaining <= 0) return null;
+  const promise = geocode(tenant, address, { timeoutMs: remaining })
+    .then((value) => {
+      geocodeCache.set(key, {
+        value,
+        expiresAt: Date.now() + (value ? GEOCODE_SUCCESS_TTL_MS : GEOCODE_FAILURE_TTL_MS),
+      });
+      return value;
+    })
+    .catch(() => {
+      geocodeCache.set(key, { value: null, expiresAt: Date.now() + GEOCODE_FAILURE_TTL_MS });
+      return null;
+    });
+  geocodeCache.set(key, { promise, expiresAt: deadline });
+  return promise;
+}
+
 /** Google Maps multi-stop directions URL (works without our own geocoder). */
-export function mapsUrl(stops, originAddress) {
+export function mapsUrl(stops, originAddress, includeReturnToBase = false) {
   const pts = stops.map((s) => s.address).filter(Boolean);
   if (!pts.length) return null;
-  const destination = encodeURIComponent(pts[pts.length - 1]);
-  const waypoints = pts.slice(0, -1).map(encodeURIComponent);
+  const returnsToOrigin = Boolean(includeReturnToBase && originAddress);
+  const destination = encodeURIComponent(returnsToOrigin ? originAddress : pts[pts.length - 1]);
+  const waypoints = (returnsToOrigin ? pts : pts.slice(0, -1)).map(encodeURIComponent);
   const origin = originAddress ? `&origin=${encodeURIComponent(originAddress)}` : '';
   const via = waypoints.length ? `&waypoints=${waypoints.join('%7C')}` : '';
   return `https://www.google.com/maps/dir/?api=1${origin}&destination=${destination}${via}&travelmode=driving`;
@@ -194,11 +413,17 @@ async function dayStops(tenant, date) {
   return [...byId.values()];
 }
 
-async function geocodeMissingStops(tenant, stops) {
+async function geocodeMissingStops(tenant, stops, deadline) {
   if (!geocodingConfigured(tenant)) return;
-  for (const stop of stops) {
-    if ((stop.lat == null || stop.lng == null) && stop.address) {
-      const location = await geocode(tenant, stop.address);
+  const missing = stops
+    .filter((stop) => !coordinate(stop) && stop.address)
+    .slice(0, MAX_GEOCODES_PER_PLAN);
+  // Small batches prevent one slow provider response from serially blocking a
+  // full dispatch board while still avoiding an uncontrolled request burst.
+  for (let index = 0; index < missing.length; index += 3) {
+    if (Date.now() >= deadline) break;
+    await Promise.all(missing.slice(index, index + 3).map(async (stop) => {
+      const location = await cachedGeocode(tenant, stop.address, deadline);
       if (location) {
         stop.lat = location.lat;
         stop.lng = location.lng;
@@ -207,7 +432,7 @@ async function geocodeMissingStops(tenant, stops) {
           [tenant.id, stop.appointmentId, location.lat, location.lng],
         ).catch(() => {});
       }
-    }
+    }));
   }
 }
 
@@ -303,6 +528,7 @@ function routeOrder(stops, origin) {
 
 /** Plan all selected technicians' routes without changing assignments. */
 export async function planRoutes(tenant, { date, technicianIds = [], includeUnassigned = true } = {}) {
+  const assumptions = routingAssumptions(tenant);
   const requestedIds = [...new Set(technicianIds.map(Number).filter((id) => Number.isInteger(id) && id > 0))];
   const params = [tenant.id];
   let selectedSql = '';
@@ -314,15 +540,31 @@ export async function planRoutes(tenant, { date, technicianIds = [], includeUnas
   const technicians = techResult.rows.map((tech) => ({ ...tech, id: Number(tech.id) }));
   const found = new Set(technicians.map((tech) => tech.id));
   const invalidTechnicianIds = requestedIds.filter((id) => !found.has(id));
-  if (invalidTechnicianIds.length) return { date, technicians, routes: [], proposals: [], unplaced: [], invalidTechnicianIds };
+  if (invalidTechnicianIds.length) {
+    return {
+      date, technicians, routes: [], proposals: [], unplaced: [], assumptions, origin: null,
+      summary: summarizeEstimatedRoutes([]), invalidTechnicianIds,
+    };
+  }
 
   const stops = await dayStops(tenant, date);
-  await geocodeMissingStops(tenant, stops);
+  const geocodeDeadline = Date.now() + GEOCODE_PLAN_BUDGET_MS;
   let origin = tenant.address ? { address: tenant.address, ...addressMeta(tenant.address) } : null;
-  if (origin && geocodingConfigured(tenant)) {
-    const location = await geocode(tenant, tenant.address);
+  const originLocation = origin && geocodingConfigured(tenant)
+    ? cachedGeocode(tenant, tenant.address, geocodeDeadline)
+    : Promise.resolve(null);
+  const [, location] = await Promise.all([
+    geocodeMissingStops(tenant, stops, geocodeDeadline),
+    originLocation,
+  ]);
+  if (origin) {
     if (location) origin = { ...origin, ...location };
   }
+  const publicOrigin = origin ? {
+    address: origin.address,
+    lat: coordinate(origin)?.lat ?? null,
+    lng: coordinate(origin)?.lng ?? null,
+  } : null;
 
   const groups = technicians.map((technician, index) => ({
     technician,
@@ -335,24 +577,44 @@ export async function planRoutes(tenant, { date, technicianIds = [], includeUnas
   const allocation = includeUnassigned
     ? assignNearbyStops(groups, available)
     : { proposals: [], unplaced: [] };
-  const coordinateCount = stops.filter((stop) => stop.lat != null && stop.lng != null).length;
+  const coordinateCount = stops.filter((stop) => coordinate(stop)).length;
   const method = stops.length && coordinateCount === stops.length ? 'coordinates' : coordinateCount ? 'mixed' : 'address';
   const routes = groups.map((group) => {
     const ordered = routeOrder(group.stops, origin);
+    const estimate = buildEstimatedRoute(ordered.order, origin, assumptions);
+    // Preserve the legacy totalMiles meaning (raw coordinate distance). New
+    // road-adjusted estimates live under metrics/estimatedRoadMiles.
+    const totalMiles = ordered.totalMiles;
     return {
       technician: group.technician,
       stops: ordered.order.map(({ _addressMeta, assignments, inPlanningDay, ...stop }) => stop),
       assignedCount: group.stops.filter((stop) => stop.assignment === 'existing').length,
       proposedCount: group.stops.filter((stop) => stop.assignment === 'proposed').length,
       optimized: ordered.optimized,
-      totalMiles: ordered.totalMiles,
-      mapsUrl: mapsUrl(ordered.order, tenant.address || null),
+      quality: estimate.quality,
+      geometry: estimate.geometry,
+      legs: estimate.legs,
+      metrics: estimate.metrics,
+      // Compatibility totals for the existing route cards and API consumers.
+      totalMiles,
+      totalDriveMinutes: estimate.metrics.estimatedDriveMinutes,
+      totalFuelGallons: estimate.metrics.estimatedFuelGallons,
+      totalFuelCostCents: estimate.metrics.estimatedFuelCostCents,
+      estimatedRoadMiles: estimate.metrics.estimatedRoadMiles,
+      estimatedDriveMinutes: estimate.metrics.estimatedDriveMinutes,
+      estimatedFuelGallons: estimate.metrics.estimatedFuelGallons,
+      estimatedFuelCostCents: estimate.metrics.estimatedFuelCostCents,
+      mapsUrl: mapsUrl(ordered.order, tenant.address || null, assumptions.includeReturnToBase),
     };
   });
+  const summary = summarizeEstimatedRoutes(routes);
   return {
     date,
+    assumptions,
+    origin: publicOrigin,
     technicians,
     routes,
+    summary,
     proposals: allocation.proposals,
     unplaced: allocation.unplaced.map(({ stop, reason }) => ({
       appointmentId: stop.appointmentId,
@@ -418,17 +680,45 @@ export async function applyRouteAssignments(tenant, { date, technicianIds = [] }
 /** Build one technician's current route for backwards compatibility. */
 export async function optimizeRoute(tenant, { technicianId, date }) {
   const plan = await planRoutes(tenant, { technicianIds: [technicianId], date, includeUnassigned: false });
-  const route = plan.routes[0] || { stops: [], optimized: false, totalMiles: null, mapsUrl: null };
+  const emptyEstimate = buildEstimatedRoute([], null, plan.assumptions);
+  const route = plan.routes[0] || {
+    stops: [], optimized: false, quality: 'unavailable', geometry: null, legs: [],
+    metrics: emptyEstimate.metrics, totalMiles: null, totalDriveMinutes: null,
+    totalFuelGallons: null, totalFuelCostCents: null, estimatedRoadMiles: null,
+    estimatedDriveMinutes: null, estimatedFuelGallons: null, estimatedFuelCostCents: null,
+    mapsUrl: null,
+  };
   let reason;
   if (route.stops.length > 1 && plan.method !== 'coordinates') {
     reason = plan.method === 'mixed'
       ? 'Some stops lack coordinates; route order also uses address similarity.'
       : 'Grouped by ZIP, city, and address similarity. Add geocoding for precise mileage.';
   }
-  return { stops: route.stops, optimized: route.optimized, reason, totalMiles: route.totalMiles, mapsUrl: route.mapsUrl };
+  return {
+    invalidTechnicianIds: plan.invalidTechnicianIds,
+    stops: route.stops,
+    optimized: route.optimized,
+    reason,
+    assumptions: plan.assumptions,
+    origin: plan.origin,
+    quality: route.quality,
+    geometry: route.geometry,
+    legs: route.legs,
+    metrics: route.metrics,
+    totalMiles: route.totalMiles,
+    totalDriveMinutes: route.totalDriveMinutes,
+    totalFuelGallons: route.totalFuelGallons,
+    totalFuelCostCents: route.totalFuelCostCents,
+    estimatedRoadMiles: route.estimatedRoadMiles,
+    estimatedDriveMinutes: route.estimatedDriveMinutes,
+    estimatedFuelGallons: route.estimatedFuelGallons,
+    estimatedFuelCostCents: route.estimatedFuelCostCents,
+    mapsUrl: route.mapsUrl,
+  };
 }
 
 export default {
   geocodingConfigured, geocode, mapsUrl, haversine, addressDistance, stopDistance,
+  routingAssumptions, buildEstimatedRoute, summarizeEstimatedRoutes,
   assignNearbyStops, planRoutes, applyRouteAssignments, optimizeRoute,
 };
