@@ -5,27 +5,71 @@ import { query, queryOne, withTx } from './db.js';
 import { randomToken } from './crypto.js';
 import { hexColor } from './http.js';
 
-export async function listTechnicians(tenant, { includeInactive = false } = {}) {
+const MAX_ROUTE_START_ADDRESS_LENGTH = 500;
+
+function validationError(message, code = 'TECHNICIAN_VALIDATION') {
+  const error = new Error(message);
+  error.code = code;
+  error.statusCode = 400;
+  return error;
+}
+
+/** Empty means "use the business address"; coordinates are never client-set. */
+export function normalizeRouteStartAddress(value) {
+  if (value == null) return null;
+  if (typeof value !== 'string') throw validationError('Route starting point must be an address.');
+  const address = value.trim();
+  if (address.length > MAX_ROUTE_START_ADDRESS_LENGTH) {
+    throw validationError(`Route starting point must be ${MAX_ROUTE_START_ADDRESS_LENGTH} characters or fewer.`);
+  }
+  return address || null;
+}
+
+async function requireOwnedAdminUser(tenant, userId) {
+  if (!userId) return;
+  const user = await queryOne('SELECT id FROM admin_users WHERE tenant_id=$1 AND id=$2', [tenant.id, userId]);
+  if (!user) throw validationError('Selected login does not belong to this business.', 'TECHNICIAN_USER_NOT_OWNED');
+}
+
+export async function listTechnicians(tenant, { includeInactive = false, includeRouteOrigins = false } = {}) {
+  const routeOriginColumns = includeRouteOrigins
+    ? ', route_start_address, route_start_lat, route_start_lng'
+    : '';
   const r = await query(
-    `SELECT id, name, email, phone, color, is_active, user_id FROM technicians
+    `SELECT id, name, email, phone, color, is_active, user_id${routeOriginColumns}
+       FROM technicians
       WHERE tenant_id=$1 ${includeInactive ? '' : 'AND is_active=TRUE'} ORDER BY is_active DESC, name`,
     [tenant.id],
   );
   return r.rows;
 }
 
-export async function createTechnician(tenant, { name, email, phone, color, userId }) {
+export async function createTechnician(tenant, { name, email, phone, color, userId, routeStartAddress }) {
+  await requireOwnedAdminUser(tenant, userId);
+  const startAddress = normalizeRouteStartAddress(routeStartAddress);
   return queryOne(
-    `INSERT INTO technicians (tenant_id, name, email, phone, color, user_id) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
-    [tenant.id, name, email || null, phone || null, hexColor(color, '#2563eb'), userId || null],
+    `INSERT INTO technicians (tenant_id, name, email, phone, color, user_id, route_start_address)
+     VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+    [tenant.id, name, email || null, phone || null, hexColor(color, '#2563eb'), userId || null, startAddress],
   );
 }
 
 export async function updateTechnician(tenant, id, fields) {
+  if (fields.userId !== undefined) await requireOwnedAdminUser(tenant, fields.userId);
   const cols = { name: fields.name, email: fields.email, phone: fields.phone, color: fields.color === undefined ? undefined : hexColor(fields.color), user_id: fields.userId, is_active: fields.isActive,
     license_no: fields.licenseNo, license_state: fields.licenseState, license_expires: fields.licenseExpires };
   const sets = []; const params = [id, tenant.id];
   for (const [k, v] of Object.entries(cols)) { if (v !== undefined) { params.push(v); sets.push(`${k}=$${params.length}`); } }
+  if (fields.routeStartAddress !== undefined) {
+    const address = normalizeRouteStartAddress(fields.routeStartAddress);
+    params.push(address);
+    const value = `$${params.length}`;
+    // Keep a valid cache for an idempotent save, but clear it atomically when
+    // the effective custom address changes (including switching to business).
+    sets.push(`route_start_lat=CASE WHEN route_start_address IS NOT DISTINCT FROM ${value} THEN route_start_lat ELSE NULL END`);
+    sets.push(`route_start_lng=CASE WHEN route_start_address IS NOT DISTINCT FROM ${value} THEN route_start_lng ELSE NULL END`);
+    sets.push(`route_start_address=${value}`);
+  }
   if (!sets.length) return queryOne('SELECT * FROM technicians WHERE id=$1 AND tenant_id=$2', [id, tenant.id]);
   sets.push('updated_at=now()');
   return queryOne(`UPDATE technicians SET ${sets.join(', ')} WHERE id=$1 AND tenant_id=$2 RETURNING *`, params);
@@ -223,7 +267,7 @@ export async function technicianJobs(tenant, technicianId, { from, to }) {
 }
 
 export default {
-  listTechnicians, createTechnician, updateTechnician, setAssignments, getAssignments,
+  normalizeRouteStartAddress, listTechnicians, createTechnician, updateTechnician, setAssignments, getAssignments,
   assignmentsForAppointments, findTechnicianConflict, withLockedAppointmentSchedule,
   ensureFieldToken, revokeFieldToken, technicianByFieldToken,
 };

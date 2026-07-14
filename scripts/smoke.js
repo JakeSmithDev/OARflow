@@ -97,6 +97,16 @@ async function main() {
     assert.equal(response.status, 200);
     assert.equal(response.headers.get('cache-control'), 'no-cache');
   });
+  await check('dispatch map vendor assets are served locally', async () => {
+    const [moduleResponse, stylesheetResponse] = await Promise.all([
+      fetch(base + '/assets/vendor/leaflet/leaflet-src.esm.js'),
+      fetch(base + '/assets/vendor/leaflet/leaflet.css'),
+    ]);
+    assert.equal(moduleResponse.status, 200);
+    assert.equal(stylesheetResponse.status, 200);
+    assert.match(await moduleResponse.text(), /Leaflet 1\.9\.4/);
+    assert.match(await stylesheetResponse.text(), /leaflet-container/);
+  });
 
   // --- Public booking ---
   let svcInstant; let svcRequest; let token;
@@ -404,9 +414,43 @@ async function main() {
 
   // --- Technicians + assignment (internal dispatch; never on public booking) ---
   let techId;
-  await check('create a technician', async () => {
-    const { data } = await call('/api/admin/technicians', { method: 'POST', body: { name: 'Marco Diaz', color: '#2563eb', phone: '410-555-0142' } });
+  const marcoRouteStart = '410 Technician Lane, Baltimore, MD 21201';
+  await check('create a technician with a custom route starting point', async () => {
+    const { data } = await call('/api/admin/technicians', { method: 'POST', body: {
+      name: 'Marco Diaz', color: '#2563eb', phone: '410-555-0142',
+      routeStartAddress: `  ${marcoRouteStart}  `,
+    } });
     assert.ok(data.ok); techId = data.technician.id; assert.equal(data.technician.is_active, true);
+    assert.equal(data.technician.route_start_address, marcoRouteStart);
+    assert.equal(data.technician.route_start_lat, null); assert.equal(data.technician.route_start_lng, null);
+    const picker = (await call('/api/admin/technicians')).data.technicians.find((tech) => tech.id === techId);
+    assert.equal(Object.prototype.hasOwnProperty.call(picker, 'route_start_address'), false, 'picker responses omit private route origins');
+    const listed = (await call('/api/admin/technicians?all=1&origins=1')).data.technicians.find((tech) => tech.id === techId);
+    assert.equal(listed.route_start_address, marcoRouteStart, 'starting point is exposed by the team list');
+  });
+  await check('technician route starting points validate and invalidate only changed coordinate caches', async () => {
+    for (const routeStartAddress of [123, 'x'.repeat(501)]) {
+      const rejected = await call(`/api/admin/technicians/${techId}`, { method: 'PATCH', body: { routeStartAddress } });
+      assert.equal(rejected.status, 400); assert.match(rejected.data.error, /route starting point/i);
+    }
+    await query('UPDATE technicians SET route_start_lat=39.1, route_start_lng=-76.1 WHERE id=$1', [techId]);
+    const unchanged = await call(`/api/admin/technicians/${techId}`, { method: 'PATCH', body: { routeStartAddress: marcoRouteStart } });
+    assert.equal(Number(unchanged.data.technician.route_start_lat), 39.1, 'idempotent saves preserve the cache');
+    const changed = await call(`/api/admin/technicians/${techId}`, { method: 'PATCH', body: { routeStartAddress: '500 New Start Road' } });
+    assert.equal(changed.data.technician.route_start_lat, null); assert.equal(changed.data.technician.route_start_lng, null);
+    const business = await call(`/api/admin/technicians/${techId}`, { method: 'PATCH', body: { routeStartAddress: '   ' } });
+    assert.equal(business.data.technician.route_start_address, null, 'blank selects the tenant business address');
+    const restored = await call(`/api/admin/technicians/${techId}`, { method: 'PATCH', body: { routeStartAddress: marcoRouteStart } });
+    assert.equal(restored.data.technician.route_start_address, marcoRouteStart);
+  });
+  await check('technicians cannot link a login owned by another tenant', async () => {
+    const foreignTenant = (await query("INSERT INTO tenants (slug,name) VALUES ('route-origin-rival','Route Origin Rival') RETURNING id")).rows[0];
+    const foreignUser = (await query(
+      "INSERT INTO admin_users (tenant_id,username,password_hash,role) VALUES ($1,'foreign-route-user','unused','owner') RETURNING id",
+      [foreignTenant.id],
+    )).rows[0];
+    const rejected = await call('/api/admin/technicians', { method: 'POST', body: { name: 'Wrong Tenant Rep', userId: foreignUser.id } });
+    assert.equal(rejected.status, 400); assert.match(rejected.data.error, /does not belong/i);
   });
   let assignApptId;
   await check('assign a technician to an appointment (lead)', async () => {
@@ -663,7 +707,7 @@ async function main() {
 
   // --- Route optimization + GPS ---
   await check('keyless route estimates expose geometry, legs, drive time, and fuel cost', async () => {
-    const { buildEstimatedRoute, geocode, haversine, mapsUrl, routingAssumptions, summarizeEstimatedRoutes } = await import('../src/lib/routing.js');
+    const { assignNearbyStops, buildEstimatedRoute, geocode, haversine, mapsUrl, routingAssumptions, summarizeEstimatedRoutes } = await import('../src/lib/routing.js');
     const assumptions = {
       averageSpeedMph: 28, roadDistanceFactor: 1.22, vehicleMpg: 22,
       fuelPricePerGallon: 3.50, includeReturnToBase: true,
@@ -704,6 +748,11 @@ async function main() {
     assert.equal(loopUrl.searchParams.get('origin'), 'Base');
     assert.equal(loopUrl.searchParams.get('destination'), 'Base');
     assert.equal(loopUrl.searchParams.get('waypoints'), 'North|West');
+    const originAware = assignNearbyStops([
+      { technician: { id: 1 }, index: 0, origin: { address: 'North base', lat: 40, lng: -76 }, stops: [] },
+      { technician: { id: 2 }, index: 1, origin: { address: 'South base', lat: 38, lng: -76 }, stops: [] },
+    ], [{ appointmentId: 20, address: 'Near south', lat: 38.1, lng: -76, time: '2026-07-15T14:00:00Z', end: '2026-07-15T15:00:00Z' }]);
+    assert.equal(originAware.proposals[0].technicianId, 2, 'empty routes are seeded from the nearest rep start');
 
     const geoTenant = { id:99, settings:{ integrations:{ geocoding:{ provider:'google', apiKey:'test-key' } } } };
     const originalFetch = globalThis.fetch;
@@ -733,11 +782,67 @@ async function main() {
     assert.ok(data.ok); assert.ok(data.stops.some((s) => s.appointmentId === assignApptId));
     assert.equal(data.geocoder, false); // no geocoder in dev
     assert.ok(data.mapsUrl && data.mapsUrl.includes('google.com/maps/dir'));
+    assert.equal(data.origin.address, marcoRouteStart);
+    assert.equal(data.origin.source, 'technician');
+    assert.equal(new URL(data.mapsUrl).searchParams.get('origin'), marcoRouteStart);
     assert.equal(data.assumptions.averageSpeedMph, 28);
     assert.ok(['estimate', 'partial', 'unavailable'].includes(data.quality));
     assert.ok(Array.isArray(data.legs)); assert.ok(data.metrics);
     assert.ok(Object.prototype.hasOwnProperty.call(data, 'geometry'));
     assert.ok(Object.prototype.hasOwnProperty.call(data, 'totalMiles'));
+  });
+  await check('route planning geocodes, persists, and returns each rep starting point', async () => {
+    const { planRoutes } = await import('../src/lib/routing.js');
+    const { getTenantById } = await import('../src/lib/tenants.js');
+    const fallback = (await query(
+      "INSERT INTO technicians (tenant_id,name,color) VALUES (1,'Business Start Rep','#16a34a') RETURNING id",
+    )).rows[0];
+    const tenant = await getTenantById(1);
+    tenant.config_version = 900027;
+    tenant.settings.integrations.geocoding = { provider: 'google', apiKey: 'route-origin-test-key' };
+    tenant.settings.routing.includeReturnToBase = true;
+    const originalFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = async (input) => {
+        const address = new URL(String(input)).searchParams.get('address');
+        const location = address === marcoRouteStart
+          ? { lat: 39.2904, lng: -76.6122 }
+          : address === tenant.address
+            ? { lat: 38.9784, lng: -76.4922 }
+            : { lat: 39.1100, lng: -76.7000 };
+        return { ok: true, json: async () => ({ results: [{ geometry: { location } }] }) };
+      };
+      const plan = await planRoutes(tenant, {
+        date: '2026-07-15', technicianIds: [techId, Number(fallback.id)], includeUnassigned: false,
+      });
+      const customRoute = plan.routes.find((route) => route.technician.id === Number(techId));
+      const fallbackRoute = plan.routes.find((route) => route.technician.id === Number(fallback.id));
+      assert.equal(customRoute.origin.address, marcoRouteStart);
+      assert.equal(customRoute.origin.source, 'technician');
+      assert.equal(customRoute.origin.lat, 39.2904); assert.equal(customRoute.origin.lng, -76.6122);
+      assert.equal(fallbackRoute.origin.address, tenant.address);
+      assert.equal(fallbackRoute.origin.source, 'business');
+      assert.equal(fallbackRoute.origin.lat, 38.9784); assert.equal(fallbackRoute.origin.lng, -76.4922);
+      assert.ok(customRoute.stops.length, 'custom-origin rep has a route stop');
+      const directions = new URL(customRoute.mapsUrl);
+      assert.equal(directions.searchParams.get('origin'), marcoRouteStart);
+      assert.equal(directions.searchParams.get('destination'), marcoRouteStart, 'return route ends at the rep start');
+      assert.equal(customRoute.legs[0].from.address, marcoRouteStart);
+      assert.equal(customRoute.legs.at(-1).to.address, marcoRouteStart);
+      const cached = (await query(
+        'SELECT route_start_lat, route_start_lng FROM technicians WHERE tenant_id=1 AND id=$1',
+        [techId],
+      )).rows[0];
+      assert.equal(Number(cached.route_start_lat), 39.2904); assert.equal(Number(cached.route_start_lng), -76.6122);
+      const fallbackCache = (await query(
+        'SELECT route_start_lat, route_start_lng FROM technicians WHERE tenant_id=1 AND id=$1',
+        [fallback.id],
+      )).rows[0];
+      assert.equal(fallbackCache.route_start_lat, null); assert.equal(fallbackCache.route_start_lng, null);
+    } finally {
+      globalThis.fetch = originalFetch;
+      await query('DELETE FROM technicians WHERE tenant_id=1 AND id=$1', [fallback.id]);
+    }
   });
   await check('appointment address PATCH rejects blank values but permits legacy unrelated edits', async () => {
     const legacy = (await query(
@@ -806,6 +911,7 @@ async function main() {
   await check('field /me includes a route map link', async () => {
     const { data } = await call(`/api/field/me?token=${fieldToken}&date=2026-07-15`, { auth: false });
     assert.ok(data.routeUrl && data.routeUrl.includes('maps'));
+    assert.equal(new URL(data.routeUrl).searchParams.get('origin'), marcoRouteStart);
   });
 
   // --- Pest compliance (chemical records + state export) ---

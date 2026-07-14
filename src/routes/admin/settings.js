@@ -1,6 +1,6 @@
 // Settings & configuration — everything is customizable in the admin suite:
 // business profile, booking + availability, services, invoicing presets, email
-// templates, team members, and integration credentials (Stripe, email).
+// templates, admin login access, and integration credentials (Stripe, email).
 import express from 'express';
 import { requireAdmin, requireRole } from '../../lib/auth.js';
 import { asyncHandler, badRequest, notFound, toInt, hexColor } from '../../lib/http.js';
@@ -16,7 +16,7 @@ import { logAudit } from '../../lib/audit.js';
 import { zonedWallTimeToUtc } from '../../lib/dates.js';
 
 const router = express.Router();
-// Settings (services, availability, invoicing, integrations, team) is owner-only.
+// Settings (services, availability, invoicing, integrations, login access) is owner-only.
 router.use(requireAdmin());
 router.use(requireRole('owner'));
 

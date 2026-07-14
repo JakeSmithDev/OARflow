@@ -8,7 +8,7 @@ import { technicianByFieldToken, technicianJobs, isAssigned } from '../lib/techn
 import { saveFile, listFiles, signedUrl } from '../lib/storage.js';
 import { decodeUpload, IMAGE_TYPES } from '../lib/uploads.js';
 import { sendAppointmentSms } from '../lib/notify_sms.js';
-import { mapsUrl } from '../lib/routing.js';
+import { mapsUrl, routingAssumptions } from '../lib/routing.js';
 import { listProducts, recordApplication, listApplications } from '../lib/compliance.js';
 import { listDevices } from '../lib/devices.js';
 import { scheduleForCompletion } from '../lib/follow_ups.js';
@@ -45,12 +45,18 @@ router.get('/me', limitView, asyncHandler(async (req, res) => {
   const from = zonedWallTimeToUtc(day, '00:00', ctx.tenant.timezone).toISOString();
   const to = new Date(zonedWallTimeToUtc(day, '00:00', ctx.tenant.timezone).getTime() + 86_400_000).toISOString();
   const jobs = await technicianJobs(ctx.tenant, ctx.tech.id, { from, to });
+  const routeStartAddress = ctx.tech.route_start_address || ctx.tenant.address;
+  const assumptions = routingAssumptions(ctx.tenant);
   res.json({
     ok: true, date: day,
     technician: { name: ctx.tech.name, color: ctx.tech.color },
     tenant: { name: ctx.tenant.name, branding: ctx.tenant.settings.branding, timezone: ctx.tenant.timezone },
     jobs,
-    routeUrl: mapsUrl(jobs.map((j) => ({ address: j.service_address })), ctx.tenant.address),
+    routeUrl: mapsUrl(
+      jobs.map((j) => ({ address: j.service_address })),
+      routeStartAddress,
+      assumptions.includeReturnToBase,
+    ),
   });
 }));
 

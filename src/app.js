@@ -34,6 +34,7 @@ import './inngest/index.js'; // register background workflows (also used by the 
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
+const LEAFLET_DIST_DIR = path.join(__dirname, '..', 'node_modules', 'leaflet', 'dist');
 
 function sendShell(res, relPath) {
   const file = path.join(PUBLIC_DIR, relPath);
@@ -131,6 +132,13 @@ export function createApp() {
 
   // --- Static assets + marketing site (served from /public) ---------------
   app.get('/favicon.ico', (req, res) => res.redirect(301, '/assets/img/favicon.svg'));
+  // Leaflet is intentionally served from the installed package instead of a
+  // third-party script CDN. This keeps the dispatch map compatible with the
+  // app's self-only CSP and avoids exposing any geocoding provider key.
+  app.use('/assets/vendor/leaflet', express.static(LEAFLET_DIST_DIR, {
+    maxAge: '7d',
+    fallthrough: false,
+  }));
   app.use(express.static(PUBLIC_DIR, {
     extensions: ['html'],
     maxAge: '1h',

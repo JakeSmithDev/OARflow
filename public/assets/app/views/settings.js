@@ -6,7 +6,7 @@ const OF = window.OF;
     const DAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
     const dollars = c => ((c||0)/100).toFixed(2);
     const toCents = v => Math.round((parseFloat(String(v).replace(/[^0-9.\-]/g,''))||0)*100);
-    const TABS = [['business','Business'],['booking','Booking & Availability'],['services','Services'],['invoicing','Invoicing'],['integrations','Integrations'],['email','Email templates'],['team','Team'],['audit','Audit']];
+    const TABS = [['business','Business'],['booking','Booking & Availability'],['services','Services'],['invoicing','Invoicing'],['integrations','Integrations'],['email','Email templates'],['audit','Audit']];
     const CURRENCIES = ['USD','CAD','MXN','EUR','GBP','AUD','NZD'];
     const FALLBACK_TIMEZONES = ['America/New_York','America/Chicago','America/Denver','America/Los_Angeles','America/Phoenix','America/Anchorage','Pacific/Honolulu','UTC'];
     const TIMEZONES = (()=>{try{return Intl.supportedValuesOf ? Intl.supportedValuesOf('timeZone') : FALLBACK_TIMEZONES;}catch{return FALLBACK_TIMEZONES;}})();
@@ -206,7 +206,7 @@ const OF = window.OF;
             ${field('Vehicle fuel economy (MPG)',`<input id="route_mpg" type="number" min="1" max="200" step="0.1" value="${vehicleMpg}">`,'Company-wide average used for route cost estimates.')}
             ${field('Fuel price per gallon',`<div class="input-prefix"><span>$</span><input id="route_fuel" type="number" min="0" max="25" step="0.01" value="${fuelPricePerGallon.toFixed(2)}"></div>`,'Update this as local fuel prices change.')}
           </div>
-          <label class="row between" style="gap:18px;padding:12px 14px;margin:2px 0 16px;border:1px solid var(--line);border-radius:10px;background:var(--surface-2);cursor:pointer"><span><span class="cell-strong">Include return to base</span><span class="small muted" style="display:block;margin-top:2px">Add the final estimated leg back to the Business profile address.</span></span><span class="switch"><input id="route_return" type="checkbox" ${includeReturnToBase?'checked':''}><span class="track"></span></span></label>
+          <label class="row between" style="gap:18px;padding:12px 14px;margin:2px 0 16px;border:1px solid var(--line);border-radius:10px;background:var(--surface-2);cursor:pointer"><span><span class="cell-strong">Include return to starting point</span><span class="small muted" style="display:block;margin-top:2px">Add the final estimated leg back to each rep’s custom start, or the business address when no custom start is set.</span></span><span class="switch"><input id="route_return" type="checkbox" ${includeReturnToBase?'checked':''}><span class="track"></span></span></label>
         </div>
         <button class="btn btn-primary" id="saveMaps">Save maps &amp; route estimates</button>`)
         + card('Text messaging (SMS)', `<p class="muted small" style="margin-top:0">Send confirmations, reminders, On-My-Way texts, and two-way messages. ${ig.smsEnabled?'<span class="badge ok no-dot">Connected</span>':'<span class="badge neutral no-dot">Not connected — texts log to console in dev</span>'}</p>
@@ -283,25 +283,6 @@ const OF = window.OF;
       root.querySelectorAll('[data-tpl]').forEach(b=>b.onclick=()=>{const t=templates.find(x=>x.type==b.dataset.tpl);const m=OF.modal(`<div class="modal-head"><h3>${t.type.replace(/_/g,' ')}</h3><button class="x" data-close>&times;</button></div><div class="modal-body">${field('Subject',`<input id="t_sub" value="${OF.escape(t.subject)}">`)}${field('HTML body',`<textarea id="t_html" style="min-height:160px;font-family:monospace;font-size:13px">${OF.escape(t.html)}</textarea>`,'Use {{PLACEHOLDERS}} like {{CUSTOMER_NAME}}, {{COMPANY_NAME}}, {{PAY_URL}}.')}${field('Plain text',`<textarea id="t_text">${OF.escape(t.text)}</textarea>`)}</div><div class="modal-foot"><button class="btn btn-secondary" data-close>Cancel</button><button class="btn btn-primary" id="t_save">Save template</button></div>`,{wide:true});m.q('#t_save').onclick=async()=>{await OF.api('/api/admin/settings/email-templates/'+t.type,{method:'PUT',body:{subject:m.q('#t_sub').value,html:m.q('#t_html').value,text:m.q('#t_text').value}});m.close();OF.toast('Template saved','ok');emailTab(document.getElementById('content'));};});
     }
 
-    // ---- Team ----
-    async function teamTab(root){
-      const { users } = await OF.get('/api/admin/settings/users');
-      root.innerHTML = card('Team members', users.map(u=>`<div class="row between" style="padding:10px 0;border-bottom:1px solid var(--line-2)">
-        <div class="row" style="gap:10px"><span class="avatar-sm">${OF.initials(u.display_name||u.username)}</span><div><span class="cell-strong">${OF.escape(u.display_name||u.username)}</span> ${u.is_active?'':'<span class="badge neutral no-dot">Inactive</span>'}${u.is_totp_enabled?'<span class="badge ok no-dot">2FA</span>':''}<div class="tiny muted">@${OF.escape(u.username)} · ${u.role}</div></div></div>
-        <div class="row" style="gap:6px">${u.id===OF.session.userId?`<button class="btn btn-secondary btn-sm" id="totpBtn">${u.is_totp_enabled?'Manage 2FA':'Enable 2FA'}</button>`:`<button class="btn btn-ghost btn-sm" data-toggle="${u.id}" data-active="${u.is_active}">${u.is_active?'Deactivate':'Activate'}</button>`}</div></div>`).join(''),
-        `<button class="btn btn-primary btn-sm" id="addUser">${OF.icon('plus',15)} Add member</button>`);
-      root.querySelector('#addUser').onclick=()=>{const m=OF.modal(`<div class="modal-head"><h3>Add team member</h3><button class="x" data-close>&times;</button></div><div class="modal-body">${field('Display name',`<input id="u_name">`)}${field('Username *',`<input id="u_user">`)}${field('Temporary password *',`<input id="u_pass" type="text">`)}${field('Role',`<select id="u_role"><option value="staff">Staff</option><option value="owner">Owner</option></select>`)}</div><div class="modal-foot"><button class="btn btn-secondary" data-close>Cancel</button><button class="btn btn-primary" id="u_save">Add</button></div>`);m.q('#u_save').onclick=async()=>{try{await OF.post('/api/admin/settings/users',{displayName:m.q('#u_name').value,username:m.q('#u_user').value.trim(),password:m.q('#u_pass').value,role:m.q('#u_role').value});m.close();OF.toast('Member added','ok');teamTab(document.getElementById('content'));}catch(e){OF.toast(e.message,'error');}};};
-      root.querySelectorAll('[data-toggle]').forEach(b=>b.onclick=async()=>{await OF.patch('/api/admin/settings/users/'+b.dataset.toggle,{isActive:b.dataset.active!=='true'});OF.toast('Updated','ok');teamTab(document.getElementById('content'));});
-      root.querySelector('#totpBtn')?.addEventListener('click',totpFlow);
-    }
-    async function totpFlow(){
-      const me = (await OF.get('/api/admin/settings/users')).users.find(u=>u.id===OF.session.userId);
-      if(me.is_totp_enabled){ if(await OF.confirm({title:'Disable 2FA?',danger:true,confirmText:'Disable'})){await OF.post('/api/admin/auth/totp/disable');OF.toast('2FA disabled','ok');teamTab(document.getElementById('content'));} return; }
-      const start = await OF.post('/api/admin/auth/totp/start');
-      const m=OF.modal(`<div class="modal-head"><h3>Enable two-factor auth</h3><button class="x" data-close>&times;</button></div><div class="modal-body center"><p class="muted small">Scan with Google Authenticator, 1Password, or Authy, then enter the 6-digit code.</p><img src="${start.qr}" style="width:180px;height:180px;margin:10px auto"><div class="tiny muted" style="word-break:break-all">${start.secret}</div>${field('Code',`<input id="code" inputmode="numeric" placeholder="123456" style="text-align:center;font-size:20px;letter-spacing:4px">`)}</div><div class="modal-foot"><button class="btn btn-secondary" data-close>Cancel</button><button class="btn btn-primary" id="verify">Verify & enable</button></div>`);
-      m.q('#verify').onclick=async()=>{try{await OF.post('/api/admin/auth/totp/enable',{code:m.q('#code').value});m.close();OF.toast('2FA enabled ✓','ok');teamTab(document.getElementById('content'));}catch(e){OF.toast(e.message,'error');}};
-    }
-
     async function auditTab(root, append=false){
       const offset = append ? auditState.rows.length : 0;
       const p = new URLSearchParams({ limit:auditState.limit, offset });
@@ -325,11 +306,12 @@ const OF = window.OF;
 
     function renderTab(root){
       const body = document.getElementById('tabbody');
-      ({business:businessTab,booking:bookingTab,services:servicesTab,invoicing:invoicingTab,integrations:integrationsTab,email:emailTab,team:teamTab,audit:auditTab})[tab](body);
+      ({business:businessTab,booking:bookingTab,services:servicesTab,invoicing:invoicingTab,integrations:integrationsTab,email:emailTab,audit:auditTab})[tab](body);
     }
     async function reload(){ S = await OF.get('/api/admin/settings'); renderTab(); }
 
     OF.page({ active:'settings', title:'Settings', subtitle:'Configure everything about your business', render: async (root) => {
+      if (OF.qs('tab') === 'team') { OF.go('/admin/team'); return; }
       S = await OF.get('/api/admin/settings');
       root.innerHTML = `<div class="tabbar" id="tabbar">${TABS.map(([k,l])=>`<button data-tab="${k}" class="${tab===k?'active':''}">${l}</button>`).join('')}</div><div id="tabbody"></div>`;
       root.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{tab=b.dataset.tab;root.querySelectorAll('[data-tab]').forEach(x=>x.classList.toggle('active',x===b));renderTab(root);});

@@ -1,5 +1,15 @@
 // Auto-generated SPA view module. Registers itself via OF.page() on import.
+import * as L from '/assets/vendor/leaflet/leaflet-src.esm.js';
+
 const OF = window.OF;
+
+    if (!document.querySelector('link[data-oarflow-leaflet]')) {
+      const stylesheet=document.createElement('link');
+      stylesheet.rel='stylesheet';
+      stylesheet.href='/assets/vendor/leaflet/leaflet.css';
+      stylesheet.dataset.oarflowLeaflet='';
+      document.head.appendChild(stylesheet);
+    }
 
     const TZ = () => OF.tenant.timezone;
     const tenantYmd = () => new Intl.DateTimeFormat('en-CA',{timeZone:TZ(),year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
@@ -15,6 +25,8 @@ const OF = window.OF;
     let renderSequence = 0;
     let technicianLoadError = '';
     let pendingDispatchFocus = '';
+    let dispatchLeafletMap = null;
+    let dispatchMapGeneration = 0;
 
     const ymdUTC = (d) => new Intl.DateTimeFormat('en-CA',{timeZone:'UTC',year:'numeric',month:'2-digit',day:'2-digit'}).format(d);
     const addYmd = (ymd,n) => ymdUTC(new Date(new Date(ymd+'T00:00:00Z').getTime()+n*86400000));
@@ -178,36 +190,241 @@ const OF = window.OF;
     function routeForTechnician(plan, technicianId) {
       return (plan?.routes || []).find((route) => String(route.technician?.id) === String(technicianId));
     }
-    function mapProjection(stops) {
-      const valid = stops.filter((stop) => coord(stop.lat,-85,85)!=null && coord(stop.lng,-180,180)!=null);
-      if (!valid.length) return null;
-      let west=Math.min(...valid.map((stop)=>Number(stop.lng))); let east=Math.max(...valid.map((stop)=>Number(stop.lng)));
-      let south=Math.min(...valid.map((stop)=>Number(stop.lat))); let north=Math.max(...valid.map((stop)=>Number(stop.lat)));
-      const lngPad=Math.max((east-west)*.14,.012); const latPad=Math.max((north-south)*.14,.009);
-      west=Math.max(-180,west-lngPad); east=Math.min(180,east+lngPad); south=Math.max(-85,south-latPad); north=Math.min(85,north+latPad);
-      const mercatorY=(lat)=>Math.log(Math.tan(Math.PI/4+(lat*Math.PI/180)/2));
-      const northY=mercatorY(north); const southY=mercatorY(south);
-      const point=(stop)=>({
-        x:((Number(stop.lng)-west)/(east-west))*1000,
-        y:((northY-mercatorY(Number(stop.lat)))/(northY-southY))*620,
-      });
-      const bbox=[west,south,east,north].map((value)=>value.toFixed(6)).join(',');
-      const params=new URLSearchParams({bbox,layer:'mapnik'});
-      return { valid, point, src:`https://www.openstreetmap.org/export/embed.html?${params.toString()}` };
+    function coordinatePoint(value) {
+      const coordinates=Array.isArray(value)
+        ? value
+        : Array.isArray(value?.coordinates)
+          ? value.coordinates
+          : Array.isArray(value?.geometry?.coordinates)
+            ? value.geometry.coordinates
+            : null;
+      const lat=coord(value?.lat ?? value?.latitude ?? coordinates?.[1],-85,85);
+      const lng=coord(value?.lng ?? value?.lon ?? value?.longitude ?? coordinates?.[0],-180,180);
+      return lat!=null&&lng!=null?{lat,lng}:null;
+    }
+    function routeOriginPoint(route, plan) {
+      // Newer routing responses can return a rep-specific route.origin. Older
+      // responses expose one shared plan.origin, which remains the fallback.
+      return coordinatePoint(route?.origin)||coordinatePoint(plan?.origin);
     }
     function geometryPoints(route) {
       const geometry=route?.geometry;
       const lines=geometry?.type==='MultiLineString' ? geometry.coordinates : geometry?.type==='LineString' ? [geometry.coordinates] : [];
       return lines.map((line)=>(line||[]).map((pair)=>({lng:coord(pair?.[0],-180,180),lat:coord(pair?.[1],-85,85)})).filter((point)=>point.lng!=null&&point.lat!=null)).filter((line)=>line.length>=2);
     }
+    function routeLinePoints(route, plan) {
+      const geometry=geometryPoints(route);
+      if(geometry.length)return geometry;
+      // Do not join across an ungeocoded stop in a partial route. The backend
+      // sends each measurable segment in geometry when that is safe to draw.
+      if(route?.quality==='partial')return [];
+      const stops=(route?.stops||[]).map(coordinatePoint).filter(Boolean);
+      const origin=routeOriginPoint(route,plan);
+      const line=[...(origin?[origin]:[]),...stops];
+      return line.length>=2?[line]:[];
+    }
+    function routeStartGroups(plan) {
+      const groups=new Map();
+      for(const route of plan?.routes||[]){
+        const origin=routeOriginPoint(route,plan); if(!origin)continue;
+        // About one metre of precision. This prevents several reps sharing the
+        // office from producing a stack of impossible-to-click start markers.
+        const key=`${origin.lat.toFixed(5)},${origin.lng.toFixed(5)}`;
+        const group=groups.get(key)||{origin,routes:[]}; group.routes.push(route); groups.set(key,group);
+      }
+      return [...groups.values()];
+    }
+    function destroyDispatchMap() {
+      dispatchMapGeneration+=1;
+      if(!dispatchLeafletMap)return;
+      if(dispatchLeafletMap._dispatchLoadTimer)clearTimeout(dispatchLeafletMap._dispatchLoadTimer);
+      dispatchLeafletMap.remove();
+      dispatchLeafletMap=null;
+    }
+    function focusTimelineStop(stop, route) {
+      const lane=String(route?.technician?.id||stop?.technicianId||'unassigned');
+      const id=`dispatch-job-${encodeURIComponent(String(stop?.appointmentId))}-${encodeURIComponent(lane)}`;
+      const job=document.getElementById(id); if(!job)return;
+      const scroller=job.closest('.dispatch-timeline-scroll');
+      if(scroller){
+        const laneElement=job.closest('.dispatch-lane');
+        scroller.scrollTo({
+          top:Math.max(0,job.offsetTop-scroller.clientHeight/2+job.offsetHeight/2),
+          left:Math.max(0,(laneElement?.offsetLeft||0)-70),
+          behavior:'smooth',
+        });
+      }
+      job.focus({preventScroll:true});
+      job.classList.remove('map-focus');
+      // Restart the highlight without depending on an animation frame, which
+      // may be throttled while a tab is regaining focus.
+      void job.offsetWidth;
+      job.classList.add('map-focus');
+      setTimeout(()=>job.classList.remove('map-focus'),1400);
+    }
+    function mountDispatchMap(host, plan) {
+      const mapNode=host.querySelector('[data-dispatch-leaflet]');
+      if(!mapNode){destroyDispatchMap();return;}
+      destroyDispatchMap();
+      const generation=dispatchMapGeneration;
+      const stage=mapNode.closest('.dispatch-map-stage');
+      const status=stage?.querySelector('[data-dispatch-map-status]');
+      const fitButton=stage?.querySelector('[data-dispatch-map-fit]');
+      const routes=plan?.routes||[];
+      let resizeObserver=null; let tileLayer=null; let tileSourceIndex=0; let tileErrors=0;
+
+      const setStatus=(state,message)=>{
+        if(!status||generation!==dispatchMapGeneration)return;
+        status.className=`dispatch-map-status is-${state}`;
+        if(state==='ready'){status.hidden=true;status.innerHTML='';return;}
+        status.hidden=false;
+        status.innerHTML=state==='loading'
+          ? `<span class="spinner"></span><span>${OF.escape(message)}</span>`
+          : `<span>${OF.icon('bell',15)}</span><span>${OF.escape(message)}</span><button type="button" data-dispatch-map-retry>Retry</button>`;
+      };
+
+      try{
+        const map=L.map(mapNode,{
+          zoomControl:false,
+          attributionControl:true,
+          scrollWheelZoom:false,
+          preferCanvas:false,
+        });
+        dispatchLeafletMap=map;
+        L.control.zoom({position:'topright'}).addTo(map);
+        map.attributionControl.setPrefix(false);
+
+        const tileSources=[
+          {
+            url:'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+            options:{subdomains:'abcd',maxZoom:20,attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'},
+          },
+          {
+            url:'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+            options:{maxZoom:19,attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'},
+          },
+        ];
+        const activateTiles=(index)=>{
+          if(generation!==dispatchMapGeneration)return;
+          tileSourceIndex=index; tileErrors=0;
+          if(tileLayer)map.removeLayer(tileLayer);
+          if(map._dispatchLoadTimer)clearTimeout(map._dispatchLoadTimer);
+          setStatus('loading',index?'Loading backup map…':'Loading map…');
+          const source=tileSources[index];
+          const nextLayer=L.tileLayer(source.url,{...source.options,crossOrigin:true});
+          tileLayer=nextLayer;
+          nextLayer.on('tileerror',()=>{
+            if(tileLayer!==nextLayer)return;
+            tileErrors+=1;
+            if(tileErrors===4){
+              if(tileSourceIndex<tileSources.length-1)activateTiles(tileSourceIndex+1);
+              else setStatus('error','Basemap unavailable. Route pins and lines are still usable.');
+            }
+          });
+          nextLayer.on('load',()=>{
+            if(tileLayer!==nextLayer||generation!==dispatchMapGeneration||tileErrors>=4)return;
+            if(map._dispatchLoadTimer)clearTimeout(map._dispatchLoadTimer);
+            setStatus('ready','');
+          });
+          nextLayer.addTo(map);
+          map._dispatchLoadTimer=setTimeout(()=>{
+            if(generation!==dispatchMapGeneration)return;
+            if(tileSourceIndex<tileSources.length-1)activateTiles(tileSourceIndex+1);
+            else setStatus('error','Basemap is taking too long. Route pins and lines are still usable.');
+          },7000);
+        };
+        activateTiles(0);
+
+        const bounds=L.latLngBounds([]);
+        for(const route of routes){
+          const color=OF.color(route?.technician?.color);
+          const name=route?.technician?.name||'Rep';
+          for(const line of routeLinePoints(route,plan)){
+            const latLngs=line.map((point)=>[point.lat,point.lng]);
+            latLngs.forEach((point)=>bounds.extend(point));
+            L.polyline(latLngs,{color:'#fff',weight:8,opacity:.82,lineCap:'round',lineJoin:'round',interactive:false}).addTo(map);
+            L.polyline(latLngs,{color,weight:4,opacity:.92,dashArray:'9 8',lineCap:'round',lineJoin:'round'})
+              .bindTooltip(`${OF.escape(name)} · estimated stop order`,{sticky:true,className:'dispatch-map-tooltip compact'})
+              .addTo(map);
+          }
+        }
+
+        for(const group of routeStartGroups(plan)){
+          const names=group.routes.map((route)=>route?.technician?.name||'Rep');
+          const colors=group.routes.map((route)=>OF.color(route?.technician?.color));
+          const sources=new Set(group.routes.map((route)=>route?.origin?.source||plan?.origin?.source||'business'));
+          const startKind=sources.size>1?'mixed':sources.has('technician')?'custom':'business';
+          const startKindLabel=startKind==='custom'?'custom start':startKind==='business'?'business base':'shared start';
+          const visibleColors=colors.slice(0,3);
+          const swatches=visibleColors.map((color)=>`<i style="background:${color}"></i>`).join('');
+          const overflow=colors.length>3?`<b>+${colors.length-3}</b>`:'';
+          const icon=L.divIcon({
+            className:'dispatch-map-div-icon',
+            html:`<div class="dispatch-map-start ${startKind}" style="--start-color:${colors[0]}"><span>${startKind==='business'?'<b>B</b>':OF.icon('pin',14)}</span><em>${swatches}${overflow}</em></div>`,
+            iconSize:[52,42],
+            iconAnchor:[26,37],
+          });
+          const marker=L.marker([group.origin.lat,group.origin.lng],{
+            icon,keyboard:true,title:`${names.join(', ')} ${startKindLabel}`,alt:`${names.join(', ')} ${startKindLabel}`,zIndexOffset:50,
+          });
+          const label=names.length===1?`${names[0]} · ${startKindLabel}`:`${names.length} reps · ${startKindLabel}`;
+          const address=group.routes.map((route)=>route?.origin?.address||plan?.origin?.address).find(Boolean);
+          marker.bindTooltip(`<div class="dispatch-map-tooltip"><strong>${OF.escape(label)}</strong><span>${OF.escape(names.join(' · '))}</span>${address?`<span>${OF.escape(address)}</span>`:''}</div>`,{direction:'top',offset:[0,-28]});
+          marker.addTo(map); bounds.extend([group.origin.lat,group.origin.lng]);
+        }
+
+        for(const route of routes){
+          const color=OF.color(route?.technician?.color);
+          const repName=route?.technician?.name||'Rep';
+          (route?.stops||[]).forEach((stop,index)=>{
+            const point=coordinatePoint(stop); if(!point)return;
+            const number=index+1;
+            const proposed=stop.assignment==='proposed';
+            const icon=L.divIcon({
+              className:'dispatch-map-div-icon',
+              html:`<div class="dispatch-map-pin${proposed?' proposed':''}" style="--marker:${color}"><span>${number}</span></div>`,
+              iconSize:[36,44],
+              iconAnchor:[18,39],
+            });
+            const customer=stop.customerName||'Customer';
+            const marker=L.marker([point.lat,point.lng],{
+              icon,keyboard:true,title:`Stop ${number}: ${customer}`,alt:`Stop ${number}: ${customer}`,zIndexOffset:100+number,
+            });
+            const time=stop.time?OF.time(stop.time):'';
+            marker.bindTooltip(`<div class="dispatch-map-tooltip"><strong>${number}. ${OF.escape(customer)}</strong><span>${OF.escape([time,repName].filter(Boolean).join(' · '))}</span>${stop.address?`<span>${OF.escape(stop.address)}</span>`:''}<small>Click to find on timeline</small></div>`,{direction:'top',offset:[0,-28]});
+            marker.on('click',()=>focusTimelineStop(stop,route));
+            marker.addTo(map); bounds.extend([point.lat,point.lng]);
+          });
+        }
+
+        const fitRoutes=()=>{
+          if(!bounds.isValid())return;
+          map.invalidateSize({pan:false});
+          const northEast=bounds.getNorthEast(); const southWest=bounds.getSouthWest();
+          if(northEast.equals(southWest))map.setView(bounds.getCenter(),14,{animate:false});
+          else map.fitBounds(bounds,{paddingTopLeft:[28,36],paddingBottomRight:[28,36],maxZoom:15,animate:false});
+        };
+        fitButton?.addEventListener('click',fitRoutes);
+        status?.addEventListener('click',(event)=>{if(event.target.closest('[data-dispatch-map-retry]'))activateTiles(0);});
+        if(typeof ResizeObserver==='function'){
+          resizeObserver=new ResizeObserver(()=>map.invalidateSize({pan:false}));
+          resizeObserver.observe(mapNode);
+        }
+        map.on('unload',()=>resizeObserver?.disconnect());
+        // Establish a view immediately so layers initialize even when a tab
+        // opens in the background and animation frames are throttled.
+        fitRoutes();
+        setTimeout(()=>{if(generation===dispatchMapGeneration)fitRoutes();},0);
+      }catch(error){
+        console.warn('[dispatch-map] Could not initialize interactive map',error);
+        setStatus('error','Interactive map could not load. Try refreshing the page.');
+      }
+    }
     function dispatchMap(plan) {
       const routes=plan?.routes||[];
       const allStops=routes.flatMap((route)=>(route.stops||[]).map((stop)=>({...stop,_route:route})));
-      const origin=coord(plan?.origin?.lat,-85,85)!=null&&coord(plan?.origin?.lng,-180,180)!=null?{lat:Number(plan.origin.lat),lng:Number(plan.origin.lng)}:null;
-      const routeLines=routes.map((route)=>({route,lines:geometryPoints(route)}));
-      const mapPoints=[...allStops,...routeLines.flatMap((item)=>item.lines.flat()),...(origin?[origin]:[])];
-      const projection=mapProjection(mapPoints);
-      const missing=new Set(allStops.filter((stop)=>coord(stop.lat,-85,85)==null||coord(stop.lng,-180,180)==null).map((stop)=>String(stop.appointmentId))).size;
+      const mappableStops=allStops.filter((stop)=>coordinatePoint(stop));
+      const missing=new Set(allStops.filter((stop)=>!coordinatePoint(stop)).map((stop)=>String(stop.appointmentId))).size;
       const planError=plan?._error;
       let mapBody='';
       if(planError){
@@ -216,22 +433,12 @@ const OF = window.OF;
         mapBody=`<div class="dispatch-map-empty"><div class="ic">${OF.icon('user',22)}</div><h3>Select a rep</h3><p>Choose one or more reps above to draw their routes.</p></div>`;
       } else if(!allStops.length){
         mapBody=`<div class="dispatch-map-empty"><div class="ic">${OF.icon('schedule',22)}</div><h3>No routed stops</h3><p>There are no assigned or suggested stops for this day.</p></div>`;
-      } else if(!projection){
+      } else if(!mappableStops.length){
         mapBody=`<div class="dispatch-map-empty"><div class="ic">${OF.icon('pin',22)}</div><h3>Connect geocoding to map routes</h3><p>These stops have addresses but no coordinates yet. Connect Google or Mapbox in Settings → Integrations.</p><a class="btn btn-secondary btn-sm" href="/admin/settings?tab=integrations">Open integrations</a></div>`;
       } else {
-        const lines=routeLines.map(({route,lines:geometryLines})=>{
-          // A partial backend geometry intentionally contains only adjacent,
-          // measurable legs. Never rebuild it by filtering missing stops: that
-          // would draw a false hop across an address with no coordinates.
-          const fallback=route.quality==='partial'?[]:(route.stops||[]).filter((stop)=>coord(stop.lat,-85,85)!=null&&coord(stop.lng,-180,180)!=null);
-          const source=geometryLines.length?geometryLines:(fallback.length>=2?[fallback]:[]);
-          return source.map((line)=>{const points=line.map(projection.point);return `<polyline points="${points.map((point)=>`${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(' ')}" fill="none" stroke="${OF.color(route.technician?.color)}" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="11 8" vector-effect="non-scaling-stroke"/>`;}).join('');
-        }).join('');
-        const markers=routes.flatMap((route)=>(route.stops||[]).map((stop,index)=>({route,stop,index})))
-          .filter(({stop})=>coord(stop.lat,-85,85)!=null&&coord(stop.lng,-180,180)!=null)
-          .map(({route,stop,index})=>{const point=projection.point(stop);const left=(point.x/10).toFixed(3);const top=(point.y/6.2).toFixed(3);const lane=String(route.technician?.id||stop.technicianId||'unassigned');return `<a class="dispatch-map-marker${stop.assignment==='proposed'?' proposed':''}" style="--marker:${OF.color(route.technician?.color)};left:${left}%;top:${top}%" href="#dispatch-job-${encodeURIComponent(String(stop.appointmentId))}-${encodeURIComponent(lane)}" aria-label="Find stop ${index+1}, ${OF.escape(stop.customerName||'customer')}, in ${OF.escape(route.technician?.name||'rep')}'s timeline"><span>${index+1}</span></a>`;}).join('');
-        const base=origin?(()=>{const point=projection.point(origin);return `<span class="dispatch-map-marker base" style="left:${(point.x/10).toFixed(3)}%;top:${(point.y/6.2).toFixed(3)}%" role="img" aria-label="Business base"><span>B</span></span>`;})():'';
-        mapBody=`<iframe class="dispatch-map-frame" title="Static route map for ${OF.escape(labelYmd(cursor,{month:'long',day:'numeric'}))}" src="${OF.escape(projection.src)}" loading="lazy" referrerpolicy="no-referrer" tabindex="-1" aria-hidden="true"></iframe><svg class="dispatch-map-lines" viewBox="0 0 1000 620" preserveAspectRatio="none" aria-hidden="true">${lines}</svg>${base}${markers}`;
+        mapBody=`<div class="dispatch-leaflet-map" data-dispatch-leaflet role="region" aria-label="Interactive route map for ${OF.escape(labelYmd(cursor,{month:'long',day:'numeric'}))}"></div>
+          <div class="dispatch-map-status is-loading" data-dispatch-map-status role="status"><span class="spinner"></span><span>Loading map…</span></div>
+          <button class="dispatch-map-fit" data-dispatch-map-fit type="button" title="Fit all routes on the map" aria-label="Fit all routes on the map">${OF.icon('pin',15)} <span>Fit routes</span></button>`;
       }
       const routeRows=routes.map((route)=>{
         const maps=safeHttpsUrl(route.mapsUrl); const bits=routeMetricBits(route);
@@ -245,9 +452,9 @@ const OF = window.OF;
       return `<section class="dispatch-map-panel card" aria-label="Route map">
         <div class="dispatch-panel-head"><div><span class="dispatch-eyebrow">Route overview</span><h3>${OF.escape(labelYmd(cursor,{weekday:'long',month:'short',day:'numeric'}))}</h3></div><div class="dispatch-map-metrics">${metricChips(plan)}</div></div>
         <div class="dispatch-map-stage">${mapBody}</div>
-        ${missing?`<div class="dispatch-map-warning">${OF.icon('bell',14)} ${missing} stop${missing===1?' is':'s are'} missing coordinates; its route line may be incomplete.</div>`:''}
+        ${missing?`<div class="dispatch-map-warning">${OF.icon('bell',14)} ${missing} stop${missing===1?' is':'s are'} missing coordinates; ${missing===1?'its':'their'} route ${missing===1?'line':'lines'} may be incomplete.</div>`:''}
         <div class="dispatch-route-list">${routeList}</div>
-        <div class="dispatch-map-credit">Static map © OpenStreetMap contributors · Dashed lines show estimated stop order, not turn-by-turn roads.</div>
+        <div class="dispatch-map-credit">Click a numbered stop to find it on the timeline · Dashed lines show estimated stop order, not turn-by-turn roads.</div>
       </section>`;
     }
     function dispatchTimeline(appts, plan) {
@@ -295,6 +502,7 @@ const OF = window.OF;
       </section>`;
     }
     function renderDispatch(body, appts, plan) {
+      destroyDispatchMap();
       const allSelected=Boolean((TECHS||[]).length)&&dispatchSelection.size===(TECHS||[]).length;
       const proposed=(plan?.routes||[]).reduce((count,route)=>count+(Number(route.proposedCount)||0),0);
       const canDispatch=OF.hasCap('dispatch.manage'); const summary=planSummary(plan);
@@ -312,6 +520,7 @@ const OF = window.OF;
       body.querySelectorAll('[data-dispatch-tech]').forEach((button)=>button.addEventListener('click',()=>{const id=Number(button.dataset.dispatchTech);pendingDispatchFocus=`[data-dispatch-tech="${id}"]`;if(dispatchSelection.has(id))dispatchSelection.delete(id);else dispatchSelection.add(id);render(currentRoot);}));
       body.querySelector('#dispatchReview')?.addEventListener('click',()=>routeModal());
       body.querySelectorAll('[data-dispatch-retry]').forEach((button)=>button.addEventListener('click',()=>render(currentRoot)));
+      mountDispatchMap(body,plan);
       if(pendingDispatchFocus){const selector=pendingDispatchFocus;pendingDispatchFocus='';requestAnimationFrame(()=>body.querySelector(selector)?.focus());}
     }
 
@@ -422,6 +631,7 @@ const OF = window.OF;
     }
     async function render(root) {
       const sequence = ++renderSequence;
+      destroyDispatchMap();
       currentRoot = root;
       const r = rangeFor();
       let title = '';
@@ -610,7 +820,7 @@ const OF = window.OF;
       const content = root.closest('.content');
       content?.classList.add('schedule-content-wide');
       root.classList.add('schedule-view-root');
-      OF.onCleanup(()=>content?.classList.remove('schedule-content-wide'));
+      OF.onCleanup(()=>{content?.classList.remove('schedule-content-wide');destroyDispatchMap();});
       ctx.setActions(`<a class="btn btn-primary btn-sm" href="/admin/appointments?new=1">${OF.icon('plus',15)} New appointment</a>`);
       window.render = render; // allow inline onclick handlers to re-render
       await render(root);

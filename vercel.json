@@ -4,7 +4,10 @@
     { "source": "/(.*)", "destination": "/api/index" }
   ],
   "functions": {
-    "api/index.js": { "maxDuration": 30 }
+    "api/index.js": {
+      "maxDuration": 30,
+      "includeFiles": "node_modules/leaflet/dist/**"
+    }
   },
   "crons": [
     { "path": "/api/cron/daily", "schedule": "0 13 * * *" }

@@ -24,6 +24,7 @@ const EARTH_RADIUS_MILES = 3958.8;
 const GEOCODE_TIMEOUT_MS = 6_000;
 const GEOCODE_PLAN_BUDGET_MS = 5_500;
 const MAX_GEOCODES_PER_PLAN = 12;
+const MAX_ORIGIN_GEOCODES_PER_PLAN = 12;
 const GEOCODE_SUCCESS_TTL_MS = 24 * 60 * 60 * 1_000;
 const GEOCODE_FAILURE_TTL_MS = 5 * 60 * 1_000;
 const geocodeCache = new Map();
@@ -370,6 +371,40 @@ function customerAddress(row) {
   return [row.customer_address, row.customer_city, row.customer_state, row.customer_postal_code].filter(Boolean).join(', ');
 }
 
+function routeOrigin(address, source, coordinates = null) {
+  const normalized = String(address || '').trim();
+  if (!normalized) return null;
+  const location = coordinate(coordinates);
+  return {
+    address: normalized,
+    lat: location?.lat ?? null,
+    lng: location?.lng ?? null,
+    source,
+    _addressMeta: addressMeta(normalized),
+  };
+}
+
+function technicianRouteOrigin(tenant, technician) {
+  const customAddress = String(technician.route_start_address || '').trim();
+  if (customAddress) {
+    return routeOrigin(customAddress, 'technician', {
+      lat: technician.route_start_lat,
+      lng: technician.route_start_lng,
+    });
+  }
+  return routeOrigin(tenant.address, 'business');
+}
+
+function publicOrigin(origin) {
+  if (!origin) return null;
+  return {
+    address: origin.address,
+    lat: coordinate(origin)?.lat ?? null,
+    lng: coordinate(origin)?.lng ?? null,
+    source: origin.source,
+  };
+}
+
 async function dayStops(tenant, date) {
   const { from, to } = dayBounds(tenant, date);
   const r = await query(
@@ -436,6 +471,59 @@ async function geocodeMissingStops(tenant, stops, deadline) {
   }
 }
 
+/** Geocode each effective rep origin and persist custom-address coordinates. */
+async function geocodeRouteOrigins(tenant, technicians, businessOrigin, deadline) {
+  const origins = new Map(technicians.map((technician) => [
+    technician.id,
+    technicianRouteOrigin(tenant, technician),
+  ]));
+  if (!geocodingConfigured(tenant)) return { origins, businessOrigin };
+
+  const pendingByAddress = new Map();
+  const addPending = (origin, technician = null) => {
+    if (!origin || coordinate(origin)) return;
+    const key = String(origin.address || '').trim().toLowerCase();
+    if (!key) return;
+    const group = pendingByAddress.get(key) || { address: origin.address, entries: [] };
+    group.entries.push({ origin, technician });
+    pendingByAddress.set(key, group);
+  };
+  addPending(businessOrigin);
+  for (const technician of technicians) {
+    const origin = origins.get(technician.id);
+    addPending(origin, technician);
+  }
+  // Bound paid provider work per plan and geocode shared office/warehouse
+  // addresses once even when several reps start there.
+  const pending = [...pendingByAddress.values()].slice(0, MAX_ORIGIN_GEOCODES_PER_PLAN);
+  for (let index = 0; index < pending.length; index += 3) {
+    if (Date.now() >= deadline) break;
+    await Promise.all(pending.slice(index, index + 3).map(async (group) => {
+      const location = await cachedGeocode(tenant, group.address, deadline);
+      if (!location) return;
+      for (const { origin } of group.entries) {
+        origin.lat = location.lat;
+        origin.lng = location.lng;
+      }
+      // Tenant-business fallbacks are intentionally not cached on the rep: a
+      // later business-address edit must immediately change their origin.
+      const technicianIds = group.entries
+        .filter(({ technician }) => technician?.route_start_address)
+        .map(({ technician }) => technician.id);
+      if (technicianIds.length) {
+        await query(
+          `UPDATE technicians
+              SET route_start_lat=$3, route_start_lng=$4, updated_at=now()
+            WHERE tenant_id=$1 AND id=ANY($2::bigint[])
+              AND lower(btrim(route_start_address))=lower(btrim($5))`,
+          [tenant.id, technicianIds, location.lat, location.lng, group.address],
+        ).catch(() => {});
+      }
+    }));
+  }
+  return { origins, businessOrigin };
+}
+
 function overlaps(a, b) {
   const aStart = new Date(a.time).getTime();
   const aEnd = new Date(a.end || a.time).getTime();
@@ -477,8 +565,12 @@ export function assignNearbyStops(groups, unassigned) {
     if (belowTarget.length) candidates = belowTarget;
     candidates.sort((a, b) => {
       const score = (group) => {
-        // Seed empty reps before adding a second cluster to a busy rep.
-        if (!group.stops.length) return -1000 + group.index / 100;
+        // Seed empty reps before adding a second cluster to a busy rep. When
+        // starting points are known, seed the closest empty rep first.
+        if (!group.stops.length) {
+          const originDistance = group.origin ? stopDistance(group.origin, stop) : 100;
+          return -1000 + originDistance + group.index / 10000;
+        }
         const proximity = Math.min(...group.stops.map((member) => stopDistance(member, stop)));
         const loadPenalty = group.stops.length * 0.35;
         return proximity + loadPenalty + group.index / 10000;
@@ -534,7 +626,8 @@ export async function planRoutes(tenant, { date, technicianIds = [], includeUnas
   let selectedSql = '';
   if (requestedIds.length) { params.push(requestedIds); selectedSql = 'AND id = ANY($2::bigint[])'; }
   const techResult = await query(
-    `SELECT id, name, color FROM technicians WHERE tenant_id=$1 AND is_active=TRUE ${selectedSql} ORDER BY name`,
+    `SELECT id, name, color, route_start_address, route_start_lat, route_start_lng
+       FROM technicians WHERE tenant_id=$1 AND is_active=TRUE ${selectedSql} ORDER BY name`,
     params,
   );
   const technicians = techResult.rows.map((tech) => ({ ...tech, id: Number(tech.id) }));
@@ -549,26 +642,19 @@ export async function planRoutes(tenant, { date, technicianIds = [], includeUnas
 
   const stops = await dayStops(tenant, date);
   const geocodeDeadline = Date.now() + GEOCODE_PLAN_BUDGET_MS;
-  let origin = tenant.address ? { address: tenant.address, ...addressMeta(tenant.address) } : null;
-  const originLocation = origin && geocodingConfigured(tenant)
-    ? cachedGeocode(tenant, tenant.address, geocodeDeadline)
-    : Promise.resolve(null);
-  const [, location] = await Promise.all([
+  let businessOrigin = routeOrigin(tenant.address, 'business');
+  const [, originResult] = await Promise.all([
     geocodeMissingStops(tenant, stops, geocodeDeadline),
-    originLocation,
+    geocodeRouteOrigins(tenant, technicians, businessOrigin, geocodeDeadline),
   ]);
-  if (origin) {
-    if (location) origin = { ...origin, ...location };
-  }
-  const publicOrigin = origin ? {
-    address: origin.address,
-    lat: coordinate(origin)?.lat ?? null,
-    lng: coordinate(origin)?.lng ?? null,
-  } : null;
+  businessOrigin = originResult.businessOrigin;
+  const origins = originResult.origins;
+  const legacyOrigin = publicOrigin(businessOrigin);
 
   const groups = technicians.map((technician, index) => ({
     technician,
     index,
+    origin: origins.get(technician.id) || null,
     stops: stops
       .filter((stop) => stop.assignments.some((a) => a.technicianId === technician.id))
       .map((stop) => ({ ...stop, assignment: 'existing', technicianId: technician.id })),
@@ -580,6 +666,7 @@ export async function planRoutes(tenant, { date, technicianIds = [], includeUnas
   const coordinateCount = stops.filter((stop) => coordinate(stop)).length;
   const method = stops.length && coordinateCount === stops.length ? 'coordinates' : coordinateCount ? 'mixed' : 'address';
   const routes = groups.map((group) => {
+    const origin = origins.get(group.technician.id) || null;
     const ordered = routeOrder(group.stops, origin);
     const estimate = buildEstimatedRoute(ordered.order, origin, assumptions);
     // Preserve the legacy totalMiles meaning (raw coordinate distance). New
@@ -587,6 +674,7 @@ export async function planRoutes(tenant, { date, technicianIds = [], includeUnas
     const totalMiles = ordered.totalMiles;
     return {
       technician: group.technician,
+      origin: publicOrigin(origin),
       stops: ordered.order.map(({ _addressMeta, assignments, inPlanningDay, ...stop }) => stop),
       assignedCount: group.stops.filter((stop) => stop.assignment === 'existing').length,
       proposedCount: group.stops.filter((stop) => stop.assignment === 'proposed').length,
@@ -604,14 +692,14 @@ export async function planRoutes(tenant, { date, technicianIds = [], includeUnas
       estimatedDriveMinutes: estimate.metrics.estimatedDriveMinutes,
       estimatedFuelGallons: estimate.metrics.estimatedFuelGallons,
       estimatedFuelCostCents: estimate.metrics.estimatedFuelCostCents,
-      mapsUrl: mapsUrl(ordered.order, tenant.address || null, assumptions.includeReturnToBase),
+      mapsUrl: mapsUrl(ordered.order, origin?.address || null, assumptions.includeReturnToBase),
     };
   });
   const summary = summarizeEstimatedRoutes(routes);
   return {
     date,
     assumptions,
-    origin: publicOrigin,
+    origin: legacyOrigin,
     technicians,
     routes,
     summary,
@@ -700,7 +788,7 @@ export async function optimizeRoute(tenant, { technicianId, date }) {
     optimized: route.optimized,
     reason,
     assumptions: plan.assumptions,
-    origin: plan.origin,
+    origin: route.origin || plan.origin,
     quality: route.quality,
     geometry: route.geometry,
     legs: route.legs,
