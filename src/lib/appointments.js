@@ -27,23 +27,38 @@ export async function findOrCreateCustomer(tenantId, info, { cx = null } = {}) {
   if (!cx) return withTx((tx) => findOrCreateCustomer(tenantId, info, { cx: tx }));
   const run = cx ? (sql, params) => cx.query(sql, params) : query;
   const one = async (sql, params) => (await run(sql, params)).rows[0] || null;
-  const email = (info.email || '').trim().toLowerCase();
+  const clean = (value) => String(value || '').trim();
+  const email = clean(info.email).toLowerCase();
+  const incoming = {
+    phone: clean(info.phone),
+    address: clean(info.address),
+    city: clean(info.city),
+    state: clean(info.state),
+    postalCode: clean(info.postalCode),
+  };
   if (email) {
     const existing = await one(
-      'SELECT * FROM customers WHERE tenant_id=$1 AND lower(email)=$2 ORDER BY id LIMIT 1',
+      'SELECT * FROM customers WHERE tenant_id=$1 AND lower(email)=$2 ORDER BY id LIMIT 1 FOR UPDATE',
       [tenantId, email],
     );
     if (existing) {
-      // Backfill any missing contact details.
+      // A matching email identifies the customer, not a change-of-address
+      // request. Preserve a populated service-address tuple in full. If the
+      // street is missing, backfill every tuple field together so an incoming
+      // street can never be paired with stale city/state/postal data.
+      const backfillsAddress = !clean(existing.address) && Boolean(incoming.address);
       await run(
         `UPDATE customers SET
-           phone = COALESCE(NULLIF($3,''), phone),
-           address = COALESCE(NULLIF($4,''), address),
+           phone = CASE WHEN NULLIF(BTRIM(phone),'') IS NULL THEN COALESCE(NULLIF($3,''), phone) ELSE phone END,
+           address = CASE WHEN NULLIF(BTRIM(address),'') IS NULL AND NULLIF($4,'') IS NOT NULL THEN $4 ELSE address END,
+           city = CASE WHEN NULLIF(BTRIM(address),'') IS NULL AND NULLIF($4,'') IS NOT NULL THEN NULLIF($5,'') ELSE city END,
+           state = CASE WHEN NULLIF(BTRIM(address),'') IS NULL AND NULLIF($4,'') IS NOT NULL THEN NULLIF($6,'') ELSE state END,
+           postal_code = CASE WHEN NULLIF(BTRIM(address),'') IS NULL AND NULLIF($4,'') IS NOT NULL THEN NULLIF($7,'') ELSE postal_code END,
            updated_at = now()
          WHERE id=$1 AND tenant_id=$2`,
-        [existing.id, tenantId, info.phone || '', info.address || ''],
+        [existing.id, tenantId, incoming.phone, incoming.address, incoming.city, incoming.state, incoming.postalCode],
       );
-      if (String(info.address || '').trim()) {
+      if (backfillsAddress) {
         await run(
           `UPDATE appointments SET service_lat=NULL, service_lng=NULL
             WHERE tenant_id=$1 AND customer_id=$2 AND NULLIF(BTRIM(service_address),'') IS NULL`,
@@ -56,34 +71,41 @@ export async function findOrCreateCustomer(tenantId, info, { cx = null } = {}) {
   const row = await one(
     `INSERT INTO customers (tenant_id, name, email, phone, address, city, state, postal_code, notes)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
-    [tenantId, info.name || 'Customer', info.email || null, info.phone || null, info.address || null,
-     info.city || null, info.state || null, info.postalCode || null, info.notes || null],
+    [tenantId, clean(info.name) || 'Customer', email || null, incoming.phone || null, incoming.address || null,
+     incoming.city || null, incoming.state || null, incoming.postalCode || null, info.notes || null],
   );
   return row.id;
 }
 
+function nextDateYmd(dateYmd) {
+  const [year, month, day] = String(dateYmd).split('-').map(Number);
+  return new Date(Date.UTC(year, month - 1, day + 1, 12)).toISOString().slice(0, 10);
+}
+
 /** Day-scoped conflict data used for availability + booking validation. */
-export async function fetchDayConflicts(tenant, dateYmd) {
+export async function fetchDayConflicts(tenant, dateYmd, { cx = null } = {}) {
   const tz = tenant.timezone;
   const dayStart = zonedWallTimeToUtc(dateYmd, '00:00', tz).toISOString();
-  const dayEnd = zonedWallTimeToUtc(dateYmd, '00:00', tz);
-  const dayEndIso = new Date(dayEnd.getTime() + 86_400_000).toISOString();
-  const appts = await query(
+  // A local day can be 23 or 25 hours at a DST transition. Resolve the next
+  // local midnight instead of assuming a fixed 24-hour duration.
+  const dayEndIso = zonedWallTimeToUtc(nextDateYmd(dateYmd), '00:00', tz).toISOString();
+  const run = cx ? (sql, params) => cx.query(sql, params) : query;
+  const appts = await run(
     `SELECT scheduled_start, scheduled_end FROM appointments
       WHERE tenant_id=$1 AND status IN ('scheduled','completed')
         AND scheduled_start < $3 AND scheduled_end > $2`,
     [tenant.id, dayStart, dayEndIso],
   );
-  const blackouts = await query(
+  const blackouts = await run(
     `SELECT starts_at, ends_at FROM blackouts
       WHERE tenant_id=$1 AND starts_at < $3 AND ends_at > $2`,
     [tenant.id, dayStart, dayEndIso],
   );
-  const override = await queryOne(
+  const overrideResult = await run(
     'SELECT * FROM schedule_overrides WHERE tenant_id=$1 AND service_date=$2',
     [tenant.id, dateYmd],
   );
-  return { appointments: appts.rows, blackouts: blackouts.rows, override };
+  return { appointments: appts.rows, blackouts: blackouts.rows, override: overrideResult.rows[0] || null };
 }
 
 function dateRowYmd(value) {
@@ -125,7 +147,7 @@ export async function fetchRangeConflicts(tenant, startYmd, endYmdExclusive) {
 
 export function dayConflictsFromRange(tenant, dateYmd, range) {
   const dayStart = zonedWallTimeToUtc(dateYmd, '00:00', tenant.timezone);
-  const dayEnd = new Date(dayStart.getTime() + 86_400_000);
+  const dayEnd = zonedWallTimeToUtc(nextDateYmd(dateYmd), '00:00', tenant.timezone);
   const startMs = dayStart.getTime();
   const endMs = dayEnd.getTime();
   return {
@@ -142,24 +164,27 @@ export function slotCapacity(tenant, override) {
 }
 
 /** Count scheduled/completed appointments overlapping a window (optionally excluding one). */
-export async function overlapCount(tenantId, startISO, endISO, excludeId = null) {
+export async function overlapCount(tenantId, startISO, endISO, excludeId = null, { cx = null } = {}) {
   const params = [tenantId, startISO, endISO];
   let sql = `SELECT count(*)::int n FROM appointments
               WHERE tenant_id=$1 AND status IN ('scheduled','completed')
                 AND scheduled_start < $3 AND scheduled_end > $2`;
   if (excludeId) { params.push(excludeId); sql += ` AND id <> $${params.length}`; }
-  const { rows } = await query(sql, params);
+  const { rows } = await (cx ? cx.query(sql, params) : query(sql, params));
   return rows[0].n;
 }
 
 async function maybeLock(cx, key) {
   // Postgres: serialize concurrent bookings for the same tenant/day. PGlite is
   // already single-connection (serialized), so skip — and avoid aborting its tx.
-  try {
-    if ((await backendKind()) === 'postgres') {
-      await cx.query('SELECT pg_advisory_xact_lock(hashtext($1))', [key]);
-    }
-  } catch { /* best-effort */ }
+  if ((await backendKind()) === 'postgres') {
+    await cx.query('SELECT pg_advisory_xact_lock(hashtext($1))', [key]);
+  }
+}
+
+/** Serialize capacity-sensitive writes with public instant booking. */
+export async function lockSchedulingDay(cx, tenantId, dateYmd) {
+  await maybeLock(cx, `slot:${tenantId}:${dateYmd}`);
 }
 
 const INSERT_SQL = `INSERT INTO appointments
@@ -179,7 +204,7 @@ function insertParams(tenantId, d) {
  */
 export async function bookInstant(tenant, data, { dateYmd, capacity }) {
   return withTx(async (cx) => {
-    await maybeLock(cx, `slot:${tenant.id}:${dateYmd}`);
+    await lockSchedulingDay(cx, tenant.id, dateYmd);
     const cnt = (await cx.query(
       "SELECT count(*)::int n FROM appointments WHERE tenant_id=$1 AND status IN ('scheduled','completed') AND scheduled_start < $3 AND scheduled_end > $2",
       [tenant.id, data.scheduledStart, data.scheduledEnd],
@@ -200,4 +225,5 @@ export async function createAppointment(tenantId, data, { cx = null } = {}) {
 export default {
   getService, listActiveServices, effectiveBookingMode, findOrCreateCustomer,
   fetchDayConflicts, fetchRangeConflicts, dayConflictsFromRange, createAppointment,
+  overlapCount, lockSchedulingDay,
 };

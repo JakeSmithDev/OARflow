@@ -76,6 +76,13 @@ router.put('/settings', asyncHandler(async (req, res) => {
   const clean = {};
   for (const k of allowed) if (patch[k] !== undefined) clean[k] = patch[k];
   if (clean.branding?.primaryColor !== undefined) clean.branding = { ...clean.branding, primaryColor: hexColor(clean.branding.primaryColor, '#0e7c4b') };
+  if (clean.availability && Object.prototype.hasOwnProperty.call(clean.availability, 'startTimeIntervalMinutes')) {
+    const interval = Number(clean.availability.startTimeIntervalMinutes);
+    if (![15, 30, 45, 60, 90, 120].includes(interval)) {
+      return badRequest(res, 'Suggested start-time interval must be 15, 30, 45, 60, 90, or 120 minutes.');
+    }
+    clean.availability = { ...clean.availability, startTimeIntervalMinutes: interval };
+  }
   const t = await updateTenantSettings(req.tenant.id, clean);
   await logAudit({ tenantId: req.tenant.id, adminUsername: req.admin.username, action: 'settings_update', details: { sections: Object.keys(clean) } });
   res.json({ ok: true, settings: redactSettings(t.settings) });

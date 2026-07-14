@@ -4,7 +4,8 @@ import express from 'express';
 import { requireAdmin } from '../../lib/auth.js';
 import { asyncHandler, badRequest, notFound, toInt } from '../../lib/http.js';
 import { query, queryOne, withTx } from '../../lib/db.js';
-import { getService, findOrCreateCustomer, createAppointment, fetchDayConflicts, overlapCount, slotCapacity } from '../../lib/appointments.js';
+import { getService, findOrCreateCustomer, createAppointment, fetchDayConflicts, overlapCount, slotCapacity, lockSchedulingDay } from '../../lib/appointments.js';
+import { computeAdminStartTimeAvailability } from '../../lib/availability.js';
 import { ownsId } from '../../lib/ownership.js';
 import { zonedWallTimeToUtc, ymdInTimeZone } from '../../lib/dates.js';
 import { syncAppointment, deleteAppointmentEvent } from '../../lib/google_calendar.js';
@@ -40,15 +41,64 @@ function redactAppointment(req, appt) {
   return hasCapability(req.admin, 'appointments.manage') ? appt : { ...appt, internal_notes: null };
 }
 
+const DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
+const TIME_RE = /^(\d{2}):(\d{2})$/;
+const ISO_RE = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})(?::(\d{2})(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2})$/;
+const hasOwn = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
+
+function validDate(value) {
+  const match = DATE_RE.exec(String(value || ''));
+  if (!match) return false;
+  const year = Number(match[1]); const month = Number(match[2]); const day = Number(match[3]);
+  if (year < 1000 || month < 1 || month > 12 || day < 1 || day > 31) return false;
+  const probe = new Date(Date.UTC(year, month - 1, day));
+  return probe.getUTCFullYear() === year && probe.getUTCMonth() === month - 1 && probe.getUTCDate() === day;
+}
+
+function validTime(value) {
+  const match = TIME_RE.exec(String(value || ''));
+  return !!match && Number(match[1]) < 24 && Number(match[2]) < 60;
+}
+
+function parseIso(value) {
+  const text = typeof value === 'string' ? value.trim() : '';
+  const match = ISO_RE.exec(text);
+  if (!match || !validDate(match[1]) || !validTime(match[2]) || (match[3] != null && Number(match[3]) > 59)) return null;
+  const date = new Date(text);
+  return Number.isFinite(date.getTime()) ? date : null;
+}
+
+function localWallParts(date, timeZone) {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+    timeZone, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+  }).formatToParts(date).filter((part) => part.type !== 'literal').map((part) => [part.type, part.value]));
+  return { date: `${parts.year}-${parts.month}-${parts.day}`, time: `${parts.hour}:${parts.minute}` };
+}
+
 // Resolve a UTC start/end from {start ISO} or {date,time} + service duration.
+// Returns { error } for malformed or impossible values instead of allowing Date
+// normalization (or toISOString) to turn them into another time / a 500.
 function resolveTimes(tenant, body, durationMin) {
-  if (body.start) {
-    const start = new Date(body.start);
-    const end = body.end ? new Date(body.end) : new Date(start.getTime() + (durationMin || 60) * 60000);
+  const hasStart = hasOwn(body, 'start'); const hasEnd = hasOwn(body, 'end');
+  const hasDate = hasOwn(body, 'date'); const hasTime = hasOwn(body, 'time');
+  if (hasStart && (hasDate || hasTime)) return { error: 'Use either an ISO start time or a date and time, not both.' };
+  if (hasEnd && !hasStart) return { error: 'An end time requires a start time.' };
+  if (hasStart) {
+    const start = parseIso(body.start);
+    if (!start) return { error: 'Start must be a valid ISO date and time with a timezone.' };
+    const end = hasEnd ? parseIso(body.end) : new Date(start.getTime() + (durationMin || 60) * 60000);
+    if (!end) return { error: 'End must be a valid ISO date and time with a timezone.' };
+    if (end <= start) return { error: 'End time must be after start time.' };
     return { start, end };
   }
-  if (body.date && body.time) {
+  if (hasDate || hasTime) {
+    if (!validDate(body.date)) return { error: 'Choose a valid appointment date.' };
+    if (!validTime(body.time)) return { error: 'Choose a valid appointment time in HH:MM format.' };
     const start = zonedWallTimeToUtc(body.date, body.time, tenant.timezone);
+    const roundTrip = localWallParts(start, tenant.timezone);
+    if (roundTrip.date !== body.date || roundTrip.time !== body.time) {
+      return { error: 'That local date and time does not exist in this timezone.' };
+    }
     const end = new Date(start.getTime() + (durationMin || 60) * 60000);
     return { start, end };
   }
@@ -57,15 +107,15 @@ function resolveTimes(tenant, body, durationMin) {
 
 // Returns a { reason } block if the window is on a closed/blackout day or at/over
 // capacity (unless `force`). Used to warn staff before booking such a slot.
-async function schedulingBlock(tenant, startISO, endISO, excludeId, force) {
+async function schedulingBlock(tenant, startISO, endISO, excludeId, force, cx = null) {
   if (force) return null;
   const dateYmd = ymdInTimeZone(new Date(startISO), tenant.timezone);
-  const { override, blackouts } = await fetchDayConflicts(tenant, dateYmd);
+  const { override, blackouts } = await fetchDayConflicts(tenant, dateYmd, { cx });
   const st = new Date(startISO).getTime(); const en = new Date(endISO).getTime();
   const closedByBlackout = (blackouts || []).some((b) => new Date(b.starts_at).getTime() < en && new Date(b.ends_at).getTime() > st);
   if ((override && override.is_closed) || closedByBlackout) return { reason: 'This day is marked closed (holiday or blackout).' };
   const cap = slotCapacity(tenant, override);
-  const booked = await overlapCount(tenant.id, startISO, endISO, excludeId);
+  const booked = await overlapCount(tenant.id, startISO, endISO, excludeId, { cx });
   if (booked >= cap) return { reason: `That time is at capacity (${booked}/${cap} crews booked).` };
   return null;
 }
@@ -177,12 +227,87 @@ router.get('/calendar', asyncHandler(async (req, res) => {
 }));
 
 // --- Form metadata (active services) -------------------------------------
+router.get('/meta/availability', asyncHandler(async (req, res) => {
+  const serviceId = toInt(req.query.serviceId);
+  const date = String(req.query.date || '');
+  const technicianRequested = req.query.technicianId !== undefined && req.query.technicianId !== '';
+  const technicianId = technicianRequested ? toInt(req.query.technicianId) : null;
+  if (!serviceId) return badRequest(res, 'A valid service is required.');
+  if (!validDate(date)) return badRequest(res, 'Choose a valid appointment date.');
+  if (technicianRequested && !technicianId) return badRequest(res, 'A valid technician is required.');
+  const service = await getService(req.tenant.id, serviceId);
+  if (!service) return notFound(res, 'Service not found.');
+  if (technicianId) {
+    const technician = await queryOne('SELECT id FROM technicians WHERE tenant_id=$1 AND id=$2', [req.tenant.id, technicianId]);
+    if (!technician) return badRequest(res, 'Unknown technician.');
+  }
+  const availability = req.tenant.settings.availability || {};
+  const configuredInterval = Number(availability.startTimeIntervalMinutes);
+  const interval = [15, 30, 45, 60, 90, 120].includes(configuredInterval) ? configuredInterval : 30;
+  const conflicts = await fetchDayConflicts(req.tenant, date);
+  let slots = computeAdminStartTimeAvailability({
+    tenant: req.tenant,
+    service,
+    dateYmd: date,
+    ...conflicts,
+    stepMinutes: interval,
+  });
+  if (technicianId && slots.length) {
+    const rangeStart = slots[0].start;
+    const rangeEnd = slots.reduce((latest, slot) => slot.end > latest ? slot.end : latest, slots[0].end);
+    const assigned = await query(
+      `SELECT a.scheduled_start, a.scheduled_end
+         FROM appointment_assignments aa
+         JOIN appointments a ON a.id=aa.appointment_id AND a.tenant_id=aa.tenant_id
+        WHERE aa.tenant_id=$1 AND aa.technician_id=$2
+          AND a.status IN ('scheduled','completed')
+          AND a.scheduled_start < $4 AND a.scheduled_end > $3`,
+      [req.tenant.id, technicianId, rangeStart, rangeEnd],
+    );
+    const technicianRanges = assigned.rows.map((row) => [new Date(row.scheduled_start).getTime(), new Date(row.scheduled_end).getTime()]);
+    slots = slots.map((slot) => {
+      const start = new Date(slot.start).getTime(); const end = new Date(slot.end).getTime();
+      const technicianBusy = technicianRanges.some(([busyStart, busyEnd]) => start < busyEnd && busyStart < end);
+      return technicianBusy
+        ? { ...slot, available:false, technicianAvailable:false, unavailableReason:'technician' }
+        : { ...slot, technicianAvailable:true };
+    });
+  }
+  const availableSlots = slots.filter((slot) => slot.available);
+  let message = `${availableSlots.length} suggested time${availableSlots.length === 1 ? '' : 's'} available`;
+  if (conflicts.override?.is_closed) message = 'This date is closed by special hours.';
+  else if (!slots.length) message = 'No working hours are configured for this date.';
+  else if (!availableSlots.length) message = 'All suggested times are unavailable or at capacity.';
+  res.json({
+    ok: true,
+    date,
+    serviceId,
+    technicianId,
+    durationMinutes: Number(service.duration_minutes || availability.slotMinutes || 60),
+    startTimeIntervalMinutes: interval,
+    specialHours: !!conflicts.override,
+    slots,
+    availableSlots,
+    message,
+  });
+}));
+
 router.get('/meta/services', asyncHandler(async (req, res) => {
   const { rows } = await query(
     'SELECT id, name, duration_minutes, base_price_cents, color, booking_mode FROM service_types WHERE tenant_id=$1 AND is_active=TRUE ORDER BY sort_order, name',
     [req.tenant.id],
   );
-  res.json({ ok: true, services: rows });
+  const availability = req.tenant.settings.availability || {};
+  const allowedIntervals = new Set([15, 30, 45, 60, 90, 120]);
+  const configuredInterval = Number(availability.startTimeIntervalMinutes);
+  res.json({
+    ok: true,
+    services: rows,
+    scheduling: {
+      startTimeIntervalMinutes: allowedIntervals.has(configuredInterval) ? configuredInterval : 30,
+      hours: availability.hours || {},
+    },
+  });
 }));
 
 // --- Detail ---------------------------------------------------------------
@@ -264,6 +389,8 @@ router.post('/:id/assign', requirePermission('dispatch.manage'), asyncHandler(as
 router.post('/', asyncHandler(async (req, res) => {
   const tenant = req.tenant;
   const b = req.body || {};
+  const serviceAddress = String(b.serviceAddress || '').trim();
+  if (!serviceAddress) return badRequest(res, 'Service address is required.');
   const technicianId = b.technicianId == null || b.technicianId === '' ? null : toInt(b.technicianId);
   if (b.technicianId != null && b.technicianId !== '' && !technicianId) return badRequest(res, 'Unknown technician.');
   if (technicianId && !hasCapability(req.admin, 'dispatch.manage')) {
@@ -277,17 +404,35 @@ router.post('/', asyncHandler(async (req, res) => {
   }
   const service = b.serviceId ? await getService(tenant.id, toInt(b.serviceId)) : null;
   const times = resolveTimes(tenant, b, service?.duration_minutes);
+  if (times?.error) return badRequest(res, times.error);
   if (!times) return badRequest(res, 'A date and time are required.');
   const block = await schedulingBlock(tenant, times.start.toISOString(), times.end.toISOString(), null, b.force);
   if (block) return res.status(409).json({ ok: false, code: 'SCHEDULE_WARN', error: `${block.reason} Book anyway?` });
   let appt;
   try {
     const createdResult = await withTx(async (cx) => {
-      const resolvedCustomerId = customerId || await findOrCreateCustomer(tenant.id, b.customer, { cx });
+      // Assignment writes lock reps before appointments. Take the same rep lock
+      // before the shared day lock to keep create/reschedule lock ordering safe.
+      if (technicianId) {
+        const owned = await cx.query('SELECT id FROM technicians WHERE tenant_id=$1 AND id=$2 FOR UPDATE', [tenant.id, technicianId]);
+        if (!owned.rows.length) {
+          const error = new Error('Unknown technician.'); error.code = 'ASSIGNMENT_INVALID'; throw error;
+        }
+      }
+      const dateYmd = ymdInTimeZone(times.start, tenant.timezone);
+      await lockSchedulingDay(cx, tenant.id, dateYmd);
+      const lockedBlock = await schedulingBlock(tenant, times.start.toISOString(), times.end.toISOString(), null, b.force, cx);
+      if (lockedBlock) {
+        const error = new Error(`${lockedBlock.reason} Book anyway?`); error.code = 'SCHEDULE_WARN'; throw error;
+      }
+      const resolvedCustomerId = customerId || await findOrCreateCustomer(tenant.id, {
+        ...b.customer,
+        address: String(b.customer?.address || '').trim() || serviceAddress,
+      }, { cx });
       const created = await createAppointment(tenant.id, {
         customerId: resolvedCustomerId, serviceTypeId: service?.id || null, status: 'scheduled', bookingMode: 'instant', source: 'admin',
         scheduledStart: times.start.toISOString(), scheduledEnd: times.end.toISOString(),
-        serviceAddress: b.serviceAddress || null, notes: b.notes || null, internalNotes: b.internalNotes || null,
+        serviceAddress, notes: b.notes || null, internalNotes: b.internalNotes || null,
         priceCents: service?.base_price_cents || 0,
       }, { cx });
       if (technicianId) {
@@ -304,6 +449,7 @@ router.post('/', asyncHandler(async (req, res) => {
     customerId = createdResult.customerId;
   } catch (error) {
     if (error.code === 'ASSIGNMENT_INVALID') return badRequest(res, error.message);
+    if (error.code === 'SCHEDULE_WARN') return res.status(409).json({ ok:false, code:'SCHEDULE_WARN', error:error.message });
     throw error;
   }
   const full = await queryOne(`${SELECT} WHERE a.id=$1`, [appt.id]);
@@ -330,17 +476,19 @@ router.patch('/:id', asyncHandler(async (req, res) => {
   const set = (col, val) => { params.push(val); sets.push(`${col}=$${params.length}`); };
   let scheduleTimes = null;
 
-  if (b.date || b.start) {
+  const changingSchedule = ['date', 'time', 'start', 'end'].some((key) => hasOwn(b, key));
+  if (changingSchedule) {
     const times = resolveTimes(tenant, b, a.duration_minutes);
-    if (times) {
-      const block = await schedulingBlock(tenant, times.start.toISOString(), times.end.toISOString(), id, b.force);
-      if (block) return res.status(409).json({ ok: false, code: 'SCHEDULE_WARN', error: `${block.reason} Reschedule anyway?` });
-      scheduleTimes = times;
-      set('scheduled_start', times.start.toISOString()); set('scheduled_end', times.end.toISOString()); set('status', 'scheduled');
-    }
+    if (times?.error) return badRequest(res, times.error);
+    if (!times) return badRequest(res, 'A date and time are required.');
+    const block = await schedulingBlock(tenant, times.start.toISOString(), times.end.toISOString(), id, b.force);
+    if (block) return res.status(409).json({ ok: false, code: 'SCHEDULE_WARN', error: `${block.reason} Reschedule anyway?` });
+    scheduleTimes = times;
+    set('scheduled_start', times.start.toISOString()); set('scheduled_end', times.end.toISOString()); set('status', 'scheduled');
   }
-  if (b.serviceAddress !== undefined) {
-    set('service_address', b.serviceAddress);
+  if (hasOwn(b, 'serviceAddress')) {
+    if (typeof b.serviceAddress !== 'string' || !b.serviceAddress.trim()) return badRequest(res, 'Service address is required.');
+    set('service_address', b.serviceAddress.trim());
     // Coordinates describe the old address. Force the route planner to
     // geocode/fallback-group the new address instead of reusing stale data.
     set('service_lat', null); set('service_lng', null);
@@ -357,6 +505,12 @@ router.patch('/:id', asyncHandler(async (req, res) => {
   set('updated_at', new Date().toISOString());
   if (scheduleTimes) {
     const locked = await withLockedAppointmentSchedule(tenant, id, async ({ cx, technicianIds }) => {
+      const dateYmd = ymdInTimeZone(scheduleTimes.start, tenant.timezone);
+      await lockSchedulingDay(cx, tenant.id, dateYmd);
+      const capacityBlock = await schedulingBlock(
+        tenant, scheduleTimes.start.toISOString(), scheduleTimes.end.toISOString(), id, b.force, cx,
+      );
+      if (capacityBlock) return { capacityBlock };
       if (!b.force) {
         const conflict = await findTechnicianConflict(tenant, {
           appointmentId: id,
@@ -371,6 +525,7 @@ router.patch('/:id', asyncHandler(async (req, res) => {
     });
     if (locked.notFound) return notFound(res);
     if (locked.scheduleBusy) return res.status(409).json({ ok: false, code: 'SCHEDULE_CHANGED', error: 'The assigned crew changed. Refresh and try again.' });
+    if (locked.capacityBlock) return res.status(409).json({ ok:false, code:'SCHEDULE_WARN', error:`${locked.capacityBlock.reason} Reschedule anyway?` });
     if (locked.conflict) {
       return res.status(409).json({ ok: false, code: 'SCHEDULE_WARN', error: `${locked.conflict.technician_name} already has an overlapping appointment. Reschedule anyway?` });
     }
@@ -385,7 +540,7 @@ router.patch('/:id', asyncHandler(async (req, res) => {
     await scheduleForCompletion(tenant, updated).catch(() => {});
     emitEvent('appointment.completed', { tenantId: tenant.id, appointmentId: id, customerId: updated.customer_id }).catch(() => {});
   }
-  if ((b.date || b.start) && b.notify && updated.customer_email && !canceling) {
+  if (changingSchedule && b.notify && updated.customer_email && !canceling) {
     await sendTemplated(tenant, 'appointment_rescheduled', updated.customer_email, emailVars(tenant, updated), { type: 'appointment', id }).catch(() => {});
   }
   await logAudit({ tenantId: tenant.id, adminUsername: req.admin.username, action: 'appointment_update', entityType: 'appointment', entityId: id, details: { status: b.status } });
@@ -418,13 +573,17 @@ router.post('/:id/confirm', asyncHandler(async (req, res) => {
   if (!a) return notFound(res);
   if (a.status !== 'requested') return badRequest(res, 'This booking is not awaiting confirmation.');
   const b = req.body || {};
-  let start; let end;
-  if (b.start) { start = new Date(b.start); end = b.end ? new Date(b.end) : new Date(start.getTime() + (a.duration_minutes || 60) * 60000); }
+  let resolved = null;
+  if (hasOwn(b, 'start') || hasOwn(b, 'end')) resolved = resolveTimes(tenant, b, a.duration_minutes);
   else if (Number.isInteger(b.slotIndex) && Array.isArray(a.requested_slots) && a.requested_slots[b.slotIndex]) {
-    const s = a.requested_slots[b.slotIndex]; start = new Date(s.start); end = new Date(s.end);
-  } else if (b.date && b.time) {
-    start = zonedWallTimeToUtc(b.date, b.time, tenant.timezone); end = new Date(start.getTime() + (a.duration_minutes || 60) * 60000);
-  } else return badRequest(res, 'Choose a time to confirm.');
+    const slot = a.requested_slots[b.slotIndex];
+    resolved = resolveTimes(tenant, { start: slot.start, end: slot.end }, a.duration_minutes);
+    if (resolved?.error) return badRequest(res, 'The requested time is invalid.');
+  } else if (hasOwn(b, 'date') || hasOwn(b, 'time')) resolved = resolveTimes(tenant, b, a.duration_minutes);
+  else return badRequest(res, 'Choose a time to confirm.');
+  if (resolved?.error) return badRequest(res, resolved.error);
+  if (!resolved) return badRequest(res, 'Choose a time to confirm.');
+  const { start, end } = resolved;
 
   const block = await schedulingBlock(tenant, start.toISOString(), end.toISOString(), id, b.force);
   if (block) return res.status(409).json({ ok: false, code: 'SCHEDULE_WARN', error: `${block.reason} Confirm anyway?` });

@@ -31,6 +31,9 @@ export function defaultTenantSettings(overrides = {}) {
     },
     availability: {
       slotMinutes: 120,
+      // Controls the quick start-time choices in the admin appointment form.
+      // This is intentionally separate from service/slot duration.
+      startTimeIntervalMinutes: 30,
       capacityPerSlot: 2,           // how many crews can run concurrently
       // 'slots' = precise start times; 'windows' = named arrival windows.
       granularity: 'slots',

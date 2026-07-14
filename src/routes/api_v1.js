@@ -48,9 +48,12 @@ router.get('/customers/:id', asyncHandler(async (req, res) => {
 router.post('/customers', asyncHandler(async (req, res) => {
   if (!requireWrite(req, res)) return;
   const b = req.body || {};
-  if (!b.name) return badRequest(res, 'name is required.');
-  const id = await findOrCreateCustomer(req.tenant.id, { name: b.name, email: b.email, phone: b.phone, address: b.address, city: b.city, state: b.state });
-  const c = await queryOne('SELECT id, name, email, phone FROM customers WHERE tenant_id=$1 AND id=$2', [req.tenant.id, id]);
+  const name = typeof b.name === 'string' ? b.name.trim() : '';
+  const address = typeof b.address === 'string' ? b.address.trim() : '';
+  if (!name) return badRequest(res, 'name is required.');
+  if (!address) return badRequest(res, 'service address is required.');
+  const id = await findOrCreateCustomer(req.tenant.id, { name, email: b.email, phone: b.phone, address, city: b.city, state: b.state, postalCode: b.postalCode });
+  const c = await queryOne('SELECT id, name, email, phone, address, city, state, postal_code FROM customers WHERE tenant_id=$1 AND id=$2', [req.tenant.id, id]);
   res.json({ ok: true, data: c });
 }));
 

@@ -57,6 +57,11 @@
   OF.time = (iso) => iso ? new Intl.DateTimeFormat('en-US', { timeZone: tz(), hour: 'numeric', minute: '2-digit' }).format(new Date(iso)) : '';
   OF.dateTime = (iso) => iso ? `${OF.date(iso)} · ${OF.time(iso)}` : '—';
   OF.escape = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  OF.serviceAddress = (value = {}) => {
+    if (typeof value === 'string') return value.trim();
+    const region = [value.state, value.postal_code ?? value.postalCode].map((part) => String(part || '').trim()).filter(Boolean).join(' ');
+    return [value.address, value.city, region].map((part) => String(part || '').trim()).filter(Boolean).join(', ');
+  };
   OF.initials = (name) => (name || '?').split(/\s+/).slice(0, 2).map((w) => w[0]).join('').toUpperCase();
   OF.debounce = (fn, ms = 250) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
   OF.qs = (k) => new URLSearchParams(location.search).get(k);
@@ -134,16 +139,18 @@
       if (q.length < 2) { close(); return; }
       const d = await OF.get('/api/admin/customers?q=' + encodeURIComponent(q));
       results.innerHTML = (d.customers || []).slice(0, limit).map((c) => `
-        <div class="picker-row" data-id="${c.id}" data-name="${OF.escape(c.name)}" data-email="${OF.escape(c.email || '')}" data-phone="${OF.escape(c.phone || '')}" data-address="${OF.escape(c.address || '')}">
+        <div class="picker-row" data-id="${c.id}" data-name="${OF.escape(c.name)}" data-email="${OF.escape(c.email || '')}" data-phone="${OF.escape(c.phone || '')}" data-address="${OF.escape(c.address || '')}" data-city="${OF.escape(c.city || '')}" data-state="${OF.escape(c.state || '')}" data-postal="${OF.escape(c.postal_code || '')}">
           <span>${OF.escape(c.name)}</span>
-          <small>${OF.escape([c.email, c.phone].filter(Boolean).join(' · ') || c.address || '')}</small>
+          <small>${OF.escape([c.email, c.phone].filter(Boolean).join(' · ') || OF.serviceAddress(c))}</small>
         </div>`).join('') || '<div class="picker-row muted">No matches</div>';
       results.style.display = 'block';
       results.querySelectorAll('[data-id]').forEach((row) => row.addEventListener('click', () => {
         selected = {
           id: Number(row.dataset.id), name: row.dataset.name, email: row.dataset.email,
-          phone: row.dataset.phone, address: row.dataset.address,
+          phone: row.dataset.phone, address: row.dataset.address, city: row.dataset.city,
+          state: row.dataset.state, postalCode: row.dataset.postal,
         };
+        selected.serviceAddress = OF.serviceAddress(selected);
         input.value = selected.name;
         close();
         onSelect && onSelect(selected);

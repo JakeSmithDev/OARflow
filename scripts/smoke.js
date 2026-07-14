@@ -141,20 +141,128 @@ async function main() {
   await check('good login sets a session', async () => { const { data } = await call('/api/admin/auth/login', { auth: false, method: 'POST', body: { username: 'admin', password: 'changeme123' } }); assert.ok(data.ok); });
   await check('auth gate blocks without cookie', async () => { const { status } = await call('/api/admin/dashboard', { auth: false }); assert.equal(status, 401); });
 
+  // --- Customer address requirements ---
+  let addressedCustomerId;
+  await check('admin customer creation requires a street service address', async () => {
+    const missing = await call('/api/admin/customers', { method: 'POST', body: { name: 'No Address', address: '   ' } });
+    assert.equal(missing.status, 400); assert.match(missing.data.error, /service address is required/i);
+    const created = await call('/api/admin/customers', { method: 'POST', body: { name: 'Addressed Customer', email: 'addressed@example.com', phone: '410-555-0100', address: '  123 Route Lane  ', city: 'Annapolis', state: 'MD', postalCode: '21401' } });
+    assert.equal(created.status, 200); assert.equal(created.data.customer.address, '123 Route Lane');
+    addressedCustomerId = created.data.customer.id;
+    const listed = await call('/api/admin/customers?q=Addressed%20Customer');
+    assert.equal(listed.data.customers[0].postal_code, '21401', 'picker metadata includes the complete service address');
+  });
+  await check('customer service addresses cannot be explicitly cleared', async () => {
+    const cleared = await call(`/api/admin/customers/${addressedCustomerId}`, { method: 'PATCH', body: { address: '  ' } });
+    assert.equal(cleared.status, 400); assert.match(cleared.data.error, /service address is required/i);
+  });
+  await check('customer CSV import marks rows without addresses invalid', async () => {
+    const csv = 'name,email,address\nMissing Address,missing-address@example.com,\nReady Customer,ready@example.com,44 Service Road';
+    const preview = await call('/api/admin/customers/import', { method: 'POST', body: { csv, dryRun: true } });
+    assert.equal(preview.status, 200); assert.equal(preview.data.summary.valid, 1); assert.equal(preview.data.summary.errors, 1);
+    assert.match(preview.data.rows[0].errors.join(' '), /service address is required/i);
+    const imported = await call('/api/admin/customers/import', { method: 'POST', body: { csv, dryRun: false } });
+    assert.equal(imported.status, 200); assert.equal(imported.data.inserted, 1); assert.equal(imported.data.skipped, 1);
+  });
+  await check('legacy customers without addresses can still be edited', async () => {
+    const legacy = (await query("INSERT INTO customers (tenant_id,name) VALUES (1,'Legacy Customer') RETURNING id")).rows[0];
+    const edited = await call(`/api/admin/customers/${legacy.id}`, { method: 'PATCH', body: { notes: 'Follow up for address' } });
+    assert.equal(edited.status, 200); assert.equal(edited.data.customer.notes, 'Follow up for address');
+  });
+  await check('public booking cannot disable the service-address requirement', async () => {
+    await call('/api/admin/settings/settings', { method: 'PUT', body: { booking: { collectAddress: false } } });
+    const bootstrap = await call('/api/public/default/bootstrap', { auth: false });
+    assert.equal(bootstrap.data.booking.collectAddress, true);
+    const missing = await call('/api/public/default/book', { auth: false, method: 'POST', body: {
+      serviceId: svcInstant.id, customer: { name: 'Addressless Booker', email: 'addressless@example.com' },
+    } });
+    assert.equal(missing.status, 400); assert.match(missing.data.error, /service address is required/i);
+    await call('/api/admin/settings/settings', { method: 'PUT', body: { booking: { collectAddress: true } } });
+  });
+  await check('addressless public leads do not create customer records', async () => {
+    const before = (await query('SELECT count(*)::int n FROM customers WHERE tenant_id=1')).rows[0].n;
+    const missing = await call('/api/public/default/lead', { auth: false, method: 'POST', body: {
+      name: 'Addressless Lead', phone: '410-555-0199', email: 'addressless-lead@example.com', notes: 'Need help with ants',
+    } });
+    assert.equal(missing.status, 400); assert.match(missing.data.error, /service address is required/i);
+    const after = (await query('SELECT count(*)::int n FROM customers WHERE tenant_id=1')).rows[0].n;
+    assert.equal(after, before);
+  });
+  await check('duplicate-email public leads preserve an existing address tuple', async () => {
+    const lead = await call('/api/public/default/lead', { auth: false, method: 'POST', body: {
+      name: 'Addressed Customer', phone: '410-555-9999', email: 'ADDRESSed@example.com',
+      address: '999 Replacement Road', city: 'Baltimore', state: 'MD', postalCode: '21201', notes: 'Need a termite inspection',
+    } });
+    assert.equal(lead.status, 201); assert.equal(lead.data.customerId, addressedCustomerId);
+    const customer = (await query('SELECT phone,address,city,state,postal_code FROM customers WHERE id=$1', [addressedCustomerId])).rows[0];
+    assert.deepEqual(customer, { phone: '410-555-0100', address: '123 Route Lane', city: 'Annapolis', state: 'MD', postal_code: '21401' });
+  });
+  await check('duplicate-email leads atomically backfill a missing address tuple', async () => {
+    const legacy = (await query(
+      `INSERT INTO customers (tenant_id,name,email,city,state,postal_code)
+       VALUES (1,'Stale Tuple','stale-tuple@example.com','Old City','VA','00000') RETURNING id`,
+    )).rows[0];
+    const lead = await call('/api/public/default/lead', { auth: false, method: 'POST', body: {
+      name: 'Stale Tuple', phone: '410-555-0188', email: 'stale-tuple@example.com',
+      address: '88 Backfill Street', city: 'Frederick', postalCode: '21701', notes: 'Need recurring service',
+    } });
+    assert.equal(lead.status, 201); assert.equal(lead.data.customerId, legacy.id);
+    const customer = (await query('SELECT address,city,state,postal_code FROM customers WHERE id=$1', [legacy.id])).rows[0];
+    assert.deepEqual(customer, { address: '88 Backfill Street', city: 'Frederick', state: null, postal_code: '21701' });
+  });
+
   // --- Dashboard ---
   await check('dashboard returns metrics', async () => { const { data } = await call('/api/admin/dashboard'); assert.ok(data.ok && data.metrics && Array.isArray(data.today)); });
 
   // --- Appointments ---
   let reqId;
   await check('appointments list + counts', async () => { const { data } = await call('/api/admin/appointments'); assert.ok(data.counts.all >= 4); reqId = data.appointments.find((a) => a.status === 'requested')?.id; });
+  await check('confirm rejects malformed or impossible manual times', async () => {
+    assert.ok(reqId);
+    for (const body of [
+      { date: '2026-02-31', time: '10:00' },
+      { date: '2026-08-10', time: '25:00' },
+      { start: 'not-an-iso-date' },
+    ]) {
+      const result = await call(`/api/admin/appointments/${reqId}/confirm`, { method: 'POST', body });
+      assert.equal(result.status, 400, JSON.stringify(result.data));
+    }
+    const unchanged = await call(`/api/admin/appointments/${reqId}`);
+    assert.equal(unchanged.data.appointment.status, 'requested');
+  });
   await check('confirm a request -> scheduled', async () => { assert.ok(reqId); const { data } = await call(`/api/admin/appointments/${reqId}/confirm`, { method: 'POST', body: { slotIndex: 0, notify: false } }); assert.equal(data.appointment.status, 'scheduled'); });
   let apptId;
   await check('create + complete an appointment', async () => {
     const svc = (await call('/api/admin/appointments/meta/services')).data.services[0];
-    const c = await call('/api/admin/appointments', { method: 'POST', body: { customer: { name: 'Manual Job', email: 'manual@example.com' }, serviceId: svc.id, date, time: '15:30' } });
+    const c = await call('/api/admin/appointments', { method: 'POST', body: { customer: { name: 'Manual Job', email: 'manual@example.com' }, serviceId: svc.id, date, time: '15:30', serviceAddress: '15 Manual Lane, Annapolis, MD' } });
     apptId = c.data.appointment.id;
     const done = await call(`/api/admin/appointments/${apptId}`, { method: 'PATCH', body: { status: 'completed' } });
     assert.equal(done.data.appointment.status, 'completed');
+  });
+  await check('manual appointment creation requires a service address', async () => {
+    const svc = (await call('/api/admin/appointments/meta/services')).data.services[0];
+    const missing = await call('/api/admin/appointments', { method: 'POST', body: { customerId: 1, serviceId: svc.id, date, time: '16:30' } });
+    assert.equal(missing.status, 400); assert.match(missing.data.error, /service address is required/i);
+  });
+  await check('admin create and reschedule reject invalid date/time values', async () => {
+    const svc = (await call('/api/admin/appointments/meta/services')).data.services[0];
+    const baseBody = { customerId:1, serviceId:svc.id, serviceAddress:'400 Validation Way, Baltimore, MD' };
+    const invalidCreates = [
+      { ...baseBody, date:'2026-02-31', time:'10:00' },
+      { ...baseBody, date:'2026-08-10', time:'24:01' },
+      { ...baseBody, date:'2027-03-14', time:'02:30' },
+      { ...baseBody, start:'tomorrow morning' },
+      { ...baseBody, start:'2026-08-10T15:00:00.000Z', end:'2026-08-10T14:00:00.000Z' },
+    ];
+    for (const body of invalidCreates) {
+      const result = await call('/api/admin/appointments', { method:'POST', body });
+      assert.equal(result.status, 400, JSON.stringify(result.data));
+    }
+    const before = (await call(`/api/admin/appointments/${apptId}`)).data.appointment.scheduled_start;
+    const badReschedule = await call(`/api/admin/appointments/${apptId}`, { method:'PATCH', body:{ date:'2026-04-31', time:'09:00' } });
+    assert.equal(badReschedule.status, 400, JSON.stringify(badReschedule.data));
+    const after = (await call(`/api/admin/appointments/${apptId}`)).data.appointment.scheduled_start;
+    assert.equal(after, before, 'invalid reschedule must not mutate the appointment');
   });
   await check('completion scheduled a follow-up', async () => {
     const { data } = await call('/api/admin/customers?q=manual@example.com');
@@ -562,6 +670,19 @@ async function main() {
     assert.equal(data.geocoder, false); // no geocoder in dev
     assert.ok(data.mapsUrl && data.mapsUrl.includes('google.com/maps/dir'));
   });
+  await check('appointment address PATCH rejects blank values but permits legacy unrelated edits', async () => {
+    const legacy = (await query(
+      `INSERT INTO appointments (tenant_id, customer_id, status, booking_mode, source, service_address, requested_slots)
+       VALUES (1,1,'requested','request','admin',NULL,'[]'::jsonb) RETURNING id`,
+    )).rows[0];
+    for (const serviceAddress of [null, '', '   ', 123]) {
+      const rejected = await call(`/api/admin/appointments/${legacy.id}`, { method:'PATCH', body:{ serviceAddress } });
+      assert.equal(rejected.status, 400); assert.match(rejected.data.error, /service address is required/i);
+    }
+    const notes = await call(`/api/admin/appointments/${legacy.id}`, { method:'PATCH', body:{ internalNotes:'Collect address on follow-up' } });
+    assert.equal(notes.status, 200); assert.equal(notes.data.appointment.internal_notes, 'Collect address on follow-up');
+    await call(`/api/admin/appointments/${legacy.id}`, { method:'PATCH', body:{ status:'canceled' } });
+  });
   await check('customer address edits clear only fallback appointment coordinates', async () => {
     const customer = (await call('/api/admin/customers', { method: 'POST', body: {
       name: 'Coordinate Cache Customer', address: '1 Old Address', city: 'Annapolis', state: 'MD', postalCode: '21401',
@@ -721,9 +842,13 @@ async function main() {
     const me = await (await fetch(base + '/api/v1/me', { headers: { Authorization: 'Bearer ' + apiKey } })).json();
     assert.ok(me.tenant.name); assert.ok(me.events.includes('invoice.paid'));
   });
+  await check('API customer creation requires a street service address', async () => {
+    const res = await fetch(base + '/api/v1/customers', { method: 'POST', headers: { Authorization: 'Bearer ' + apiKey, 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'API Missing Address' }) });
+    const body = await res.json(); assert.equal(res.status, 400); assert.match(body.error, /service address is required/i);
+  });
   await check('API can create a customer (write scope)', async () => {
-    const res = await fetch(base + '/api/v1/customers', { method: 'POST', headers: { Authorization: 'Bearer ' + apiKey, 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'API Created', email: 'api.created@example.com' }) });
-    const body = await res.json(); assert.ok(body.ok); assert.ok(body.data.id);
+    const res = await fetch(base + '/api/v1/customers', { method: 'POST', headers: { Authorization: 'Bearer ' + apiKey, 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'API Created', email: 'api.created@example.com', address: '500 API Avenue' }) });
+    const body = await res.json(); assert.ok(body.ok); assert.ok(body.data.id); assert.equal(body.data.address, '500 API Avenue');
   });
   let hookEpId;
   await check('subscribe a webhook endpoint (HMAC secret once)', async () => {
@@ -751,7 +876,7 @@ async function main() {
   });
   await check('completing an assigned job accrues commission', async () => {
     const services = (await call('/api/admin/appointments/meta/services')).data.services;
-    const created = await call('/api/admin/appointments', { method: 'POST', body: { customer: { name: 'Commission Test' }, serviceId: services[0].id, date: '2026-08-10', time: '10:00', force: true } });
+    const created = await call('/api/admin/appointments', { method: 'POST', body: { customer: { name: 'Commission Test' }, serviceId: services[0].id, date: '2026-08-10', time: '10:00', serviceAddress: '77 Commission Court, Baltimore, MD', force: true } });
     commAppt = created.data.appointment.id;
     await call(`/api/admin/appointments/${commAppt}/assign`, { method: 'POST', body: { technicianIds: [techId], leadId: techId } });
     await call(`/api/admin/appointments/${commAppt}`, { method: 'PATCH', body: { status: 'completed' } });
@@ -882,7 +1007,113 @@ async function main() {
   // --- Settings + integrations ---
   await check('settings overview', async () => { const { data } = await call('/api/admin/settings'); assert.ok(data.profile && data.settings.booking && data.integrations); });
   await check('update business profile', async () => { const { data } = await call('/api/admin/settings/profile', { method: 'PATCH', body: { contactPhone: '(410) 555-9999' } }); assert.equal(data.profile.contactPhone, '(410) 555-9999'); });
-  await check('update availability settings', async () => { const { data } = await call('/api/admin/settings/settings', { method: 'PUT', body: { availability: { capacityPerSlot: 3 } } }); assert.equal(data.settings.availability.capacityPerSlot, 3); });
+  await check('update availability settings', async () => { const { data } = await call('/api/admin/settings/settings', { method: 'PUT', body: { availability: { capacityPerSlot: 3, startTimeIntervalMinutes: 45 } } }); assert.equal(data.settings.availability.capacityPerSlot, 3); assert.equal(data.settings.availability.startTimeIntervalMinutes, 45); });
+  await check('appointment form metadata exposes start-time settings', async () => {
+    const { data } = await call('/api/admin/appointments/meta/services');
+    assert.equal(data.scheduling.startTimeIntervalMinutes, 45);
+    assert.ok(Array.isArray(data.scheduling.hours['1']));
+  });
+  await check('settings reject unsupported suggested-time intervals', async () => {
+    const invalid = await call('/api/admin/settings/settings', { method:'PUT', body:{ availability:{ startTimeIntervalMinutes:20 } } });
+    assert.equal(invalid.status, 400); assert.match(invalid.data.error, /15, 30, 45, 60, 90, or 120/);
+    const unchanged = await call('/api/admin/settings');
+    assert.equal(unchanged.data.settings.availability.startTimeIntervalMinutes, 45);
+  });
+  await check('admin suggested times honor hours, overrides, capacity, and blackouts', async () => {
+    const services = (await call('/api/admin/appointments/meta/services')).data.services;
+    const service = services.find((row) => row.name === 'General Pest Control');
+    assert.ok(service); assert.equal(service.duration_minutes, 60);
+
+    const weekly = await call(`/api/admin/appointments/meta/availability?serviceId=${service.id}&date=2026-09-28`);
+    assert.equal(weekly.status, 200); assert.equal(weekly.data.startTimeIntervalMinutes, 45);
+    assert.deepEqual(weekly.data.slots.slice(0, 3).map((slot) => slot.time), ['08:00', '08:45', '09:30']);
+
+    const specialDate = '2026-09-21';
+    const override = await call('/api/admin/settings/overrides', { method:'POST', body:{ serviceDate:specialDate, hoursJson:[{ start:'09:00', end:'12:00' }], capacity:1 } });
+    assert.equal(override.status, 200);
+    const open = await call(`/api/admin/appointments/meta/availability?serviceId=${service.id}&date=${specialDate}`);
+    assert.deepEqual(open.data.slots.map((slot) => slot.time), ['09:00', '09:45', '10:30']);
+    assert.equal(open.data.specialHours, true);
+
+    const appointment = await call('/api/admin/appointments', { method:'POST', body:{ customerId:1, serviceId:service.id, date:specialDate, time:'09:00', serviceAddress:'900 Capacity Court, Baltimore, MD', force:true } });
+    assert.equal(appointment.status, 200, JSON.stringify(appointment.data));
+    const atCapacity = await call(`/api/admin/appointments/meta/availability?serviceId=${service.id}&date=${specialDate}`);
+    assert.equal(atCapacity.data.slots.find((slot) => slot.time === '09:00').available, false);
+    assert.equal(atCapacity.data.slots.find((slot) => slot.time === '09:45').available, false);
+    assert.equal(atCapacity.data.slots.find((slot) => slot.time === '10:30').available, true);
+
+    const blackout = await call('/api/admin/settings/blackouts', { method:'POST', body:{ startsAt:'2026-09-21T14:30:00.000Z', endsAt:'2026-09-21T16:00:00.000Z', reason:'Team meeting' } });
+    assert.equal(blackout.status, 200);
+    const blocked = await call(`/api/admin/appointments/meta/availability?serviceId=${service.id}&date=${specialDate}`);
+    assert.equal(blocked.data.availableSlots.length, 0);
+    assert.match(blocked.data.message, /unavailable|capacity/i);
+
+    await call(`/api/admin/appointments/${appointment.data.appointment.id}`, { method:'PATCH', body:{ status:'canceled' } });
+    await call(`/api/admin/settings/blackouts/${blackout.data.blackout.id}`, { method:'DELETE' });
+    await call(`/api/admin/settings/overrides/${override.data.override.id}`, { method:'DELETE' });
+  });
+  await check('admin suggested times filter a selected technician and validate ownership', async () => {
+    const service = (await call('/api/admin/appointments/meta/services')).data.services.find((row) => row.name === 'General Pest Control');
+    const date = '2026-09-28';
+    const appointment = await call('/api/admin/appointments', { method:'POST', body:{
+      customerId:1, serviceId:service.id, date, time:'08:00', technicianId:techId,
+      serviceAddress:'901 Technician Trail, Baltimore, MD', force:true,
+    } });
+    assert.equal(appointment.status, 200, JSON.stringify(appointment.data));
+    const global = await call(`/api/admin/appointments/meta/availability?serviceId=${service.id}&date=${date}`);
+    const filtered = await call(`/api/admin/appointments/meta/availability?serviceId=${service.id}&date=${date}&technicianId=${techId}`);
+    assert.equal(global.data.slots.find((slot) => slot.time === '08:00').available, true, 'global capacity remains');
+    assert.equal(filtered.data.slots.find((slot) => slot.time === '08:00').unavailableReason, 'technician');
+    assert.equal(filtered.data.slots.find((slot) => slot.time === '08:45').unavailableReason, 'technician');
+    assert.equal(filtered.data.slots.find((slot) => slot.time === '09:30').available, true);
+    const foreign = await call(`/api/admin/appointments/meta/availability?serviceId=${service.id}&date=${date}&technicianId=999999`);
+    assert.equal(foreign.status, 400); assert.match(foreign.data.error, /unknown technician/i);
+    await call(`/api/admin/appointments/${appointment.data.appointment.id}`, { method:'PATCH', body:{ status:'canceled' } });
+  });
+  await check('admin DST suggestions skip nonexistent, reversed, and duplicate slots', async () => {
+    const service = (await call('/api/admin/appointments/meta/services')).data.services.find((row) => row.name === 'General Pest Control');
+    const springDate = '2027-03-14';
+    const springOverride = await call('/api/admin/settings/overrides', { method:'POST', body:{ serviceDate:springDate, hoursJson:[{ start:'01:00', end:'04:00' }], capacity:3 } });
+    const spring = await call(`/api/admin/appointments/meta/availability?serviceId=${service.id}&date=${springDate}`);
+    assert.equal(spring.status, 200);
+    assert.deepEqual(spring.data.slots.map((slot) => slot.time), ['01:00', '01:45']);
+    assert.ok(spring.data.slots.every((slot) => new Date(slot.end) > new Date(slot.start)));
+    assert.equal(new Set(spring.data.slots.map((slot) => slot.start)).size, spring.data.slots.length);
+    await call(`/api/admin/settings/overrides/${springOverride.data.override.id}`, { method:'DELETE' });
+
+    const fallDate = '2026-11-01';
+    let fallOverride = await call('/api/admin/settings/overrides', { method:'POST', body:{ serviceDate:fallDate, hoursJson:[{ start:'00:30', end:'03:30' }], capacity:3 } });
+    const repeated = await call(`/api/admin/appointments/meta/availability?serviceId=${service.id}&date=${fallDate}`);
+    assert.ok(repeated.data.slots.every((slot) => new Date(slot.end) > new Date(slot.start)));
+    assert.equal(new Set(repeated.data.slots.map((slot) => slot.start)).size, repeated.data.slots.length);
+
+    fallOverride = await call('/api/admin/settings/overrides', { method:'POST', body:{ serviceDate:fallDate, hoursJson:[{ start:'22:00', end:'23:59' }], capacity:1 } });
+    const late = await call('/api/admin/appointments', { method:'POST', body:{ customerId:1, serviceId:service.id, date:fallDate, time:'23:15', serviceAddress:'902 DST Drive, Baltimore, MD', force:true } });
+    assert.equal(late.status, 200, JSON.stringify(late.data));
+    const lateSlots = await call(`/api/admin/appointments/meta/availability?serviceId=${service.id}&date=${fallDate}`);
+    assert.equal(lateSlots.data.slots.find((slot) => slot.time === '22:00').available, true);
+    assert.equal(lateSlots.data.slots.find((slot) => slot.time === '22:45').available, false, 'late conflict survives the 25-hour day bound');
+    await call(`/api/admin/appointments/${late.data.appointment.id}`, { method:'PATCH', body:{ status:'canceled' } });
+    await call(`/api/admin/settings/overrides/${fallOverride.data.override.id}`, { method:'DELETE' });
+  });
+  await check('concurrent admin creates cannot exceed capacity', async () => {
+    const service = (await call('/api/admin/appointments/meta/services')).data.services.find((row) => row.name === 'General Pest Control');
+    const date = '2026-10-05';
+    const override = await call('/api/admin/settings/overrides', { method:'POST', body:{ serviceDate:date, hoursJson:[{ start:'08:00', end:'10:00' }], capacity:1 } });
+    const baseBody = { customerId:1, serviceId:service.id, date, time:'08:00' };
+    const results = await Promise.all([
+      call('/api/admin/appointments', { method:'POST', body:{ ...baseBody, serviceAddress:'903 Concurrency Court, Baltimore, MD' } }),
+      call('/api/admin/appointments', { method:'POST', body:{ ...baseBody, serviceAddress:'904 Concurrency Court, Baltimore, MD' } }),
+    ]);
+    assert.deepEqual(results.map((result) => result.status).sort(), [200, 409]);
+    const winner = results.find((result) => result.status === 200);
+    const loser = results.find((result) => result.status === 409);
+    assert.equal(loser.data.code, 'SCHEDULE_WARN');
+    const stored = await query("SELECT count(*)::int n FROM appointments WHERE tenant_id=1 AND status='scheduled' AND service_address IN ('903 Concurrency Court, Baltimore, MD','904 Concurrency Court, Baltimore, MD')");
+    assert.equal(stored.rows[0].n, 1);
+    await call(`/api/admin/appointments/${winner.data.appointment.id}`, { method:'PATCH', body:{ status:'canceled' } });
+    await call(`/api/admin/settings/overrides/${override.data.override.id}`, { method:'DELETE' });
+  });
   await check('create a service', async () => { const { data } = await call('/api/admin/settings/services', { method: 'POST', body: { name: 'Wasp Removal', durationMinutes: 45, basePriceCents: 11900, bookingMode: 'instant' } }); assert.ok(data.service.id); });
   await check('create an invoice preset', async () => { const { data } = await call('/api/admin/settings/presets', { method: 'POST', body: { label: 'Attic Treatment', defaultAmountCents: 30000 } }); assert.ok(data.preset.id); });
   await check('list + edit email template', async () => { const list = await call('/api/admin/settings/email-templates'); assert.ok(list.data.templates.length >= 7); const put = await call('/api/admin/settings/email-templates/follow_up', { method: 'PUT', body: { subject: 'Checking in!', html: '<p>Hi {{CUSTOMER_NAME}}</p>', text: 'Hi' } }); assert.ok(put.data.ok); });
@@ -1013,9 +1244,9 @@ async function main() {
     const d = ymd(new Date(Date.now() + 40 * 86400000));
     await call('/api/admin/settings/blackouts', { method: 'POST', body: { date: d, reason: 'Closed' } });
     const svc = (await call('/api/admin/appointments/meta/services')).data.services[0];
-    const blocked = await call('/api/admin/appointments', { method: 'POST', body: { customer: { name: 'Closed Test', email: 'ct@example.com' }, serviceId: svc.id, date: d, time: '10:00' } });
+    const blocked = await call('/api/admin/appointments', { method: 'POST', body: { customer: { name: 'Closed Test', email: 'ct@example.com' }, serviceId: svc.id, date: d, time: '10:00', serviceAddress: '1 Holiday Road, Baltimore, MD' } });
     assert.equal(blocked.status, 409); assert.equal(blocked.data.code, 'SCHEDULE_WARN');
-    const forced = await call('/api/admin/appointments', { method: 'POST', body: { customer: { name: 'Closed Test', email: 'ct@example.com' }, serviceId: svc.id, date: d, time: '10:00', force: true } });
+    const forced = await call('/api/admin/appointments', { method: 'POST', body: { customer: { name: 'Closed Test', email: 'ct@example.com' }, serviceId: svc.id, date: d, time: '10:00', serviceAddress: '1 Holiday Road, Baltimore, MD', force: true } });
     assert.equal(forced.status, 200);
   });
 
@@ -1025,8 +1256,8 @@ async function main() {
     const { getTenantById } = await import('../src/lib/tenants.js');
     await call('/api/admin/settings/settings', { method: 'PUT', body: { notifications: { appointmentReminder: { enabled: true, leadHours: 48 } } } });
     const svc = (await call('/api/admin/appointments/meta/services')).data.services[0];
-    const soon = await call('/api/admin/appointments', { method: 'POST', body: { customer: { name: 'Remind Soon', email: 'soon@example.com' }, serviceId: svc.id, date: ymd(new Date(Date.now() + 86400000)), time: '10:00', force: true } });
-    const far = await call('/api/admin/appointments', { method: 'POST', body: { customer: { name: 'Remind Far', email: 'far@example.com' }, serviceId: svc.id, date: ymd(new Date(Date.now() + 10 * 86400000)), time: '10:00', force: true } });
+    const soon = await call('/api/admin/appointments', { method: 'POST', body: { customer: { name: 'Remind Soon', email: 'soon@example.com' }, serviceId: svc.id, date: ymd(new Date(Date.now() + 86400000)), time: '10:00', serviceAddress: '10 Reminder Way, Baltimore, MD', force: true } });
+    const far = await call('/api/admin/appointments', { method: 'POST', body: { customer: { name: 'Remind Far', email: 'far@example.com' }, serviceId: svc.id, date: ymd(new Date(Date.now() + 10 * 86400000)), time: '10:00', serviceAddress: '20 Reminder Way, Baltimore, MD', force: true } });
     const tenant = await getTenantById(1);
     const r1 = await processDueReminders(tenant);
     assert.ok(r1.sent >= 1, 'sent the in-window reminder');
@@ -1039,7 +1270,7 @@ async function main() {
   });
   await check('[reminders] manual send-reminder endpoint + disabled toggle', async () => {
     const svc = (await call('/api/admin/appointments/meta/services')).data.services[0];
-    const a = await call('/api/admin/appointments', { method: 'POST', body: { customer: { name: 'Manual Remind', email: 'mr@example.com' }, serviceId: svc.id, date: ymd(new Date(Date.now() + 3 * 86400000)), time: '09:00', force: true } });
+    const a = await call('/api/admin/appointments', { method: 'POST', body: { customer: { name: 'Manual Remind', email: 'mr@example.com' }, serviceId: svc.id, date: ymd(new Date(Date.now() + 3 * 86400000)), time: '09:00', serviceAddress: '30 Reminder Way, Baltimore, MD', force: true } });
     const r = await call(`/api/admin/appointments/${a.data.appointment.id}/send-reminder`, { method: 'POST' });
     assert.ok(r.data.ok);
     const { processDueReminders } = await import('../src/lib/reminders.js');

@@ -84,6 +84,69 @@ export function computeDayAvailability({ tenant, service, dateYmd, appointments 
   });
 }
 
+/**
+ * Precise start-time choices for the admin appointment form. Unlike public
+ * booking availability, these ignore lead/max-booking windows and arrival-
+ * window mode, but still honor the operational calendar and capacity.
+ */
+export function computeAdminStartTimeAvailability({
+  tenant, service, dateYmd, appointments = [], blackouts = [], override = null,
+  stepMinutes = 30,
+}) {
+  const tz = tenant.timezone;
+  const avail = tenant.settings.availability;
+  const duration = Math.max(1, Number(service?.duration_minutes || avail.slotMinutes || 60));
+  const step = Math.max(1, Number(stepMinutes) || 30);
+  const capacity = (override && Number.isInteger(override.capacity)) ? override.capacity : (avail.capacityPerSlot || 1);
+  const raw = buildDaySlots(effectiveHours(tenant, dateYmd, override), duration, step);
+  const appointmentRanges = appointments
+    .filter((row) => row.scheduled_start && row.scheduled_end)
+    .map((row) => [new Date(row.scheduled_start).getTime(), new Date(row.scheduled_end).getTime()]);
+  const blackoutRanges = blackouts
+    .map((row) => [new Date(row.starts_at).getTime(), new Date(row.ends_at).getTime()]);
+  const fmt = (date) => new Intl.DateTimeFormat('en-US', {
+    timeZone: tz, hour: 'numeric', minute: '2-digit',
+  }).format(date);
+  const localParts = (date) => {
+    const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+      timeZone: tz, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+    }).formatToParts(date).filter((part) => part.type !== 'literal').map((part) => [part.type, part.value]));
+    return { date: `${parts.year}-${parts.month}-${parts.day}`, time: `${parts.hour}:${parts.minute}` };
+  };
+  const seenStarts = new Set();
+  const slots = [];
+
+  for (const slot of raw) {
+    const startUtc = zonedWallTimeToUtc(dateYmd, slot.start, tz);
+    const roundTrip = localParts(startUtc);
+    // Spring-forward wall times (for example 02:30 when the clock jumps to
+    // 03:00) normalize to another instant. Never present those as choices.
+    if (roundTrip.date !== dateYmd || roundTrip.time !== slot.start) continue;
+    // Appointment creation derives the end from elapsed service duration, so
+    // suggestions must do the same across DST transitions.
+    const endUtc = new Date(startUtc.getTime() + duration * 60_000);
+    const startMs = startUtc.getTime(); const endMs = endUtc.getTime();
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) continue;
+    const dedupeKey = startUtc.toISOString();
+    if (seenStarts.has(dedupeKey)) continue;
+    seenStarts.add(dedupeKey);
+    const blocked = blackoutRanges.some(([start, end]) => overlaps(startMs, endMs, start, end));
+    const taken = appointmentRanges.filter(([start, end]) => overlaps(startMs, endMs, start, end)).length;
+    const remaining = Math.max(0, capacity - taken);
+    slots.push({
+      time: slot.start,
+      start: startUtc.toISOString(),
+      end: endUtc.toISOString(),
+      label: fmt(startUtc),
+      rangeLabel: `${fmt(startUtc)}–${fmt(endUtc)}`,
+      available: !blocked && remaining > 0,
+      remaining,
+      unavailableReason: blocked ? 'blackout' : remaining < 1 ? 'capacity' : null,
+    });
+  }
+  return slots;
+}
+
 /** Quick per-day open/closed map for a month (calendar coloring). */
 export function monthOpenDays(tenant, year, month /* 1-12 */, overridesByDate = {}) {
   const tz = tenant.timezone;
@@ -105,4 +168,4 @@ export function dateWithinBookingWindow(tenant, dateYmd, now = new Date()) {
   return dateYmd >= todayYmd && dateYmd <= maxYmd;
 }
 
-export default { effectiveHours, buildDaySlots, computeDayAvailability, monthOpenDays, dateWithinBookingWindow };
+export default { effectiveHours, buildDaySlots, computeDayAvailability, computeAdminStartTimeAvailability, monthOpenDays, dateWithinBookingWindow };

@@ -21,6 +21,7 @@ router.use(['/:id/setup-intent', '/:id/payment-methods', '/:id/payment-methods/:
 
 async function loadCustomer(req) { return queryOne('SELECT * FROM customers WHERE tenant_id=$1 AND id=$2', [req.tenant.id, toInt(req.params.id)]); }
 const phoneKey = (s) => String(s || '').replace(/\D/g, '').slice(-10);
+const cleanText = (value) => (typeof value === 'string' ? value.trim() : '');
 
 router.get('/', asyncHandler(async (req, res) => {
   const tenantId = req.tenant.id;
@@ -31,7 +32,7 @@ router.get('/', asyncHandler(async (req, res) => {
   if (q) { params.push(`%${q}%`); where.push(`(c.name ILIKE $${params.length} OR c.email ILIKE $${params.length} OR c.phone ILIKE $${params.length})`); }
   params.push(limit); params.push(offset);
   const rows = await query(
-    `SELECT c.id, c.name, c.email, c.phone, c.address, c.city, c.state, c.created_at,
+    `SELECT c.id, c.name, c.email, c.phone, c.address, c.city, c.state, c.postal_code, c.created_at,
             (SELECT count(*) FROM appointments a WHERE a.tenant_id=$1 AND a.customer_id=c.id)::int AS appt_count,
             (SELECT COALESCE(SUM(amount_cents),0) FROM financial_events fe WHERE fe.tenant_id=$1 AND fe.customer_id=c.id AND fe.event_type='payment')::bigint AS ltv_cents,
             (SELECT COALESCE(SUM(total_cents-amount_paid_cents),0) FROM invoices i WHERE i.tenant_id=$1 AND i.customer_id=c.id AND i.status IN ('sent','partial'))::bigint AS balance_cents,
@@ -77,10 +78,11 @@ router.post('/import', asyncHandler(async (req, res) => {
     const phone = String(r.phone || '').trim();
     const pkey = phoneKey(phone);
     const out = {
-      row: r.row, name: r.name || '', email, phone, address: r.address || '', city: r.city || '', state: r.state || '',
+      row: r.row, name: cleanText(r.name), email, phone, address: cleanText(r.address), city: r.city || '', state: r.state || '',
       postalCode: r.postal_code || r.zip || r.postalcode || '', notes: r.notes || '', status: 'valid', errors: [],
     };
     if (!out.name) out.errors.push('Name is required.');
+    if (!out.address) out.errors.push('Service address is required.');
     if (email && (emails.has(email) || batchEmails.has(email))) out.errors.push('Duplicate email.');
     if (pkey && (phones.has(pkey) || batchPhones.has(pkey))) out.errors.push('Duplicate phone.');
     if (email) batchEmails.add(email);
@@ -196,11 +198,14 @@ router.delete('/:id/payment-methods/:pmId', asyncHandler(async (req, res) => {
 
 router.post('/', asyncHandler(async (req, res) => {
   const b = req.body || {};
-  if (!b.name) return badRequest(res, 'Name is required.');
+  const name = cleanText(b.name);
+  const address = cleanText(b.address);
+  if (!name) return badRequest(res, 'Name is required.');
+  if (!address) return badRequest(res, 'Service address is required.');
   const row = await queryOne(
     `INSERT INTO customers (tenant_id, name, email, phone, address, city, state, postal_code, notes)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
-    [req.tenant.id, b.name, b.email || null, b.phone || null, b.address || null, b.city || null, b.state || null, b.postalCode || null, b.notes || null],
+    [req.tenant.id, name, b.email || null, b.phone || null, address, b.city || null, b.state || null, b.postalCode || null, b.notes || null],
   );
   await logAudit({ tenantId: req.tenant.id, adminUsername: req.admin.username, action: 'customer_create', entityType: 'customer', entityId: row.id });
   res.json({ ok: true, customer: row });
@@ -209,7 +214,8 @@ router.post('/', asyncHandler(async (req, res) => {
 router.patch('/:id', asyncHandler(async (req, res) => {
   const id = toInt(req.params.id);
   const b = req.body || {};
-  const cols = { name: b.name, email: b.email, phone: b.phone, address: b.address, city: b.city, state: b.state, postal_code: b.postalCode, notes: b.notes };
+  if (b.address !== undefined && !cleanText(b.address)) return badRequest(res, 'Service address is required.');
+  const cols = { name: b.name, email: b.email, phone: b.phone, address: b.address === undefined ? undefined : cleanText(b.address), city: b.city, state: b.state, postal_code: b.postalCode, notes: b.notes };
   const sets = []; const params = [id, req.tenant.id];
   for (const [k, v] of Object.entries(cols)) { if (v !== undefined) { params.push(v); sets.push(`${k}=$${params.length}`); } }
   if (!sets.length) return badRequest(res, 'Nothing to update.');

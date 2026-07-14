@@ -131,6 +131,7 @@
         .map(function (v) { return (v || "").trim(); })
         .filter(Boolean)
         .join(" ");
+      var address = (data.get("address") || "").trim();
       var city = (data.get("city") || "").trim();
       var zip = (data.get("zip") || "").trim();
       var plan = (data.get("plan") || "").trim();
@@ -147,7 +148,9 @@
           name: name,
           phone: (data.get("phone") || "").trim(),
           email: (data.get("email") || "").trim(),
-          address: [city, zip].filter(Boolean).join(", "),
+          address: address,
+          city: city,
+          postalCode: zip,
           pest: (data.get("pest") || "").trim(),
           notes: notes,
         }),

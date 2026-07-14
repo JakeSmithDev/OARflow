@@ -2,6 +2,7 @@
 const OF = window.OF;
 
     let SERVICES = [];
+    let SCHEDULING = { startTimeIntervalMinutes: 30, hours: {} };
     let TECHS = null;
     let activeRoot = null;
     const state = { status: 'all', q: '', limit: OF.listLimit, rows: [], total: 0 };
@@ -9,7 +10,14 @@ const OF = window.OF;
       return root && root === activeRoot && root.isConnected ? root.querySelector(selector) : null;
     }
 
-    async function loadServices() { if (!SERVICES.length) SERVICES = (await OF.get('/api/admin/appointments/meta/services')).services; return SERVICES; }
+    async function loadServices(refresh = false) {
+      if (!SERVICES.length || refresh) {
+        const data = await OF.get('/api/admin/appointments/meta/services');
+        SERVICES = data.services || [];
+        SCHEDULING = { ...SCHEDULING, ...(data.scheduling || {}) };
+      }
+      return SERVICES;
+    }
     async function loadTechs(refresh = false) { if (!TECHS || refresh) TECHS = (await OF.get('/api/admin/technicians')).technicians; return TECHS; }
     function techChip(t) { const c = OF.color(t.color); return `<span class="badge no-dot" style="background:${c}1a;color:${c}">${t.is_lead ? '★ ' : ''}${OF.escape(t.name)}</span>`; }
     function localInputs(iso) {
@@ -19,6 +27,11 @@ const OF = window.OF;
         year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
       }).formatToParts(new Date(iso)).filter(p => p.type !== 'literal').map(p => [p.type, p.value]));
       return { date: `${parts.year}-${parts.month}-${parts.day}`, time: `${parts.hour}:${parts.minute}` };
+    }
+
+    function addYmdDays(value, days) {
+      const start = new Date(`${value}T12:00:00Z`);
+      return new Date(start.getTime() + days * 86_400_000).toISOString().slice(0, 10);
     }
 
     // Run an action; if the slot is at capacity, ask to override and retry with force.
@@ -222,46 +235,228 @@ const OF = window.OF;
     }
 
     async function newAppointment(root, prefill={}) {
-      await Promise.all([loadServices(), OF.hasCap('dispatch.manage') ? loadTechs(true) : Promise.resolve([])]);
+      await Promise.all([loadServices(true), OF.hasCap('dispatch.manage') ? loadTechs(true) : Promise.resolve([])]);
       let picked = prefill.customerId ? { id: prefill.customerId, name: prefill.name || '', address: prefill.address || '' } : null;
+      const today = OF.localYmd();
+      const quickDates = [
+        ['Today', today], ['Tomorrow', addYmdDays(today, 1)], ['Next week', addYmdDays(today, 7)],
+      ];
       const m = OF.modal(`
         <div class="modal-head"><h3>New appointment</h3><button class="x" data-close>&times;</button></div>
         <div class="modal-body">
-          <div class="field"><label>Customer *</label><input id="n_customer" placeholder="Search existing or type a new name…" value="${OF.escape(prefill.name||'')}" autocomplete="off"><div id="n_results" class="card" style="display:none;position:relative;z-index:5"></div><div id="n_selected" class="${picked?'':'hidden'}" style="margin-top:8px"></div><span class="hint">Pick an existing customer to avoid creating a duplicate, or type a new customer name.</span></div>
-          <div id="n_newFields" class="${picked?'hidden':''}"><div class="grid cols-2"><div class="field"><label>Email</label><input id="n_email" type="email"></div><div class="field"><label>Phone</label><input id="n_phone" type="tel"></div></div></div>
-          <div class="field"><label>Service</label><select id="n_service">${SERVICES.map(s=>`<option value="${s.id}">${OF.escape(s.name)} · ${OF.money(s.base_price_cents)}</option>`).join('')}</select></div>
-          <div class="grid cols-2"><div class="field"><label>Date *</label><select id="n_date">${OF.dateSelectOptions()}</select></div><div class="field"><label>Time *</label><select id="n_time">${OF.timeSelectOptions('09:00')}</select></div></div>
-          ${OF.hasCap('dispatch.manage') && TECHS?.length ? `<div class="field"><label>Assign rep <span class="muted" style="font-weight:500">(optional)</span></label><select id="n_tech"><option value="">Unassigned — route later</option>${TECHS.filter(t=>t.is_active).map(t=>`<option value="${t.id}">${OF.escape(t.name)}</option>`).join('')}</select><span class="hint">You can also assign or optimize reps from Schedule → Route.</span></div>` : ''}
-          <div class="field"><label>Service address</label><input id="n_addr" value="${OF.escape(prefill.address||'')}"></div>
-          <div class="field"><label>Notes</label><textarea id="n_notes"></textarea></div>
-          <label class="row" style="gap:8px"><input type="checkbox" id="n_notify" checked style="width:auto"> Email confirmation to customer</label>
+          <div class="appointment-create-grid">
+            <div>
+              <div class="field"><label for="n_customer">Customer *</label><input id="n_customer" placeholder="Search existing or type a new name…" value="${OF.escape(prefill.name||'')}" autocomplete="off"><div id="n_results" class="card" style="display:none;position:relative;z-index:5"></div><div id="n_selected" class="${picked?'':'hidden'}" style="margin-top:8px"></div><span class="hint">Pick an existing customer to avoid creating a duplicate, or type a new customer name.</span></div>
+              <div id="n_newFields" class="${picked?'hidden':''}"><div class="grid cols-2"><div class="field"><label for="n_email">Email</label><input id="n_email" type="email" autocomplete="email"></div><div class="field"><label for="n_phone">Phone</label><input id="n_phone" type="tel" autocomplete="tel"></div></div></div>
+              <div class="field"><label for="n_addr">Service address *</label><input id="n_addr" value="${OF.escape(prefill.address||'')}" placeholder="Street address, city, state, ZIP" autocomplete="street-address" required><span class="hint">Required for routing and appointment details.</span></div>
+              <div class="field"><label for="n_service">Service</label><select id="n_service">${SERVICES.map(s=>`<option value="${s.id}">${OF.escape(s.name)} · ${OF.money(s.base_price_cents)}</option>`).join('')}</select></div>
+              ${OF.hasCap('dispatch.manage') && TECHS?.length ? `<div class="field"><label for="n_tech">Assign rep <span class="muted" style="font-weight:500">(optional)</span></label><select id="n_tech"><option value="">Unassigned — route later</option>${TECHS.filter(t=>t.is_active).map(t=>`<option value="${t.id}">${OF.escape(t.name)}</option>`).join('')}</select><span class="hint">You can also assign or optimize reps from Schedule → Route.</span></div>` : ''}
+            </div>
+            <div>
+              <section class="appointment-when" id="n_schedule_region" aria-labelledby="n_when_title" aria-describedby="n_schedule_error">
+                <div class="appointment-when-head"><span class="appointment-when-icon">${OF.icon('cal',20)}</span><div><h4 id="n_when_title">Date &amp; start time</h4><p>Pick from your working hours or enter any exact time.</p></div></div>
+                <div class="field appointment-date-field"><label for="n_date">Date *</label>
+                  <div class="appointment-date-control" data-date-picker>
+                    <span class="appointment-date-icon">${OF.icon('cal',19)}</span>
+                    <input id="n_date" type="date" value="${OF.escape(prefill.date||'')}" aria-describedby="n_date_hint" required>
+                    <span class="appointment-date-action">Open calendar</span>
+                  </div>
+                  <span class="hint" id="n_date_hint">Click anywhere in the date box to open the calendar.</span>
+                </div>
+                <div class="appointment-date-shortcuts" aria-label="Quick date choices">${quickDates.map(([label,value])=>`<button class="appointment-date-shortcut" type="button" data-quick-date="${value}">${label}</button>`).join('')}</div>
+                <div class="appointment-time-heading"><div><label>Start time *</label><span id="n_time_meta"></span></div><button class="appointment-custom-time" id="n_custom_time" type="button" aria-pressed="false" aria-describedby="n_schedule_error">${OF.icon('clock',14)} Enter custom time</button></div>
+                <input id="n_time" type="hidden" value="${OF.escape(prefill.time||'')}">
+                <div class="appointment-time-slots" id="n_time_slots" role="group" aria-label="Available start times" aria-describedby="n_schedule_error" aria-live="polite" tabindex="-1"></div>
+                <div class="appointment-manual-time hidden" id="n_manual_time">
+                  <label for="n_time_manual">Exact start time</label>
+                  <div class="appointment-manual-control">${OF.icon('clock',18)}<input id="n_time_manual" type="time" step="60" value="${OF.escape(prefill.time||'')}" aria-describedby="n_manual_hint"></div>
+                  <span class="hint" id="n_manual_hint">Choose any hour and minute.</span>
+                </div>
+                <p class="appointment-schedule-error hidden" id="n_schedule_error" role="alert"></p>
+              </section>
+              <div class="field"><label for="n_notes">Notes</label><textarea id="n_notes" placeholder="Access instructions, concerns, or anything the rep should know…"></textarea></div>
+              <label class="row appointment-notify" style="gap:8px"><input type="checkbox" id="n_notify" checked style="width:auto"> Email confirmation to customer</label>
+            </div>
+          </div>
         </div>
-        <div class="modal-foot"><button class="btn btn-secondary" data-close>Cancel</button><button class="btn btn-primary" id="n_save">Create appointment</button></div>`);
+        <div class="modal-foot"><button class="btn btn-secondary" data-close>Cancel</button><button class="btn btn-primary" id="n_save">Create appointment</button></div>`, { wide:true });
       const selectedBox = m.q('#n_selected');
       const newFields = m.q('#n_newFields');
+      const addressInput = m.q('#n_addr');
+      let addressSource = picked ? 'auto' : (addressInput.value.trim() ? 'manual' : 'pristine');
+
+      function switchToNewCustomer() {
+        picked = null;
+        selectedBox.classList.add('hidden');
+        newFields.classList.remove('hidden');
+        if (addressSource === 'auto') {
+          addressInput.value = '';
+          addressSource = 'pristine';
+        }
+      }
+
       function showPicked(c) {
         picked = c;
         selectedBox.classList.remove('hidden');
         selectedBox.innerHTML = `<span class="badge ok no-dot">Using ${OF.escape(c.name)}</span> <button class="link-btn" id="n_useNew" type="button">Use new customer instead</button>`;
         newFields.classList.add('hidden');
-        if (c.address && !m.q('#n_addr').value.trim()) m.q('#n_addr').value = c.address;
-        selectedBox.querySelector('#n_useNew').onclick = () => { picked = null; selectedBox.classList.add('hidden'); newFields.classList.remove('hidden'); m.q('#n_customer').focus(); };
+        const serviceAddress = c.serviceAddress || OF.serviceAddress(c);
+        if (addressSource !== 'manual') {
+          addressInput.value = serviceAddress;
+          addressInput.removeAttribute('aria-invalid');
+          addressSource = 'auto';
+        }
+        selectedBox.querySelector('#n_useNew').onclick = () => { switchToNewCustomer(); m.q('#n_customer').focus(); };
       }
       if (picked) showPicked(picked);
       OF.customerPicker({
         input: m.q('#n_customer'),
         results: m.q('#n_results'),
         onSelect: showPicked,
-        onType: () => { picked = null; selectedBox.classList.add('hidden'); newFields.classList.remove('hidden'); },
+        onType: switchToNewCustomer,
+      });
+      const dateInput = m.q('#n_date');
+      const timeInput = m.q('#n_time');
+      const manualInput = m.q('#n_time_manual');
+      const manualBox = m.q('#n_manual_time');
+      const customTimeButton = m.q('#n_custom_time');
+      const timeSlotsBox = m.q('#n_time_slots');
+      const scheduleRegion = m.q('#n_schedule_region');
+      const scheduleError = m.q('#n_schedule_error');
+      const dateControl = m.q('[data-date-picker]');
+      const technicianSelect = m.q('#n_tech');
+      let manualMode = !!prefill.time;
+      let availabilityRequest = 0;
+      let slotState = { status:'idle', slots:[], message:'Choose a date first', interval:Number(SCHEDULING.startTimeIntervalMinutes)||30 };
+
+      function renderTimeChoices() {
+        const choices = slotState.slots || [];
+        const current = timeInput.value;
+        const intervalText = slotState.status === 'ready' && slotState.interval ? ` · Every ${slotState.interval} min` : '';
+        m.q('#n_time_meta').textContent = `${slotState.message || ''}${intervalText}`;
+        timeSlotsBox.setAttribute('aria-busy', String(slotState.status === 'loading'));
+        if (slotState.status === 'loading') {
+          timeSlotsBox.innerHTML = `<div class="appointment-time-empty"><span class="spinner"></span> Checking the schedule…</div>`;
+        } else if (slotState.status === 'error') {
+          timeSlotsBox.innerHTML = `<div class="appointment-time-empty">${OF.icon('clock',18)} Could not load suggested times. You can enter a custom time.</div>`;
+        } else if (slotState.status === 'idle') {
+          timeSlotsBox.innerHTML = `<div class="appointment-time-empty">${OF.icon('cal',18)} Choose a date to see start times.</div>`;
+        } else if (choices.length) {
+          timeSlotsBox.innerHTML = choices.map(slot=>`<button type="button" class="appointment-time-slot ${!manualMode&&current===slot.time?'active':''}" data-time="${slot.time}" aria-pressed="${!manualMode&&current===slot.time?'true':'false'}" title="${OF.escape(slot.rangeLabel||slot.label)}"><span>${OF.escape(slot.label)}</span></button>`).join('');
+        } else {
+          timeSlotsBox.innerHTML = `<div class="appointment-time-empty">${OF.icon('clock',18)} ${OF.escape(slotState.message || 'No suggested times are available. Enter a custom time below.')}</div>`;
+        }
+        manualBox.classList.toggle('hidden', !manualMode);
+        customTimeButton.classList.toggle('active', manualMode);
+        customTimeButton.setAttribute('aria-pressed', String(manualMode));
+        timeSlotsBox.querySelectorAll('.appointment-time-slot').forEach(button=>button.addEventListener('click', ()=>{
+          manualMode = false;
+          timeInput.value = button.dataset.time;
+          manualInput.value = button.dataset.time;
+          clearScheduleError();
+          renderTimeChoices();
+        }));
+      }
+
+      function clearScheduleError() {
+        scheduleRegion.classList.remove('has-error');
+        dateControl.classList.remove('invalid');
+        timeSlotsBox.classList.remove('invalid');
+        dateInput.removeAttribute('aria-invalid');
+        timeSlotsBox.removeAttribute('aria-invalid');
+        dateInput.setAttribute('aria-describedby', 'n_date_hint');
+        scheduleError.textContent = '';
+        scheduleError.classList.add('hidden');
+      }
+
+      function showScheduleError(message, target) {
+        scheduleRegion.classList.add('has-error');
+        scheduleError.textContent = message;
+        scheduleError.classList.remove('hidden');
+        if (target === 'date') {
+          dateControl.classList.add('invalid');
+          dateInput.setAttribute('aria-invalid', 'true');
+          dateInput.setAttribute('aria-describedby', 'n_date_hint n_schedule_error');
+        } else {
+          timeSlotsBox.classList.add('invalid');
+          timeSlotsBox.setAttribute('aria-invalid', 'true');
+        }
+      }
+
+      async function refreshTimeChoices({ resetSuggested = false } = {}) {
+        const date = dateInput.value;
+        const serviceId = m.q('#n_service').value;
+        const technicianId = technicianSelect?.value || '';
+        const requestId = ++availabilityRequest;
+        const fingerprint = `${date}|${serviceId}|${technicianId}`;
+        if (resetSuggested && !manualMode) timeInput.value = '';
+        if (!date || !serviceId) {
+          slotState = { status:'idle', slots:[], message:'Choose a date first', interval:Number(SCHEDULING.startTimeIntervalMinutes)||30 };
+          renderTimeChoices();
+          return;
+        }
+        slotState = { ...slotState, status:'loading', slots:[], message:'Checking availability…' };
+        renderTimeChoices();
+        try {
+          const params = new URLSearchParams({ serviceId, date });
+          if (technicianId) params.set('technicianId', technicianId);
+          const data = await OF.get(`/api/admin/appointments/meta/availability?${params}`);
+          const currentFingerprint = `${dateInput.value}|${m.q('#n_service').value}|${technicianSelect?.value || ''}`;
+          if (requestId !== availabilityRequest || fingerprint !== currentFingerprint) return;
+          const slots = (data.availableSlots || (data.slots || []).filter(slot=>slot.available));
+          SCHEDULING.startTimeIntervalMinutes = data.startTimeIntervalMinutes || SCHEDULING.startTimeIntervalMinutes;
+          slotState = { status:'ready', slots, message:data.message || `${slots.length} suggested times available`, interval:data.startTimeIntervalMinutes };
+          if (!manualMode && timeInput.value && !slots.some(slot=>slot.time===timeInput.value)) timeInput.value = '';
+          if (!slots.length && !manualMode) manualMode = true;
+          renderTimeChoices();
+        } catch (error) {
+          const currentFingerprint = `${dateInput.value}|${m.q('#n_service').value}|${technicianSelect?.value || ''}`;
+          if (requestId !== availabilityRequest || fingerprint !== currentFingerprint) return;
+          slotState = { status:'error', slots:[], message:error.message || 'Suggested times unavailable', interval:Number(SCHEDULING.startTimeIntervalMinutes)||30 };
+          if (!manualMode) manualMode = true;
+          renderTimeChoices();
+        }
+      }
+
+      dateControl.addEventListener('click', () => {
+        dateInput.focus({ preventScroll:true });
+        try { dateInput.showPicker?.(); } catch { /* native picker may already be open */ }
+      });
+      m.el.querySelectorAll('[data-quick-date]').forEach(button=>button.addEventListener('click', ()=>{
+        dateInput.value = button.dataset.quickDate;
+        dateInput.dispatchEvent(new Event('change', { bubbles:true }));
+      }));
+      dateInput.addEventListener('change', ()=>{ clearScheduleError(); refreshTimeChoices({ resetSuggested:true }); });
+      m.q('#n_service').addEventListener('change', ()=>{ clearScheduleError(); refreshTimeChoices({ resetSuggested:true }); });
+      technicianSelect?.addEventListener('change', ()=>{ clearScheduleError(); refreshTimeChoices({ resetSuggested:true }); });
+      customTimeButton.addEventListener('click', ()=>{
+        manualMode = true;
+        manualInput.value = timeInput.value || manualInput.value;
+        renderTimeChoices();
+        manualInput.focus();
+        try { manualInput.showPicker?.(); } catch { /* optional native picker */ }
+      });
+      manualInput.addEventListener('input', ()=>{
+        timeInput.value = manualInput.value;
+        if (manualInput.value) clearScheduleError();
+      });
+      refreshTimeChoices();
+
+      addressInput.addEventListener('input', (event)=>{
+        addressSource = 'manual';
+        event.target.removeAttribute('aria-invalid');
       });
       m.q('#n_save').addEventListener('click', async()=>{
         const name = m.q('#n_customer').value.trim();
-        const technicianId = +m.q('#n_tech')?.value || null;
+        const technicianId = +technicianSelect?.value || null;
+        const serviceAddress = m.q('#n_addr').value.trim();
         const body={ customerId:picked?.id || null, customer:picked?undefined:{name,email:m.q('#n_email').value.trim(),phone:m.q('#n_phone').value.trim(),address:m.q('#n_addr').value.trim()},
           serviceId:+m.q('#n_service').value, date:m.q('#n_date').value, time:m.q('#n_time').value, technicianId,
-          serviceAddress:m.q('#n_addr').value.trim(), notes:m.q('#n_notes').value.trim(), notify:m.q('#n_notify').checked };
-        if(!picked && !name) return OF.toast('Customer, date and time are required','error');
-        if(!body.date||!body.time) return OF.toast('Customer, date and time are required','error');
+          serviceAddress, notes:m.q('#n_notes').value.trim(), notify:m.q('#n_notify').checked };
+        if(!picked && !name) { m.q('#n_customer').focus(); return OF.toast('Customer is required.','error'); }
+        if(!serviceAddress) { m.q('#n_addr').setAttribute('aria-invalid','true'); m.q('#n_addr').focus(); return OF.toast('Service address is required.','error'); }
+        if(!body.date) { showScheduleError('Choose an appointment date.', 'date'); dateInput.focus(); try { dateInput.showPicker?.(); } catch {} return OF.toast('Choose an appointment date.','error'); }
+        if(!body.time) { showScheduleError('Choose a suggested time or enter a custom time.', 'time'); timeSlotsBox.focus(); return OF.toast('Choose a suggested time or enter a custom time.','error'); }
         if(await doForce(async force=>{await OF.post('/api/admin/appointments',{...body,force});})){
           m.close(); OF.toast('Appointment created','ok'); refresh(root);
         }
@@ -289,7 +484,7 @@ const OF = window.OF;
       if (OF.qs('new')) {
         const cid = OF.qs('customer');
         if (cid) {
-          try { const c = (await OF.get('/api/admin/customers/'+cid)).customer; newAppointment(root, { customerId:+cid, name:c.name, address:c.address||'' }); }
+          try { const c = (await OF.get('/api/admin/customers/'+cid)).customer; newAppointment(root, { customerId:+cid, name:c.name, address:OF.serviceAddress(c) }); }
           catch { newAppointment(root, { name: OF.qs('name') || '' }); }
         } else newAppointment(root, { name: OF.qs('name') || '' });
       }

@@ -48,12 +48,17 @@ function trimCap(value, max) {
   return String(value || '').replace(/[\r\n]/g, ' ').trim().slice(0, max);
 }
 
+function leadAddress(lead) {
+  const locality = [lead.city, lead.state, lead.postalCode].filter(Boolean).join(' ');
+  return [lead.address, locality].filter(Boolean).join(', ');
+}
+
 function leadDetailsHtml(lead) {
   return detailsTable([
     ['Name', lead.name],
     ['Phone', lead.phone],
     ['Email', lead.email],
-    ['Address', lead.address],
+    ['Service address', leadAddress(lead)],
     ['Pest problem', lead.pest],
     ['Notes', lead.notes],
   ]);
@@ -64,7 +69,7 @@ function leadDetailsText(lead) {
     `Name: ${lead.name}`,
     `Phone: ${lead.phone}`,
     `Email: ${lead.email}`,
-    lead.address ? `Address: ${lead.address}` : '',
+    lead.address ? `Service address: ${leadAddress(lead)}` : '',
     lead.pest ? `Pest problem: ${lead.pest}` : '',
     `Notes: ${lead.notes}`,
   ].filter(Boolean).join('\n');
@@ -121,7 +126,7 @@ router.get('/:slug/bootstrap', limitBootstrap, asyncHandler(async (req, res) => 
     tenant: { slug: tenant.slug, name: tenant.name, timezone: tenant.timezone, currency: tenant.currency, branding: tenant.settings.branding },
     booking: {
       defaultMode: b.defaultMode, requestSlotCount: b.requestSlotCount, leadTimeHours: b.leadTimeHours,
-      maxDaysOut: b.maxDaysOut, collectAddress: b.collectAddress, confirmationMessage: b.confirmationMessage,
+      maxDaysOut: b.maxDaysOut, collectAddress: true, confirmationMessage: b.confirmationMessage,
       granularity: tenant.settings.availability.granularity || 'slots',
     },
     services: services.map((s) => publicService(tenant, s)),
@@ -190,12 +195,16 @@ router.post('/:slug/lead', asyncHandler(async (req, res) => {
     phone: trimCap(body.phone, 40),
     email: trimCap(body.email, 160).toLowerCase(),
     address: trimCap(body.address, 220),
+    city: trimCap(body.city, 100),
+    state: trimCap(body.state, 40),
+    postalCode: trimCap(body.postalCode || body.zip, 20),
     pest: trimCap(body.pest, 80),
     notes: trimCap(body.notes, 2000),
   };
   if (!lead.name) return badRequest(res, 'Name is required.');
   if (!lead.phone) return badRequest(res, 'Phone is required.');
   if (!lead.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(lead.email)) return badRequest(res, 'A valid email is required.');
+  if (!lead.address) return badRequest(res, 'Service address is required.');
   if (!lead.notes) return badRequest(res, 'Please add a short description.');
 
   const customerId = await findOrCreateCustomer(tenant.id, {
@@ -203,6 +212,9 @@ router.post('/:slug/lead', asyncHandler(async (req, res) => {
     phone: lead.phone,
     email: lead.email,
     address: lead.address,
+    city: lead.city,
+    state: lead.state,
+    postalCode: lead.postalCode,
     notes: `Website lead${lead.pest ? ` (${lead.pest})` : ''}: ${lead.notes}`,
   });
   const followUp = await queryOne(
@@ -252,7 +264,8 @@ router.post('/:slug/book', asyncHandler(async (req, res) => {
 
   const customer = body.customer || {};
   if (!customer.name || !customer.email) return badRequest(res, 'Name and email are required.');
-  if (tenant.settings.booking.collectAddress && !customer.address) return badRequest(res, 'Service address is required.');
+  customer.address = String(customer.address || '').trim();
+  if (!customer.address) return badRequest(res, 'Service address is required.');
 
   const mode = effectiveBookingMode(tenant, service);
   const company = tenant.settings.branding.logoText || tenant.name;

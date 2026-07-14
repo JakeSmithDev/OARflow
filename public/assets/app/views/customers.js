@@ -53,7 +53,7 @@ const OF = window.OF;
           <div id="editForm" class="hidden card card-pad" style="margin-bottom:16px">
             <div class="field"><label>Name</label><input id="e_name" value="${OF.escape(c.name)}"></div>
             <div class="grid cols-2"><div class="field"><label>Email</label><input id="e_email" value="${OF.escape(c.email||'')}"></div><div class="field"><label>Phone</label><input id="e_phone" value="${OF.escape(c.phone||'')}"></div></div>
-            <div class="field"><label>Address</label><input id="e_addr" value="${OF.escape(c.address||'')}"></div>
+            <div class="field"><label for="e_addr">Service address *</label><input id="e_addr" value="${OF.escape(c.address||'')}" required autocomplete="street-address" aria-describedby="e_addr_hint"><span class="hint" id="e_addr_hint">A customer must keep a street service address.</span></div>
             <div class="grid cols-3"><div class="field"><label>City</label><input id="e_city" value="${OF.escape(c.city||'')}"></div><div class="field"><label>State</label><input id="e_state" value="${OF.escape(c.state||'')}"></div><div class="field"><label>ZIP</label><input id="e_zip" value="${OF.escape(c.postal_code||'')}"></div></div>
             <div class="field"><label>Notes</label><textarea id="e_notes">${OF.escape(c.notes||'')}</textarea></div>
             <button class="btn btn-primary btn-sm" id="saveCust">Save</button>
@@ -61,7 +61,7 @@ const OF = window.OF;
           <div class="card card-pad stack" style="gap:6px;margin-bottom:16px">
             ${c.email?`<div class="row between"><span class="muted">Email</span><span>${OF.escape(c.email)}</span></div>`:''}
             ${c.phone?`<div class="row between"><span class="muted">Phone</span><span>${OF.escape(c.phone)}</span></div>`:''}
-            ${c.address?`<div class="row between"><span class="muted">Address</span><span>${OF.escape([c.address,c.city,c.state].filter(Boolean).join(', '))}</span></div>`:''}
+            ${c.address?`<div class="row between"><span class="muted">Service address</span><span>${OF.escape(OF.serviceAddress(c))}</span></div>`:''}
             ${c.notes?`<div><span class="muted small">Notes</span><p style="margin:4px 0 0">${OF.escape(c.notes)}</p></div>`:''}
           </div>
           ${section('Appointments', d.appointments.map(a=>`<div class="row between" style="padding:7px 0;border-bottom:1px solid var(--line-2)"><a href="/admin/appointments?id=${a.id}">${a.service_name?OF.escape(a.service_name):'Appointment'}</a><span class="muted small">${a.scheduled_start?OF.date(a.scheduled_start):'—'}</span>${OF.statusBadge(a.status)}</div>`).join(''))}
@@ -104,9 +104,14 @@ const OF = window.OF;
       dr.q('#editBtn').onclick=()=>dr.q('#editForm').classList.toggle('hidden');
       dr.q('#portalBtn').onclick=async()=>{ const r=await OF.post(`/api/admin/customers/${id}/portal-link`); navigator.clipboard?.writeText(r.url); OF.toast('Portal link copied — share it with the customer','ok'); };
       dr.q('#saveCust').onclick=async()=>{
-        await OF.patch('/api/admin/customers/'+id,{name:dr.q('#e_name').value,email:dr.q('#e_email').value,phone:dr.q('#e_phone').value,address:dr.q('#e_addr').value,city:dr.q('#e_city').value,state:dr.q('#e_state').value,postalCode:dr.q('#e_zip').value,notes:dr.q('#e_notes').value});
-        OF.toast('Saved','ok'); dr.close(); refresh(root);
+        const address = dr.q('#e_addr').value.trim();
+        if (!address) { dr.q('#e_addr').setAttribute('aria-invalid','true'); dr.q('#e_addr').focus(); return OF.toast('Service address is required','error'); }
+        try {
+          await OF.patch('/api/admin/customers/'+id,{name:dr.q('#e_name').value,email:dr.q('#e_email').value,phone:dr.q('#e_phone').value,address,city:dr.q('#e_city').value,state:dr.q('#e_state').value,postalCode:dr.q('#e_zip').value,notes:dr.q('#e_notes').value});
+          OF.toast('Saved','ok'); dr.close(); refresh(root);
+        } catch (error) { OF.toast(error.message,'error'); }
       };
+      dr.q('#e_addr').addEventListener('input', (event)=>event.target.removeAttribute('aria-invalid'));
     }
     function section(title, inner){ return `<div style="margin-bottom:16px"><div class="muted tiny" style="text-transform:uppercase;letter-spacing:.04em;font-weight:700;margin-bottom:6px">${title}</div>${inner||'<p class="muted small">None yet.</p>'}</div>`; }
 
@@ -193,15 +198,34 @@ const OF = window.OF;
     function addCustomer(root) {
       const m = OF.modal(`<div class="modal-head"><h3>Add customer</h3><button class="x" data-close>&times;</button></div>
         <div class="modal-body">
-          <div class="field"><label>Name *</label><input id="c_name"></div>
-          <div class="grid cols-2"><div class="field"><label>Email</label><input id="c_email" type="email"></div><div class="field"><label>Phone</label><input id="c_phone" type="tel"></div></div>
-          <div class="field"><label>Address</label><input id="c_addr"></div>
-          <div class="grid cols-3"><div class="field"><label>City</label><input id="c_city"></div><div class="field"><label>State</label><input id="c_state"></div><div class="field"><label>ZIP</label><input id="c_zip"></div></div>
+          <div class="field"><label for="c_name">Customer name *</label><input id="c_name" required autocomplete="name" placeholder="Full name or business name"></div>
+          <div class="grid cols-2"><div class="field"><label for="c_email">Email</label><input id="c_email" type="email" autocomplete="email" placeholder="name@example.com"></div><div class="field"><label for="c_phone">Phone</label><input id="c_phone" type="tel" autocomplete="tel" placeholder="(410) 555-0123"></div></div>
+          <div class="card card-pad" style="padding:16px;background:var(--brand-tint-2);border-color:color-mix(in srgb,var(--brand) 22%,var(--line));box-shadow:none">
+            <div class="row" style="gap:10px;margin-bottom:12px"><span style="width:34px;height:34px;border-radius:10px;background:var(--brand-tint);color:var(--brand);display:grid;place-items:center;flex:none">${OF.icon('pin',17)}</span><div><div class="cell-strong">Service location</div><div class="tiny muted">Used for scheduling, dispatch, and route planning.</div></div></div>
+            <div class="field"><label for="c_addr">Street address *</label><input id="c_addr" required autocomplete="street-address" placeholder="123 Main Street" aria-describedby="c_addr_hint"><span class="hint" id="c_addr_hint">A street service address is required for every new customer.</span></div>
+            <div class="grid cols-3"><div class="field"><label for="c_city">City</label><input id="c_city" autocomplete="address-level2"></div><div class="field"><label for="c_state">State</label><input id="c_state" autocomplete="address-level1" maxlength="40"></div><div class="field"><label for="c_zip">ZIP</label><input id="c_zip" autocomplete="postal-code" inputmode="numeric"></div></div>
+          </div>
         </div>
-        <div class="modal-foot"><button class="btn btn-secondary" data-close>Cancel</button><button class="btn btn-primary" id="c_save">Add</button></div>`);
-      m.q('#c_save').onclick=async()=>{ if(!m.q('#c_name').value.trim()) return OF.toast('Name required','error');
-        await OF.post('/api/admin/customers',{name:m.q('#c_name').value.trim(),email:m.q('#c_email').value.trim(),phone:m.q('#c_phone').value.trim(),address:m.q('#c_addr').value.trim(),city:m.q('#c_city').value.trim(),state:m.q('#c_state').value.trim(),postalCode:m.q('#c_zip').value.trim()});
-        m.close(); OF.toast('Customer added','ok'); refresh(root); };
+        <div class="modal-foot"><button class="btn btn-secondary" data-close>Cancel</button><button class="btn btn-primary" id="c_save">${OF.icon('plus',15)} Add customer</button></div>`);
+      const name = m.q('#c_name');
+      const address = m.q('#c_addr');
+      const requireField = (input, message) => {
+        input.removeAttribute('aria-invalid');
+        if (input.value.trim()) return true;
+        input.setAttribute('aria-invalid', 'true'); input.focus(); OF.toast(message, 'error'); return false;
+      };
+      [name, address].forEach(input => input.addEventListener('input', () => input.removeAttribute('aria-invalid')));
+      m.q('#c_save').onclick=async()=>{
+        if(!requireField(name, 'Customer name is required')) return;
+        if(!requireField(address, 'Service address is required')) return;
+        const email = m.q('#c_email');
+        if (!email.checkValidity()) { email.reportValidity(); return; }
+        try {
+          await OF.post('/api/admin/customers',{name:name.value.trim(),email:email.value.trim(),phone:m.q('#c_phone').value.trim(),address:address.value.trim(),city:m.q('#c_city').value.trim(),state:m.q('#c_state').value.trim(),postalCode:m.q('#c_zip').value.trim()});
+          m.close(); OF.toast('Customer added','ok'); refresh(root);
+        } catch (error) { OF.toast(error.message, 'error'); }
+      };
+      name.focus();
     }
 
     function exportCustomers() {
@@ -215,7 +239,7 @@ const OF = window.OF;
       let preview = null;
       const m = OF.modal(`<div class="modal-head"><h3>Import customers</h3><button class="x" data-close>&times;</button></div>
         <div class="modal-body">
-          <p class="muted small" style="margin-top:0">CSV columns: name, email, phone, address, notes. Dry-run checks duplicates by email or phone before anything is created.</p>
+          <p class="muted small" style="margin-top:0">CSV columns: name, email, phone, address, city, state, postal_code, notes. <b>Name and address are required.</b> Dry-run checks duplicates before anything is created.</p>
           <div class="field"><label>CSV file</label><input type="file" id="ci_file" accept=".csv,text/csv"></div>
           <div id="ci_preview"></div>
         </div>
@@ -228,7 +252,7 @@ const OF = window.OF;
           <span class="badge warn no-dot">${r.summary.duplicates} duplicates</span>
           <span class="badge danger no-dot">${r.summary.errors} errors</span>
         </div>
-        <div class="table-wrap"><table class="tbl"><thead><tr><th>Row</th><th>Name</th><th>Email</th><th>Phone</th><th>Status</th></tr></thead><tbody>${rows.map(x=>`<tr><td>${x.row}</td><td>${OF.escape(x.name)}</td><td>${OF.escape(x.email)}</td><td>${OF.escape(x.phone)}</td><td>${x.status==='valid'?'<span class="badge ok no-dot">Valid</span>':`<span class="badge ${x.status==='duplicate'?'warn':'danger'} no-dot">${OF.escape(x.errors.join(' '))}</span>`}</td></tr>`).join('')}</tbody></table></div>
+        <div class="table-wrap"><table class="tbl"><thead><tr><th>Row</th><th>Name</th><th>Email</th><th>Service address</th><th>Status</th></tr></thead><tbody>${rows.map(x=>`<tr><td>${x.row}</td><td>${OF.escape(x.name)}</td><td>${OF.escape(x.email)}</td><td>${OF.escape(x.address||'—')}</td><td>${x.status==='valid'?'<span class="badge ok no-dot">Valid</span>':`<span class="badge ${x.status==='duplicate'?'warn':'danger'} no-dot">${OF.escape(x.errors.join(' '))}</span>`}</td></tr>`).join('')}</tbody></table></div>
         ${r.rows.length>10?`<p class="tiny muted">Showing first 10 of ${r.rows.length} rows.</p>`:''}`;
         m.q('#ci_import').disabled = !r.summary.valid;
       }
