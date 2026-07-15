@@ -86,7 +86,7 @@ const OF = window.OF;
         : `<div class="filecard doc" data-fid="${f.id}"><a href="${f.url}" target="_blank" rel="noopener" class="doclink">${OF.icon('invoices',20)}<span>${OF.escape(f.filename)}</span></a><button class="filedel" data-del="${f.id}" title="Delete">✕</button></div>`).join('')}</div>`
       : '<p class="muted small">No photos or files yet.</p>'; }
 
-    async function openDrawer(root, id) {
+    async function openDrawer(root, id, { onChanged } = {}) {
       const { appointment: a, invoices, technicians, files } = await OF.get('/api/admin/appointments/'+id);
       const isReq = a.status==='requested';
       const crew = technicians || [];
@@ -135,8 +135,15 @@ const OF = window.OF;
           </div>
         </div>`, { wide:true });
 
-      const reload = () => { dr.close(); refresh(root); };
-      dr.q('#assignBtn')?.addEventListener('click', ()=>assignModal(id, crew, (updated)=>{ dr.q('#crewBox').innerHTML = updated.length?updated.map(techChip).join(''):'<span class="muted small">No one assigned yet.</span>'; }));
+      const reload = async () => {
+        dr.close();
+        if (onChanged) await onChanged();
+        else if (root) refresh(root);
+      };
+      dr.q('#assignBtn')?.addEventListener('click', ()=>assignModal(id, crew, async (updated)=>{
+        dr.q('#crewBox').innerHTML = updated.length?updated.map(techChip).join(''):'<span class="muted small">No one assigned yet.</span>';
+        if (onChanged) await onChanged();
+      }));
       function bindFiles(){ dr.el.querySelectorAll('[data-del]').forEach(b=>b.onclick=async()=>{ if(!(await OF.confirm({title:'Delete this file?',confirmText:'Delete',danger:true})))return; await OF.del(`/api/admin/appointments/${id}/files/${b.dataset.del}`); jobFiles=jobFiles.filter(f=>String(f.id)!==b.dataset.del); dr.q('#filesBox').innerHTML=filesHtml(jobFiles); }); }
       bindFiles();
       function matHtml(apps){ return apps.length? apps.map(a=>`<div class="row between" style="padding:7px 0;border-bottom:1px solid var(--line-2)"><div><div class="cell-strong" style="font-size:14px">${OF.escape(a.product_name)}${a.epa_reg_no?` <span class="tiny muted">EPA ${OF.escape(a.epa_reg_no)}</span>`:''}</div><div class="tiny muted">${[a.target_pest,a.area_treated,a.quantity?`${a.quantity}${a.unit||''}`:'',a.method].filter(Boolean).map(OF.escape).join(' · ')}${a.applicator_name?` · ${OF.escape(a.applicator_name)}`:''}</div></div><button class="link-btn" data-mat="${a.id}" style="color:var(--danger)">✕</button></div>`).join('') : '<p class="muted small">No materials recorded.</p>'; }
@@ -234,7 +241,7 @@ const OF = window.OF;
       m.q('#srPrint').onclick=()=>{ const w=window.open('','_blank'); w.document.write(`<html><head><title>Service Report</title><link rel="stylesheet" href="/assets/app/app.css"></head><body style="padding:24px">${m.q('#srBody').innerHTML}</body></html>`); w.document.close(); w.focus(); setTimeout(()=>w.print(),300); };
     }
 
-    async function newAppointment(root, prefill={}) {
+    async function newAppointment(root, prefill={}, { onSaved } = {}) {
       await Promise.all([loadServices(true), OF.hasCap('dispatch.manage') ? loadTechs(true) : Promise.resolve([])]);
       let picked = prefill.customerId ? { id: prefill.customerId, name: prefill.name || '', address: prefill.address || '' } : null;
       const today = OF.localYmd();
@@ -458,7 +465,9 @@ const OF = window.OF;
         if(!body.date) { showScheduleError('Choose an appointment date.', 'date'); dateInput.focus(); try { dateInput.showPicker?.(); } catch {} return OF.toast('Choose an appointment date.','error'); }
         if(!body.time) { showScheduleError('Choose a suggested time or enter a custom time.', 'time'); timeSlotsBox.focus(); return OF.toast('Choose a suggested time or enter a custom time.','error'); }
         if(await doForce(async force=>{await OF.post('/api/admin/appointments',{...body,force});})){
-          m.close(); OF.toast('Appointment created','ok'); refresh(root);
+          m.close(); OF.toast('Appointment created','ok');
+          if (onSaved) await onSaved();
+          else if (root) refresh(root);
         }
       });
     }
@@ -468,6 +477,11 @@ const OF = window.OF;
       p.delete('limit'); p.delete('offset');
       location.href = '/api/admin/appointments/export.csv?' + p;
     }
+
+    // Schedule can keep people in context by opening the same appointment
+    // surfaces in place instead of routing through the Appointments list.
+    OF.openAppointmentDrawer = (id, options = {}) => openDrawer(null, id, options);
+    OF.openNewAppointment = (prefill = {}, options = {}) => newAppointment(null, prefill, options);
 
     OF.page({ active:'appointments', title:'Appointments', subtitle:'Jobs, requests & history', render: async (root, ctx) => {
       activeRoot = root;

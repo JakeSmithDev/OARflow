@@ -22,11 +22,48 @@ const OF = window.OF;
     let cursor = OF.qs('date') || tenantYmd();
     let dispatchSelection = new Set();
     let dispatchSelectionReady = false;
+    let selectAllRepsAfterReload = false;
     let renderSequence = 0;
     let technicianLoadError = '';
     let pendingDispatchFocus = '';
     let dispatchLeafletMap = null;
     let dispatchMapGeneration = 0;
+
+    async function loadAdminSurface(name, method) {
+      if (typeof OF[method] !== 'function') await import(`/assets/app/views/${name}.js`);
+      if (typeof OF[method] !== 'function') throw new Error('That detail panel is unavailable.');
+      return OF[method];
+    }
+    async function openCustomerDetails(customerId) {
+      if (!customerId) return;
+      try {
+        if (!OF.hasCap('customers.manage')) {
+          openScheduleCustomerSummary(customerId);
+          return;
+        }
+        const open = await loadAdminSurface('customers', 'openCustomerDrawer');
+        await open(customerId, { onSaved: () => render(currentRoot) });
+      } catch (error) { OF.toast(error.message || 'Could not open customer details.', 'error'); }
+    }
+    async function openAppointmentDetails(appointmentId) {
+      if (!appointmentId) return;
+      try {
+        const open = await loadAdminSurface('appointments', 'openAppointmentDrawer');
+        await open(appointmentId, { onChanged: () => {
+          selectAllRepsAfterReload ||= Array.isArray(TECHS)
+            && dispatchSelection.size === TECHS.length
+            && TECHS.every((tech) => dispatchSelection.has(Number(tech.id)));
+          TECHS = null;
+          return render(currentRoot);
+        } });
+      } catch (error) { OF.toast(error.message || 'Could not open appointment details.', 'error'); }
+    }
+    async function newAppointmentFor(date = cursor) {
+      try {
+        const open = await loadAdminSurface('appointments', 'openNewAppointment');
+        await open({ date }, { onSaved: () => render(currentRoot) });
+      } catch (error) { OF.toast(error.message || 'Could not open the appointment form.', 'error'); }
+    }
 
     const ymdUTC = (d) => new Intl.DateTimeFormat('en-CA',{timeZone:'UTC',year:'numeric',month:'2-digit',day:'2-digit'}).format(d);
     const addYmd = (ymd,n) => ymdUTC(new Date(new Date(ymd+'T00:00:00Z').getTime()+n*86400000));
@@ -62,9 +99,28 @@ const OF = window.OF;
     function capPill(jobs, max, cap, closed) {
       if (closed) return `<span class="cap-pill" style="background:var(--surface-2);color:var(--muted)">Closed</span>`;
       if (!jobs) return `<span class="cap-pill" style="background:var(--surface-2);color:var(--muted)">Open</span>`;
-      if (max>cap) return `<span class="cap-pill" style="background:var(--danger-tint);color:var(--danger)">Over capacity</span>`;
-      if (max>=cap) return `<span class="cap-pill" style="background:var(--warn-tint);color:var(--warn)">Full</span>`;
+      if (max>cap) return `<span class="cap-pill" style="background:var(--danger-tint);color:var(--danger)" title="Peak concurrent appointments: ${max}; configured capacity: ${cap}">Over capacity · ${max}/${cap}</span>`;
+      if (max>=cap) return `<span class="cap-pill" style="background:var(--warn-tint);color:var(--warn)" title="Peak concurrent appointments: ${max}; configured capacity: ${cap}">Capacity reached · ${max}/${cap}</span>`;
       return `<span class="cap-pill" style="background:var(--ok-tint);color:#15803d">${jobs} job${jobs>1?'s':''}</span>`;
+    }
+
+    function openScheduleCustomerSummary(customerId) {
+      const appointments = CURRENT_APPTS
+        .filter((appointment) => String(appointment.customer_id) === String(customerId))
+        .sort((a,b) => new Date(a.scheduled_start) - new Date(b.scheduled_start));
+      const customer = appointments[0];
+      if (!customer) throw new Error('Customer details are unavailable for this schedule.');
+      const contactRows = [
+        customer.customer_email ? `<div class="row between"><span class="muted">Email</span><span>${OF.escape(customer.customer_email)}</span></div>` : '',
+        customer.customer_phone ? `<div class="row between"><span class="muted">Phone</span><span>${OF.escape(customer.customer_phone)}</span></div>` : '',
+        customer.service_address ? `<div class="row between"><span class="muted">Service address</span><span>${OF.escape(customer.service_address)}</span></div>` : '',
+      ].filter(Boolean).join('');
+      const scheduled = appointments.map((appointment) => `<div class="row between" style="gap:10px;padding:7px 0;border-bottom:1px solid var(--line-2)"><span>${OF.escape(appointment.service_name||'Appointment')}</span><span class="muted small">${OF.dateTime(appointment.scheduled_start)}</span>${OF.statusBadge(appointment.status)}</div>`).join('');
+      OF.drawer(`<div class="modal-head"><h3>${OF.escape(customer.customer_name||'Customer')}</h3><button class="x" data-close>&times;</button></div>
+        <div class="modal-body" style="overflow:auto">
+          <div class="card card-pad stack" style="gap:8px;margin-bottom:16px">${contactRows||'<p class="muted small">No contact details are on file.</p>'}</div>
+          <div><div class="muted tiny" style="text-transform:uppercase;letter-spacing:.04em;font-weight:700;margin-bottom:6px">Appointments in this view</div>${scheduled||'<p class="muted small">None in the current schedule.</p>'}</div>
+        </div>`, { wide:true });
     }
 
     const finiteNumber = (value) => {
@@ -489,8 +545,8 @@ const OF = window.OF;
           const color=lane.id==='unassigned'?OF.color(appointment.service_color):lane.color;
           const status=String(appointment.status||'scheduled');
           const packed=dispatchColumnCount>1?`;left:calc(${(dispatchColumn/dispatchColumnCount*100).toFixed(3)}% + 4px);right:auto;width:calc(${(100/dispatchColumnCount).toFixed(3)}% - 8px)`:'';
-          return `<a class="dispatch-job status-${OF.escape(status)}${suggested?' suggested':''}" id="dispatch-job-${encodeURIComponent(String(appointment.id))}-${encodeURIComponent(lane.id)}" href="/admin/appointments?id=${encodeURIComponent(String(appointment.id))}" style="top:${top.toFixed(1)}px;height:${cardHeight.toFixed(1)}px;--job-color:${color}${packed}" title="${OF.escape(`${OF.time(appointment.scheduled_start)} · ${appointment.customer_name||'Customer'} · ${appointment.service_address||''}`)}">
-            <span class="dispatch-job-time">${continues?'Continues':OF.time(appointment.scheduled_start)}${suggested?'<em>Suggested</em>':''}</span><b>${OF.escape(appointment.customer_name||'Customer')}</b><small>${OF.escape(appointment.service_name||appointment.service_address||'Service')}</small></a>`;
+          return `<div class="dispatch-job status-${OF.escape(status)}${suggested?' suggested':''}" id="dispatch-job-${encodeURIComponent(String(appointment.id))}-${encodeURIComponent(lane.id)}" data-appointment-id="${appointment.id}" tabindex="-1" style="top:${top.toFixed(1)}px;height:${cardHeight.toFixed(1)}px;--job-color:${color}${packed}" title="Open appointment details for ${OF.escape(appointment.customer_name||'Customer')}">
+            <span class="dispatch-job-time"><span>${continues?'Continues':OF.time(appointment.scheduled_start)}</span><span class="schedule-job-actions">${suggested?'<em>Suggested</em>':''}${detailsButton(appointment)}</span></span><button type="button" class="schedule-customer-link" data-customer-id="${appointment.customer_id}" draggable="false" title="Open ${OF.escape(appointment.customer_name||'customer')} profile">${OF.escape(appointment.customer_name||'Customer')}</button><small>${OF.escape(appointment.service_name||appointment.service_address||'Service')}</small></div>`;
         }).join('');
         return `<div class="dispatch-lane" style="--lane-color:${lane.color};height:${height}px">${cards||'<span class="dispatch-lane-empty">No jobs</span>'}</div>`;
       }).join('');
@@ -520,6 +576,7 @@ const OF = window.OF;
       body.querySelectorAll('[data-dispatch-tech]').forEach((button)=>button.addEventListener('click',()=>{const id=Number(button.dataset.dispatchTech);pendingDispatchFocus=`[data-dispatch-tech="${id}"]`;if(dispatchSelection.has(id))dispatchSelection.delete(id);else dispatchSelection.add(id);render(currentRoot);}));
       body.querySelector('#dispatchReview')?.addEventListener('click',()=>routeModal());
       body.querySelectorAll('[data-dispatch-retry]').forEach((button)=>button.addEventListener('click',()=>render(currentRoot)));
+      bindScheduleInteractions(body);
       mountDispatchMap(body,plan);
       if(pendingDispatchFocus){const selector=pendingDispatchFocus;pendingDispatchFocus='';requestAnimationFrame(()=>body.querySelector(selector)?.focus());}
     }
@@ -638,30 +695,49 @@ const OF = window.OF;
       if (view==='day' || view==='dispatch') title = labelYmd(cursor,{weekday:'long',month:'long',day:'numeric',year:'numeric'});
       else if (view==='week') title = `${labelYmd(r.cells[0],{month:'short',day:'numeric'})} – ${labelYmd(r.cells[6],{month:'short',day:'numeric',year:'numeric'})}`;
       else title = labelYmd(cursor,{month:'long',year:'numeric'});
+      const interactionHelp = view==='month'
+        ? 'Select a date to open its day schedule.'
+        : view==='week'
+          ? `Customer names open profiles. Details opens the appointment${OF.hasCap('appointments.manage')?'; drag a job to move it to another day.':'.'}`
+          : view==='dispatch'
+            ? 'Customer names open profiles. Details opens the appointment; map stops find jobs on the timeline.'
+            : 'Customer names open profiles. Details opens the appointment without leaving Schedule.';
 
       root.innerHTML = `
-        <div class="sched-toolbar">
-          <div class="sched-mode segmented" id="modeseg" aria-label="Schedule mode">
-            <button data-mode="calendar" class="${view!=='dispatch'?'active':''}" aria-pressed="${view!=='dispatch'}">${OF.icon('cal',14)} Calendar</button>
-            <button data-mode="dispatch" class="dispatch-mode-button ${view==='dispatch'?'active':''}" aria-pressed="${view==='dispatch'}">${OF.icon('pin',14)} Dispatch</button>
+        <div class="sched-toolbar card">
+          <div class="sched-nav">
+            <div class="sched-nav-buttons">
+              <button class="arrow" id="prev" aria-label="Previous ${view==='month'?'month':view==='week'?'week':'day'}">‹</button>
+              <button class="btn btn-secondary btn-sm" id="today">Today</button>
+              <button class="arrow" id="next" aria-label="Next ${view==='month'?'month':view==='week'?'week':'day'}">›</button>
+            </div>
+            <span class="sched-title">${title}</span>
+            <label class="sched-jump" for="dateJump"><span>Jump to</span><input class="sched-date-jump" id="dateJump" type="date" value="${OF.escape(cursor)}"></label>
           </div>
-          <button class="arrow" id="prev" aria-label="Previous ${view==='month'?'month':view==='week'?'week':'day'}">‹</button><button class="arrow" id="next" aria-label="Next ${view==='month'?'month':view==='week'?'week':'day'}">›</button>
-          <button class="btn btn-secondary btn-sm" id="today">Today</button>
-          <input class="sched-date-jump" id="dateJump" type="date" value="${OF.escape(cursor)}" aria-label="Jump to schedule date">
-          <button class="btn btn-secondary btn-sm" id="routeBtn" title="Plan routes${OF.hasCap('dispatch.manage')?' and assign nearby stops':''}">${OF.icon('pin',14)} ${OF.hasCap('dispatch.manage')?'Plan &amp; assign':'Plan routes'}</button>
-          <span class="sched-title">${title}</span>
-          ${view==='dispatch'?'':`<select id="techfilter" aria-label="Filter calendar by technician" style="margin-left:auto;max-width:190px"><option value="">All technicians</option></select>`}
-          <div class="segmented ${view==='dispatch'?'hidden':''}" id="viewseg" role="group" aria-label="Calendar view">
-            ${['day','week','month'].map(v=>`<button data-v="${v}" class="${view===v?'active':''}" aria-pressed="${view===v}">${v[0].toUpperCase()+v.slice(1)}</button>`).join('')}
+          <div class="sched-controls">
+            <div class="sched-control"><span class="sched-control-label">Workspace</span><div class="sched-mode segmented" id="modeseg" aria-label="Schedule workspace">
+              <button data-mode="calendar" class="${view!=='dispatch'?'active':''}" aria-pressed="${view!=='dispatch'}">${OF.icon('cal',14)} Calendar</button>
+              <button data-mode="dispatch" class="dispatch-mode-button ${view==='dispatch'?'active':''}" aria-pressed="${view==='dispatch'}">${OF.icon('pin',14)} Dispatch</button>
+            </div></div>
+            ${view==='dispatch'?'':`<div class="sched-control"><span class="sched-control-label">View</span><div class="segmented" id="viewseg" role="group" aria-label="Calendar view">
+              ${['day','week','month'].map(v=>`<button data-v="${v}" class="${view===v?'active':''}" aria-pressed="${view===v}">${v[0].toUpperCase()+v.slice(1)}</button>`).join('')}
+            </div></div>
+            <label class="sched-control sched-tech-control" for="techfilter"><span class="sched-control-label">Rep</span><select id="techfilter" aria-label="Filter calendar by technician"><option value="">All technicians</option></select></label>
+            <button class="btn btn-secondary btn-sm sched-route-button" id="routeBtn" title="Open route planning tools">${OF.icon('pin',14)} Route planner</button>`}
           </div>
         </div>
+        <div class="sched-help" role="note">${OF.icon('user',14)} <span>${interactionHelp}</span></div>
         <div id="body"><div class="loading-page" role="status" aria-label="Loading schedule"><span class="spinner"></span></div></div>`;
       if (!TECHS) {
         try { TECHS = (await OF.get('/api/admin/technicians')).technicians; technicianLoadError=''; }
         catch(error) { TECHS=[]; technicianLoadError=error.message||'Could not load reps.'; }
       }
       if (sequence !== renderSequence) return;
-      if (!dispatchSelectionReady) {
+      if (selectAllRepsAfterReload && !technicianLoadError) {
+        dispatchSelection = new Set((TECHS||[]).map((tech)=>Number(tech.id)));
+        dispatchSelectionReady = true;
+        selectAllRepsAfterReload = false;
+      } else if (!dispatchSelectionReady) {
         const params = new URL(location.href).searchParams;
         const hasRequestedReps = params.has('reps');
         const requested = String(params.get('reps') || '').split(',').map(Number).filter(Boolean);
@@ -677,7 +753,7 @@ const OF = window.OF;
       document.getElementById('next').onclick=()=>{ cursor = view==='month'? addMonth(1): addYmd(cursor,step); render(root); };
       document.getElementById('today').onclick=()=>{ cursor=todayYmd(); render(root); };
       document.getElementById('dateJump').onchange=(event)=>{if(/^\d{4}-\d{2}-\d{2}$/.test(event.target.value)){cursor=event.target.value;render(root);}};
-      document.getElementById('routeBtn').onclick=()=>routeModal();
+      document.getElementById('routeBtn')?.addEventListener('click',()=>routeModal());
       document.querySelectorAll('#modeseg [data-mode]').forEach((button)=>button.onclick=()=>setScheduleView(button.dataset.mode==='dispatch'?'dispatch':lastCalendarView,root));
       document.querySelectorAll('#viewseg [data-v]').forEach(b=>b.onclick=()=>setScheduleView(b.dataset.v,root));
 
@@ -721,7 +797,42 @@ const OF = window.OF;
       const action=OF.hasCap('dispatch.manage')?`<button type="button" class="link-btn sched-assign" data-assign="${a.id}" draggable="false" style="font-size:10px">${lead?'Change':'Assign'}</button>`:'';
       return `<div class="row between" style="font-size:11px;margin-top:3px;gap:5px">${assigned}${action}</div>`;
     }
-    function jobRowSmall(a){ const movable = a.status!=='completed' && a.status!=='canceled'; return `<div class="wc-job${movable?' movable':''}" ${movable?`draggable="true" data-id="${a.id}" data-time="${tzHm(a.scheduled_start)}"`:''} style="border-left-color:${OF.color((((a.technicians||[]).find(t=>t.is_lead)||{}).color)||a.service_color)}" onclick="OF.go('/admin/appointments?id=${a.id}')"><b>${OF.time(a.scheduled_start)}</b> ${OF.escape(a.customer_name)}<div class="muted" style="font-size:11px">${OF.escape(a.service_name||'')}</div>${techTag(a)}</div>`; }
+    function customerButton(a) {
+      return `<button type="button" class="schedule-customer-link" data-customer-id="${a.customer_id}" draggable="false" title="Open ${OF.escape(a.customer_name||'customer')} profile">${OF.escape(a.customer_name||'Customer')}</button>`;
+    }
+    function detailsButton(a) {
+      return `<button type="button" class="schedule-details-button" data-open-appointment="${a.id}" draggable="false" aria-label="Open appointment details for ${OF.escape(a.customer_name||'Customer')}" title="Appointment details">${OF.icon('appointments',11)}<span>Details</span></button>`;
+    }
+    function jobRowSmall(a){
+      const movable = OF.hasCap('appointments.manage') && a.status!=='completed' && a.status!=='canceled';
+      return `<div class="wc-job${movable?' movable':''}" data-appointment-id="${a.id}" ${movable?`draggable="true" data-id="${a.id}" data-time="${tzHm(a.scheduled_start)}"`:''} style="border-left-color:${OF.color(a.service_color)}" title="Open appointment details for ${OF.escape(a.customer_name||'Customer')}"><div class="wc-job-top"><b>${OF.time(a.scheduled_start)}</b><span class="schedule-job-actions">${movable?'<span class="schedule-drag-hint" aria-hidden="true">Drag</span>':''}${detailsButton(a)}</span></div>${customerButton(a)}<div class="muted" style="font-size:11px">${OF.escape(a.service_name||'')}</div>${techTag(a)}</div>`;
+    }
+
+    function bindScheduleInteractions(body) {
+      body.querySelectorAll('.schedule-customer-link').forEach((button)=>{
+        button.addEventListener('pointerdown',(event)=>event.stopPropagation());
+        button.addEventListener('dragstart',(event)=>{event.preventDefault();event.stopPropagation();});
+        button.addEventListener('click',(event)=>{event.preventDefault();event.stopPropagation();openCustomerDetails(button.dataset.customerId);});
+      });
+      body.querySelectorAll('[data-appointment-id]').forEach((card)=>{
+        card.addEventListener('click',(event)=>{
+          if(event.target.closest('button,a,input,select,textarea,label'))return;
+          openAppointmentDetails(card.dataset.appointmentId);
+        });
+      });
+      body.querySelectorAll('[data-open-appointment]').forEach((button)=>button.addEventListener('click',(event)=>{
+        event.preventDefault();event.stopPropagation();openAppointmentDetails(button.dataset.openAppointment);
+      }));
+      body.querySelectorAll('[data-new-appointment-date]').forEach((button)=>button.addEventListener('click',(event)=>{
+        event.stopPropagation();newAppointmentFor(button.dataset.newAppointmentDate);
+      }));
+      body.querySelectorAll('[data-day-open]').forEach((button)=>button.addEventListener('click',()=>{
+        view = 'day';
+        lastCalendarView = 'day';
+        cursor = button.dataset.dayOpen;
+        render(currentRoot);
+      }));
+    }
 
     async function assignModal(appointmentId) {
       if(!OF.hasCap('dispatch.manage'))return;
@@ -752,28 +863,31 @@ const OF = window.OF;
 
     function renderDay(body, appts, meta) {
       const max = loadOf(appts);
-      const head = `<div class="card-head"><h3>${appts.length} appointment${appts.length===1?'':'s'}</h3><span style="margin-left:auto">${capPill(appts.length,max,meta.capacity,meta.closed)}</span></div>`;
-      if (!appts.length) { body.innerHTML = `<div class="card schedule-day-card">${head}<div class="empty"><div class="ic">${OF.icon('schedule',22)}</div><p>${meta.closed?'This day is marked closed.':'Nothing scheduled.'} <a href="/admin/appointments?new=1">Add a job</a>.</p></div></div>`; return; }
+      const canAdd=OF.hasCap('appointments.manage');
+      const head = `<div class="card-head"><h3>${appts.length} appointment${appts.length===1?'':'s'}</h3><div class="actions"><span>${capPill(appts.length,max,meta.capacity,meta.closed)}</span>${canAdd?`<button class="btn btn-primary btn-sm" type="button" data-new-appointment-date="${cursor}">${OF.icon('plus',14)} Add appointment</button>`:''}</div></div>`;
+      if (!appts.length) { body.innerHTML = `<div class="card schedule-day-card">${head}<div class="empty"><div class="ic">${OF.icon('schedule',22)}</div><p>${meta.closed?'This day is marked closed.':'Nothing scheduled yet.'}</p>${canAdd?`<button class="btn btn-secondary btn-sm" type="button" data-new-appointment-date="${cursor}">${OF.icon('plus',14)} Add appointment</button>`:''}</div></div>`; bindScheduleInteractions(body); return; }
       body.innerHTML = `<div class="card schedule-day-card">${head}<div class="card-pad agenda">` + appts.sort((a,b)=>new Date(a.scheduled_start)-new Date(b.scheduled_start)).map(a=>`
         <div class="slot-row"><div class="time">${OF.time(a.scheduled_start)}</div>
-        <div class="job" style="border-left-color:${OF.color(a.service_color)}" onclick="OF.go('/admin/appointments?id=${a.id}')">
-          <div class="row between"><span class="cell-strong">${OF.escape(a.customer_name)}</span>${OF.statusBadge(a.status)}</div>
+        <div class="job" style="border-left-color:${OF.color(a.service_color)}" data-appointment-id="${a.id}" title="Open appointment details for ${OF.escape(a.customer_name||'Customer')}">
+          <div class="row between">${customerButton(a)}<span class="schedule-job-actions">${OF.statusBadge(a.status)}${detailsButton(a)}</span></div>
           <div class="small muted" style="margin-top:3px">${a.service_name?OF.escape(a.service_name):''}${a.service_address?` · ${OF.escape(a.service_address)}`:''}</div>
           ${techTag(a)}
         </div></div>`).join('') + `</div></div>`;
+      bindScheduleInteractions(body);
       bindAssignButtons(body);
     }
 
     function renderWeek(body, cells, byDay, data) {
-      body.innerHTML = `<div class="tiny muted" style="margin:-2px 0 8px">Tip: drag a job to another day to reschedule.</div><div class="week-grid">` + cells.map(d=>{
+      body.innerHTML = `${OF.hasCap('appointments.manage')?'<div class="tiny muted" style="margin:-2px 0 8px">Tip: drag a job to another day to reschedule.</div>':''}<div class="week-grid">` + cells.map(d=>{
         const appts=(byDay[d]||[]).sort((a,b)=>new Date(a.scheduled_start)-new Date(b.scheduled_start));
         const meta=dayMeta(d,data); const max=loadOf(appts); const isToday=d===todayYmd();
         return `<div class="week-col ${meta.closed?'closed':''} ${isToday?'today':''}" data-ymd="${d}">
-          <div class="wc-head" style="cursor:pointer" onclick="window.__schedGo('${d}')"><span>${labelYmd(d,{weekday:'short'})}</span><span>${labelYmd(d,{day:'numeric'})}</span></div>
+          <div class="wc-head"><button class="wc-day-button" type="button" data-day-open="${d}" aria-label="Open ${OF.escape(labelYmd(d,{weekday:'long',month:'long',day:'numeric'}))} day schedule"><span>${labelYmd(d,{weekday:'short'})}</span><strong>${labelYmd(d,{day:'numeric'})}</strong></button>${OF.hasCap('appointments.manage')?`<button class="wc-add-button" type="button" data-new-appointment-date="${d}" aria-label="Add appointment on ${OF.escape(labelYmd(d,{weekday:'long',month:'long',day:'numeric'}))}">${OF.icon('plus',13)}</button>`:''}</div>
           <div class="wc-body">${appts.map(jobRowSmall).join('')||'<span class="muted" style="font-size:11px;padding:4px">—</span>'}</div>
           <div class="wc-foot">${capPill(appts.length,max,meta.capacity,meta.closed)}<span class="muted">cap ${meta.capacity}</span></div>
         </div>`;
       }).join('') + `</div>`;
+      bindScheduleInteractions(body);
       bindAssignButtons(body);
       bindDragDrop(body);
     }
@@ -809,11 +923,12 @@ const OF = window.OF;
         <div class="month-grid">` + cells.map(d=>{
         const appts=byDay[d]||[]; const meta=dayMeta(d,data); const out=!d.startsWith(ymPrefix); const isToday=d===todayYmd(); const max=loadOf(appts);
         const dots = appts.slice(0,5).map(a=>`<span class="m-dot" style="background:${OF.color(a.service_color)}"></span>`).join('');
-        return `<div class="m-cell ${out?'out':''} ${meta.closed?'closed':''} ${isToday?'today':''}" onclick="window.__schedGo('${d}')">
-          <div class="row between"><span class="m-num">${labelYmd(d,{day:'numeric'})}</span>${appts.length?(max>meta.capacity?`<span class="cap-pill" style="background:var(--danger-tint);color:var(--danger)">${appts.length}</span>`:`<span class="cap-pill" style="background:var(--brand-tint);color:var(--brand-700)">${appts.length}</span>`):''}</div>
-          <div class="m-dots">${dots}</div>
-        </div>`;
+        return `<button type="button" class="m-cell ${out?'out':''} ${meta.closed?'closed':''} ${isToday?'today':''}" data-day-open="${d}" aria-label="Open ${OF.escape(labelYmd(d,{weekday:'long',month:'long',day:'numeric'}))}, ${appts.length} appointment${appts.length===1?'':'s'}">
+          <span class="row between"><span class="m-num">${labelYmd(d,{day:'numeric'})}</span>${appts.length?(max>meta.capacity?`<span class="cap-pill" style="background:var(--danger-tint);color:var(--danger)">${appts.length}</span>`:`<span class="cap-pill" style="background:var(--brand-tint);color:var(--brand-700)">${appts.length}</span>`):''}</span>
+          <span class="m-dots">${dots}</span>
+        </button>`;
       }).join('') + `</div>`;
+      bindScheduleInteractions(body);
     }
 
     OF.page({ active:'schedule', title:'Schedule', subtitle:'Calendar, dispatch routes & capacity at a glance', render: async (root, ctx) => {
@@ -821,9 +936,7 @@ const OF = window.OF;
       content?.classList.add('schedule-content-wide');
       root.classList.add('schedule-view-root');
       OF.onCleanup(()=>{content?.classList.remove('schedule-content-wide');destroyDispatchMap();});
-      ctx.setActions(`<a class="btn btn-primary btn-sm" href="/admin/appointments?new=1">${OF.icon('plus',15)} New appointment</a>`);
-      window.render = render; // allow inline onclick handlers to re-render
+      ctx.setActions(OF.hasCap('appointments.manage')?`<button class="btn btn-primary btn-sm" id="scheduleNewAppointment" data-new-appointment type="button">${OF.icon('plus',15)} New appointment</button>`:'');
+      document.getElementById('scheduleNewAppointment')?.addEventListener('click',()=>newAppointmentFor(cursor));
       await render(root);
     }});
-  
-    window.__schedGo = (d) => { view = 'day'; lastCalendarView = 'day'; cursor = d; render(document.getElementById('content')); };

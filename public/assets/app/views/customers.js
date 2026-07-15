@@ -113,10 +113,14 @@ const OF = window.OF;
       list.querySelector('[data-load-more]')?.addEventListener('click', () => refresh(root, { append: true }));
     }
 
-    async function openDrawer(root, id) {
+    async function openDrawer(root, id, { onSaved } = {}) {
       window.__custId = id;
       const d = await OF.get('/api/admin/customers/'+id);
       const c = d.customer;
+      const canCustomers = OF.hasCap('customers.manage');
+      const canAppointments = OF.hasCap('appointments.manage');
+      const canInvoices = OF.hasCap('invoices.manage');
+      const canPlans = OF.hasCap('plans.manage');
       const canPayments = OF.hasCap('payments.manage');
       const canDocuments = OF.hasCap('documents.manage');
       const dr = OF.drawer(`
@@ -126,21 +130,20 @@ const OF = window.OF;
             <div class="stat"><div class="label">Lifetime value</div><div class="value" style="font-size:22px">${OF.money(d.ltvCents)}</div></div>
             <div class="stat"><div class="label">Open balance</div><div class="value" style="font-size:22px">${OF.money(d.balanceCents)}</div></div>
           </div>
-          <div class="row wrap" style="gap:8px;margin-bottom:16px">
-            <a class="btn btn-primary btn-sm" href="/admin/appointments?new=1&customer=${c.id}">${OF.icon('plus',15)} Appointment</a>
-            <a class="btn btn-secondary btn-sm" href="/admin/invoices?new=1&customer=${c.id}">${OF.icon('invoices',15)} Invoice</a>
-            <a class="btn btn-secondary btn-sm" href="/admin/plans?enroll=${c.id}">${OF.icon('recurring',15)} Enroll plan</a>
-            <button class="btn btn-ghost btn-sm" id="portalBtn">Portal link</button>
-            <button class="btn btn-ghost btn-sm" id="editBtn">Edit</button>
-          </div>
-          <div id="editForm" class="hidden card card-pad" style="margin-bottom:16px">
+          ${canAppointments||canInvoices||canPlans||canCustomers?`<div class="row wrap" style="gap:8px;margin-bottom:16px">
+            ${canAppointments?`<a class="btn btn-primary btn-sm" href="/admin/appointments?new=1&customer=${c.id}">${OF.icon('plus',15)} Appointment</a>`:''}
+            ${canInvoices?`<a class="btn btn-secondary btn-sm" href="/admin/invoices?new=1&customer=${c.id}">${OF.icon('invoices',15)} Invoice</a>`:''}
+            ${canPlans?`<a class="btn btn-secondary btn-sm" href="/admin/plans?enroll=${c.id}">${OF.icon('recurring',15)} Enroll plan</a>`:''}
+            ${canCustomers?'<button class="btn btn-ghost btn-sm" id="portalBtn">Portal link</button><button class="btn btn-ghost btn-sm" id="editBtn">Edit</button>':''}
+          </div>`:''}
+          ${canCustomers?`<div id="editForm" class="hidden card card-pad" style="margin-bottom:16px">
             <div class="field"><label>Name</label><input id="e_name" value="${OF.escape(c.name)}"></div>
             <div class="grid cols-2"><div class="field"><label>Email</label><input id="e_email" value="${OF.escape(c.email||'')}"></div><div class="field"><label>Phone</label><input id="e_phone" value="${OF.escape(c.phone||'')}"></div></div>
             <div class="field"><label for="e_addr">Service address *</label><input id="e_addr" value="${OF.escape(c.address||'')}" required autocomplete="street-address" aria-describedby="e_addr_hint"><span class="hint" id="e_addr_hint">A customer must keep a street service address.</span></div>
             <div class="grid cols-3"><div class="field"><label>City</label><input id="e_city" value="${OF.escape(c.city||'')}"></div><div class="field"><label>State</label><input id="e_state" value="${OF.escape(c.state||'')}"></div><div class="field"><label>ZIP</label><input id="e_zip" value="${OF.escape(c.postal_code||'')}"></div></div>
             <div class="field"><label>Notes</label><textarea id="e_notes">${OF.escape(c.notes||'')}</textarea></div>
             <button class="btn btn-primary btn-sm" id="saveCust">Save</button>
-          </div>
+          </div>`:''}
           <div class="card card-pad stack" style="gap:6px;margin-bottom:16px">
             ${c.email?`<div class="row between"><span class="muted">Email</span><span>${OF.escape(c.email)}</span></div>`:''}
             ${c.phone?`<div class="row between"><span class="muted">Phone</span><span>${OF.escape(c.phone)}</span></div>`:''}
@@ -161,13 +164,13 @@ const OF = window.OF;
             <div id="cardsBox"></div>
             ${d.cards.notConfigured?`<p class="tiny muted">Connect Stripe in Settings → Integrations to store cards on file.</p>`:''}
             ${d.cards.mock?`<p class="tiny muted">Demo mode — saved cards are simulated until a live processor is connected.</p>`:''}</div>
-          <div style="margin-bottom:16px"><div class="row between" style="margin-bottom:6px"><span class="muted tiny" style="text-transform:uppercase;letter-spacing:.04em;font-weight:700">Devices &amp; stations</span><button class="btn btn-secondary btn-xs" id="addDevBtn">Add device</button></div>
+          <div style="margin-bottom:16px"><div class="row between" style="margin-bottom:6px"><span class="muted tiny" style="text-transform:uppercase;letter-spacing:.04em;font-weight:700">Devices &amp; stations</span>${canAppointments?'<button class="btn btn-secondary btn-xs" id="addDevBtn">Add device</button>':''}</div>
             <div id="devBox"><p class="muted small">Loading…</p></div></div>
-          <div style="margin-bottom:16px"><div class="row between" style="margin-bottom:6px"><span class="muted tiny" style="text-transform:uppercase;letter-spacing:.04em;font-weight:700">Properties &amp; units</span><button class="btn btn-secondary btn-xs" id="addPropBtn">Add property</button></div>
+          <div style="margin-bottom:16px"><div class="row between" style="margin-bottom:6px"><span class="muted tiny" style="text-transform:uppercase;letter-spacing:.04em;font-weight:700">Properties &amp; units</span>${canCustomers?'<button class="btn btn-secondary btn-xs" id="addPropBtn">Add property</button>':''}</div>
             <div id="propBox"><p class="muted small">Loading…</p></div></div>
         </div>`, { wide:true });
       async function loadProps(){ const r=await OF.get('/api/admin/properties?customerId='+id); const box=dr.q('#propBox'); if(!box)return;
-        box.innerHTML = r.properties.length? r.properties.map(p=>`<div class="row between" style="padding:7px 0;border-bottom:1px solid var(--line-2)"><div><div class="cell-strong" style="font-size:14px">${OF.escape(p.name)}</div><div class="tiny muted">${OF.escape([p.address,p.city,p.state].filter(Boolean).join(', '))||'—'} · ${p.unit_count} unit${p.unit_count===1?'':'s'}</div></div><button class="link-btn" data-prop="${p.id}" data-name="${OF.escape(p.name)}">Units</button></div>`).join('') : '<p class="muted small">No properties. Add one for multi-unit buildings.</p>';
+        box.innerHTML = r.properties.length? r.properties.map(p=>`<div class="row between" style="padding:7px 0;border-bottom:1px solid var(--line-2)"><div><div class="cell-strong" style="font-size:14px">${OF.escape(p.name)}</div><div class="tiny muted">${OF.escape([p.address,p.city,p.state].filter(Boolean).join(', '))||'—'} · ${p.unit_count} unit${p.unit_count===1?'':'s'}</div></div>${canCustomers?`<button class="link-btn" data-prop="${p.id}" data-name="${OF.escape(p.name)}">Units</button>`:''}</div>`).join('') : '<p class="muted small">No properties. Add one for multi-unit buildings.</p>';
         box.querySelectorAll('[data-prop]').forEach(b=>b.onclick=()=>propertyModal(b.dataset.prop, b.dataset.name)); }
       dr.q('#addPropBtn')?.addEventListener('click', ()=>propertyAddModal(id, ()=>loadProps()));
       loadProps();
@@ -193,19 +196,26 @@ const OF = window.OF;
       dr.q('#cardLinkBtn')?.addEventListener('click', async()=>{ const r=await OF.post(`/api/admin/customers/${id}/card-link`); navigator.clipboard?.writeText(r.url); OF.toast('Card link copied — text or email it to the customer','ok'); });
       dr.q('#wdiiDocBtn')?.addEventListener('click', (event) => downloadCustomerDocument(c.id, { type: 'wdii' }, event.currentTarget));
       dr.q('#serviceAgreementBtn')?.addEventListener('click', () => serviceAgreementModal(c, d.subscriptions));
-      dr.q('#editBtn').onclick=()=>dr.q('#editForm').classList.toggle('hidden');
-      dr.q('#portalBtn').onclick=async()=>{ const r=await OF.post(`/api/admin/customers/${id}/portal-link`); navigator.clipboard?.writeText(r.url); OF.toast('Portal link copied — share it with the customer','ok'); };
-      dr.q('#saveCust').onclick=async()=>{
+      dr.q('#editBtn')?.addEventListener('click',()=>dr.q('#editForm').classList.toggle('hidden'));
+      dr.q('#portalBtn')?.addEventListener('click',async()=>{ const r=await OF.post(`/api/admin/customers/${id}/portal-link`); navigator.clipboard?.writeText(r.url); OF.toast('Portal link copied — share it with the customer','ok'); });
+      dr.q('#saveCust')?.addEventListener('click',async()=>{
         const address = dr.q('#e_addr').value.trim();
         if (!address) { dr.q('#e_addr').setAttribute('aria-invalid','true'); dr.q('#e_addr').focus(); return OF.toast('Service address is required','error'); }
         try {
           await OF.patch('/api/admin/customers/'+id,{name:dr.q('#e_name').value,email:dr.q('#e_email').value,phone:dr.q('#e_phone').value,address,city:dr.q('#e_city').value,state:dr.q('#e_state').value,postalCode:dr.q('#e_zip').value,notes:dr.q('#e_notes').value});
-          OF.toast('Saved','ok'); dr.close(); refresh(root);
+          OF.toast('Saved','ok'); dr.close();
+          if (onSaved) await onSaved();
+          else if (root) refresh(root);
         } catch (error) { OF.toast(error.message,'error'); }
-      };
-      dr.q('#e_addr').addEventListener('input', (event)=>event.target.removeAttribute('aria-invalid'));
+      });
+      dr.q('#e_addr')?.addEventListener('input', (event)=>event.target.removeAttribute('aria-invalid'));
     }
     function section(title, inner){ return `<div style="margin-bottom:16px"><div class="muted tiny" style="text-transform:uppercase;letter-spacing:.04em;font-weight:700;margin-bottom:6px">${title}</div>${inner||'<p class="muted small">None yet.</p>'}</div>`; }
+
+    // Customer details are useful throughout the admin app (especially from
+    // Schedule). Keep the current route in place and reuse this same drawer
+    // instead of sending people through the Customers page first.
+    OF.openCustomerDrawer = (id, options = {}) => openDrawer(null, id, options);
 
     function deviceModal(customerId, onSaved) {
       const m = OF.modal(`<div class="modal-head"><h3>Add device / station</h3><button class="x" data-close>&times;</button></div>
