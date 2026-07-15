@@ -14,8 +14,10 @@ const assert = (await import('node:assert')).strict;
 const { fileURLToPath } = await import('node:url');
 const { runMigrations } = await import('./migrate.js');
 const { runSeed } = await import('./seed.js');
+const { seedDemoAppointments } = await import('./seed-demo-appointments.js');
 const { createApp } = await import('../src/app.js');
 const { closeDb, query } = await import('../src/lib/db.js');
+const { zonedWallTimeToUtc } = await import('../src/lib/dates.js');
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const base = process.env.BASE_URL;
@@ -37,6 +39,10 @@ async function check(name, fn) {
   catch (err) { failures.push({ name, err }); console.log(`  ✗ ${name} — ${err.message}`); }
 }
 const ymd = (d) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+const addYmd = (date, days) => {
+  const [year, month, day] = String(date).split('-').map(Number);
+  return new Date(Date.UTC(year, month - 1, day + days, 12)).toISOString().slice(0, 10);
+};
 
 async function firstAvailableSlot(serviceId, { startDays = 1, searchDays = 14 } = {}) {
   for (let offset = startDays; offset < startDays + searchDays; offset += 1) {
@@ -100,6 +106,101 @@ async function main() {
   const server = http.createServer(createApp());
   await new Promise((r) => server.listen(Number(process.env.PORT), r));
   console.log(`\nRunning smoke tests against ${base}\n`);
+
+  let demoFirstDate; let demoLastDate;
+  const demoRows = async () => (await query(
+    `SELECT a.id, a.source, a.customer_id, a.status, a.scheduled_start, a.scheduled_end,
+            a.service_address, a.service_lat, a.service_lng, c.email AS customer_email,
+            aa.technician_id
+       FROM appointments a
+       JOIN customers c ON c.id=a.customer_id AND c.tenant_id=a.tenant_id
+       LEFT JOIN appointment_assignments aa ON aa.appointment_id=a.id AND aa.tenant_id=a.tenant_id
+      WHERE a.tenant_id=1 AND a.source LIKE 'demo.schedule.%'
+      ORDER BY a.scheduled_start, a.id`,
+  )).rows;
+
+  await check('demo schedule seeds 20 map-ready leads for seven days idempotently', async () => {
+    const rows = await demoRows();
+    assert.equal(rows.length, 140);
+    assert.equal(new Set(rows.map((row) => row.source)).size, 140, 'fixture sources are unique');
+    assert.equal(new Set(rows.map((row) => Number(row.customer_id))).size, 140, 'fixture customers are unique');
+    assert.equal(new Set(rows.map((row) => row.customer_email)).size, 140, 'fixture emails are unique');
+    assert.ok(rows.every((row) => row.status === 'scheduled'));
+    assert.ok(rows.every((row) => row.service_address && row.service_lat != null && row.service_lng != null), 'every fixture is map-ready');
+
+    const byDay = new Map();
+    for (const row of rows) {
+      const date = ymd(new Date(row.scheduled_start));
+      if (!byDay.has(date)) byDay.set(date, []);
+      byDay.get(date).push(row);
+    }
+    const dates = [...byDay.keys()].sort();
+    assert.equal(dates.length, 7);
+    demoFirstDate = dates[0]; demoLastDate = dates.at(-1);
+    assert.equal(demoFirstDate, ymd(new Date()), 'fixtures begin today in the tenant timezone');
+    assert.equal(demoLastDate, addYmd(demoFirstDate, 6));
+
+    const tenant = (await query('SELECT timezone, settings FROM tenants WHERE id=1')).rows[0];
+    const rangeStart = zonedWallTimeToUtc(demoFirstDate, '00:00', tenant.timezone);
+    const rangeEnd = zonedWallTimeToUtc(addYmd(demoLastDate, 1), '00:00', tenant.timezone);
+    const allScheduleRows = (await query(
+      `SELECT scheduled_start, scheduled_end FROM appointments
+        WHERE tenant_id=1 AND status IN ('scheduled','completed')
+          AND scheduled_start < $2 AND scheduled_end > $1`,
+      [rangeStart, rangeEnd],
+    )).rows;
+    const allByDay = new Map();
+    for (const row of allScheduleRows) {
+      const date = ymd(new Date(row.scheduled_start));
+      if (!allByDay.has(date)) allByDay.set(date, []);
+      allByDay.get(date).push(row);
+    }
+    const configuredCapacity = Number(tenant.settings.availability.capacityPerSlot);
+
+    for (let dayIndex = 0; dayIndex < dates.length; dayIndex += 1) {
+      assert.equal(dates[dayIndex], addYmd(demoFirstDate, dayIndex), 'fixture dates are consecutive');
+      const dayRows = byDay.get(dates[dayIndex]);
+      assert.equal(dayRows.length, 20);
+      assert.equal(dayRows.filter((row) => row.technician_id != null).length, 15);
+      assert.equal(dayRows.filter((row) => row.technician_id == null).length, 5);
+
+      const events = dayRows.flatMap((row) => [
+        [new Date(row.scheduled_start).getTime(), 1],
+        [new Date(row.scheduled_end).getTime(), -1],
+      ]).sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+      let concurrent = 0; let peak = 0;
+      for (const [, change] of events) { concurrent += change; peak = Math.max(peak, concurrent); }
+      assert.ok(peak <= 2, `fixture concurrency is ${peak} on ${dates[dayIndex]}`);
+
+      const tenantEvents = (allByDay.get(dates[dayIndex]) || []).flatMap((row) => [
+        [new Date(row.scheduled_start).getTime(), 1],
+        [new Date(row.scheduled_end).getTime(), -1],
+      ]).sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+      concurrent = 0; peak = 0;
+      for (const [, change] of tenantEvents) { concurrent += change; peak = Math.max(peak, concurrent); }
+      assert.ok(peak <= configuredCapacity, `tenant schedule concurrency is ${peak}/${configuredCapacity} on ${dates[dayIndex]}`);
+    }
+
+    const byTechnician = new Map();
+    for (const row of rows.filter((item) => item.technician_id != null)) {
+      const key = Number(row.technician_id);
+      if (!byTechnician.has(key)) byTechnician.set(key, []);
+      byTechnician.get(key).push(row);
+    }
+    for (const appointments of byTechnician.values()) {
+      appointments.sort((a, b) => new Date(a.scheduled_start) - new Date(b.scheduled_start));
+      for (let index = 1; index < appointments.length; index += 1) {
+        assert.ok(new Date(appointments[index - 1].scheduled_end) <= new Date(appointments[index].scheduled_start), 'demo rep appointments do not overlap');
+      }
+    }
+
+    const beforeIds = Object.fromEntries(rows.map((row) => [row.source, Number(row.id)]));
+    const refreshed = await seedDemoAppointments(1, { startDate: demoFirstDate });
+    assert.deepEqual(refreshed, { count: 140, firstDate: demoFirstDate, lastDate: demoLastDate });
+    const after = await demoRows();
+    assert.equal(after.length, 140);
+    assert.deepEqual(Object.fromEntries(after.map((row) => [row.source, Number(row.id)])), beforeIds, 'refresh preserves fixture IDs');
+  });
 
   await check('root/public mirrored files match', checkRootMirrors);
   await check('admin app assets revalidate after deployments', async () => {
@@ -165,6 +266,39 @@ async function main() {
   await check('bad login is rejected', async () => { const { status } = await call('/api/admin/auth/login', { auth: false, method: 'POST', body: { username: 'admin', password: 'nope' } }); assert.equal(status, 401); });
   await check('good login sets a session', async () => { const { data } = await call('/api/admin/auth/login', { auth: false, method: 'POST', body: { username: 'admin', password: 'changeme123' } }); assert.ok(data.ok); });
   await check('auth gate blocks without cookie', async () => { const { status } = await call('/api/admin/dashboard', { auth: false }); assert.equal(status, 401); });
+  await check('calendar and route planner expose the complete demo fixture', async () => {
+    const timezone = (await query('SELECT timezone FROM tenants WHERE id=1')).rows[0].timezone;
+    const from = zonedWallTimeToUtc(demoFirstDate, '00:00', timezone).toISOString();
+    const to = zonedWallTimeToUtc(addYmd(demoLastDate, 1), '00:00', timezone).toISOString();
+    const calendar = (await call(`/api/admin/appointments/calendar?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`)).data;
+    const fixtures = calendar.appointments.filter((appointment) => appointment.source?.startsWith('demo.schedule.'));
+    assert.equal(fixtures.length, 140);
+
+    const routeDate = addYmd(demoFirstDate, 1);
+    const dayIds = new Set(fixtures.filter((appointment) => ymd(new Date(appointment.scheduled_start)) === routeDate).map((appointment) => Number(appointment.id)));
+    assert.equal(dayIds.size, 20);
+    const demoTechnicians = (await query("SELECT id FROM technicians WHERE tenant_id=1 AND email LIKE 'demo.rep.%@example.com' ORDER BY id")).rows;
+    assert.equal(demoTechnicians.length, 3);
+    const ids = demoTechnicians.map((technician) => technician.id).join(',');
+    const plan = (await call(`/api/admin/routing/plan?date=${routeDate}&technicianIds=${ids}&includeUnassigned=1`)).data;
+    const routedFixtureIds = new Set(plan.routes.flatMap((route) => route.stops || []).map((stop) => Number(stop.appointmentId)).filter((id) => dayIds.has(id)));
+    assert.equal(routedFixtureIds.size, 20);
+    assert.equal(plan.unassignedCount, 5);
+    assert.equal(plan.proposals.length, 5);
+    assert.equal(plan.unplaced.length, 0);
+  });
+  await check('daily schedule reviews validate and persist the guided closeout', async () => {
+    const invalid = await call('/api/admin/routing/review', { method: 'POST', body: { startDate: demoLastDate, endDate: demoFirstDate, issueCounts: {} } });
+    assert.equal(invalid.status, 400);
+    const issueCounts = { pendingRequests: 1, unassigned: 35, missingCoordinates: 0, overCapacityDays: 0 };
+    const saved = await call('/api/admin/routing/review', { method: 'POST', body: { startDate: demoFirstDate, endDate: demoLastDate, issueCounts } });
+    assert.equal(saved.status, 200);
+    assert.equal(saved.data.review.startDate, demoFirstDate);
+    assert.deepEqual(saved.data.review.issueCounts, issueCounts);
+    const latest = await call('/api/admin/routing/review');
+    assert.equal(latest.data.review.id, saved.data.review.id);
+    assert.equal(latest.data.review.reviewedBy, 'admin');
+  });
 
   // --- Customer address requirements ---
   let addressedCustomerId;
@@ -241,7 +375,14 @@ async function main() {
 
   // --- Appointments ---
   let reqId;
-  await check('appointments list + counts', async () => { const { data } = await call('/api/admin/appointments'); assert.ok(data.counts.all >= 4); reqId = data.appointments.find((a) => a.status === 'requested')?.id; });
+  await check('appointments list + counts', async () => {
+    const [all, requested] = await Promise.all([
+      call('/api/admin/appointments'),
+      call('/api/admin/appointments?status=requested&limit=1'),
+    ]);
+    assert.ok(all.data.counts.all >= 4);
+    reqId = requested.data.appointments[0]?.id;
+  });
   await check('confirm rejects malformed or impossible manual times', async () => {
     assert.ok(reqId);
     for (const body of [
@@ -1216,7 +1357,8 @@ async function main() {
     assert.equal(a1.id, a2.id);
   });
   await check('[codex] review request rejects mismatched customer/appointment', async () => {
-    const appt = (await call('/api/admin/appointments')).data.appointments.find((a) => a.customer_id === 1);
+    const appt = (await query('SELECT id, customer_id FROM appointments WHERE tenant_id=1 AND customer_id=1 ORDER BY id LIMIT 1')).rows[0];
+    assert.ok(appt, 'customer 1 needs a seeded appointment');
     const otherCustomer = appt.customer_id === 2 ? 1 : 2;
     const r = await call('/api/admin/reviews/request', { method: 'POST', body: { customerId: otherCustomer, appointmentId: appt.id } });
     assert.equal(r.status, 400);
@@ -1411,7 +1553,7 @@ async function main() {
     await call('/api/admin/settings/settings', { method: 'PUT', body: { booking: { defaultMode: 'instant' }, availability: { granularity: 'windows', windows: [{ label: 'Morning', start: '08:00', end: '12:00' }, { label: 'Afternoon', start: '12:00', end: '16:00' }] } } });
     const svc = (await call('/api/admin/appointments/meta/services')).data.services.find((s) => /General Pest/.test(s.name));
     let date; let av;
-    for (const off of [3, 4, 5, 6, 7, 8]) { date = ymd(new Date(Date.now() + off * 86400000)); av = await call(`/api/public/default/availability?serviceId=${svc.id}&date=${date}`, { auth: false }); if (av.data.slots.length) break; }
+    for (const off of [3, 4, 5, 6, 7, 8]) { date = ymd(new Date(Date.now() + off * 86400000)); av = await call(`/api/public/default/availability?serviceId=${svc.id}&date=${date}`, { auth: false }); if (av.data.slots.some((slot) => slot.available)) break; }
     assert.equal(av.data.granularity, 'windows');
     const w = av.data.slots.find((s) => s.kind === 'window' && s.available);
     assert.ok(w && w.rangeLabel && w.label, 'window option has a label + time range');

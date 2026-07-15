@@ -40,7 +40,7 @@ npm run setup     # runs migrations + seeds the demo tenant
 npm start         # http://localhost:3000
 ```
 
-The zero-setup PGlite seed also creates 20 map-ready appointments for the next Monday through Friday. Run `npm run seed:appointments` whenever you want to add or refresh that rolling example schedule in another development database. Production mode refuses the command unless you explicitly append `-- --allow-production`.
+The zero-setup PGlite seed also creates 140 map-ready example appointments: 20 per day from today through the next six days. Each day includes 15 assigned jobs and five unassigned leads for practicing the dispatch workflow. Run `npm run seed:appointments` whenever you want to refresh that rolling example schedule in another development database. The fixture is idempotent, and production mode refuses the command unless you explicitly append `-- --allow-production`.
 
 With no `DATABASE_URL`, OARFlow uses an in-process Postgres (PGlite) stored in
 `./.pglite` — nothing else to install.

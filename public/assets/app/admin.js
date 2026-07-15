@@ -3,7 +3,7 @@
    primitives (toast/modal/drawer/confirm) and formatting helpers. */
 (function () {
   const OF = {};
-  const ADMIN_ASSET_VERSION = '20260714-1';
+  const ADMIN_ASSET_VERSION = '20260715-4';
   OF.adminAssetVersion = ADMIN_ASSET_VERSION;
   OF.adminAssetUrl = (path) => `${path}${String(path).includes('?') ? '&' : '?'}v=${encodeURIComponent(ADMIN_ASSET_VERSION)}`;
   OF.session = null;
@@ -46,6 +46,25 @@
     if (/^#[0-9a-fA-F]{6}$/.test(v)) return v.toLowerCase();
     return fallback;
   };
+  const mixHex = (source, target, weight) => {
+    const amount = Math.max(0, Math.min(1, Number(weight) || 0));
+    const channels = (hex) => [1, 3, 5].map((start) => parseInt(hex.slice(start, start + 2), 16));
+    const from = channels(source); const to = channels(target);
+    return '#' + from.map((channel, index) => Math.round(channel + (to[index] - channel) * amount).toString(16).padStart(2, '0')).join('');
+  };
+  function applyTenantBrand(target, tenant = OF.tenant) {
+    if (!target?.style) return;
+    const primary = OF.color(tenant?.branding?.primaryColor, '#0e7c4b');
+    const theme = {
+      '--brand': primary,
+      '--brand-600': mixHex(primary, '#000000', .12),
+      '--brand-700': mixHex(primary, '#000000', .26),
+      '--brand-tint': mixHex(primary, '#ffffff', .90),
+      '--brand-tint-2': mixHex(primary, '#ffffff', .95),
+    };
+    Object.entries(theme).forEach(([property, value]) => target.style.setProperty(property, value));
+  }
+  OF.applyTenantBrand = () => applyTenantBrand(document.getElementById('app') || document.documentElement);
 
   // --- Formatting ---------------------------------------------------------
   OF.money = (cents, opts = {}) => {
@@ -619,6 +638,7 @@
     const active = matchRoute(location.pathname).view;
     if (cached && cached.tenant) {
       OF.session = cached.session; OF.tenant = cached.tenant;
+      applyTenantBrand(root, OF.tenant);
       root.innerHTML = renderShell(active, cached.counts || {});
       bindShell();
     }
@@ -627,6 +647,7 @@
     catch { OF.clearCache(); location.href = '/admin/login?next=' + encodeURIComponent(location.pathname + location.search); return; }
     const cachedShell = cached && cached.tenant ? shellSignature(cached.session, cached.tenant) : null;
     OF.session = s.user; OF.tenant = s.tenant;
+    applyTenantBrand(root, OF.tenant);
     const counts = (cached && cached.counts) || {};
     writeCache({ session: s.user, tenant: s.tenant, counts });
     if (!(cached && cached.tenant) || cachedShell !== shellSignature(s.user, s.tenant)) { root.innerHTML = renderShell(active, counts); bindShell(); }

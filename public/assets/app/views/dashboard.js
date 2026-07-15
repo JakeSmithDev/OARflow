@@ -195,6 +195,17 @@ function estimateCard(estimates) {
 
 function dashboardStyles() {
   return `<style>
+    .dashboard-plan-cta { position:relative; isolation:isolate; display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; gap:18px; overflow:hidden; margin-bottom:18px; padding:20px 22px; border-color:color-mix(in srgb,var(--brand) 24%,var(--line)); background:linear-gradient(120deg,color-mix(in srgb,var(--brand-tint-2) 82%,#fff),color-mix(in srgb,var(--brand-tint) 78%,#fff)); box-shadow:0 12px 30px color-mix(in srgb,var(--brand) 9%,transparent); }
+    .dashboard-plan-cta::after { content:''; position:absolute; z-index:-1; width:260px; height:260px; right:-92px; top:-150px; border-radius:50%; background:color-mix(in srgb,var(--brand) 10%,transparent); }
+    .dashboard-plan-icon { display:grid; place-items:center; width:48px; height:48px; border:1px solid color-mix(in srgb,var(--brand) 20%,transparent); border-radius:14px; background:rgba(255,255,255,.84); color:var(--brand-700); box-shadow:var(--shadow-sm); }
+    .dashboard-plan-copy { min-width:0; }
+    .dashboard-plan-eyebrow { display:block; margin-bottom:3px; color:var(--brand-700); font-size:10px; font-weight:800; letter-spacing:.08em; text-transform:uppercase; }
+    .dashboard-plan-copy h2 { font-size:20px; letter-spacing:-.02em; }
+    .dashboard-plan-copy p { max-width:670px; margin:4px 0 0; color:var(--ink-2); font-size:13px; }
+    .dashboard-plan-button { position:relative; min-height:42px; padding-inline:17px; box-shadow:0 8px 18px color-mix(in srgb,var(--brand) 22%,transparent); transition:background .15s,box-shadow .15s,transform .15s; }
+    .dashboard-plan-button:hover { transform:translateY(-1px); box-shadow:0 11px 23px color-mix(in srgb,var(--brand) 26%,transparent); }
+    .dashboard-plan-arrow { font-size:17px; line-height:1; transition:transform .15s; }
+    .dashboard-plan-button:hover .dashboard-plan-arrow { transform:translateX(2px); }
     .dashboard-range { display:flex; align-items:flex-end; justify-content:space-between; gap:18px; margin-bottom:18px; }
     .dashboard-range-copy strong { display:block; font-size:15px; }
     .dashboard-range-fields { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
@@ -239,6 +250,8 @@ function dashboardStyles() {
     .dashboard-section-title { display:flex; align-items:baseline; justify-content:space-between; margin:4px 0 12px; }
     .dashboard-section-title h2 { font-size:16px; }
     @media (max-width:760px) {
+      .dashboard-plan-cta { grid-template-columns:auto minmax(0,1fr); padding:18px; }
+      .dashboard-plan-button { grid-column:1/-1; width:100%; }
       .dashboard-range { align-items:stretch; flex-direction:column; }
       .dashboard-range-fields { display:grid; grid-template-columns:1fr 1fr; }
       .dashboard-range-fields select { grid-column:1/-1; width:100%; }
@@ -248,6 +261,14 @@ function dashboardStyles() {
     }
     @media (max-width:430px) { .dashboard-donut-wrap { grid-template-columns:96px minmax(0,1fr); gap:12px; } .dashboard-donut { width:96px; } }
   </style>`;
+}
+
+function planningCta() {
+  return `<section class="card dashboard-plan-cta" aria-labelledby="dashboardPlanTitle">
+    <span class="dashboard-plan-icon" aria-hidden="true">${OF.icon('cal', 22)}</span>
+    <div class="dashboard-plan-copy"><span class="dashboard-plan-eyebrow">Daily planning</span><h2 id="dashboardPlanTitle">Plan the next 7 days</h2><p>Review incoming work, balance capacity, assign reps, and finish with route-ready days.</p></div>
+    <a class="btn btn-primary dashboard-plan-button" href="/admin/schedule?plan=1">Start planning <span class="dashboard-plan-arrow" aria-hidden="true">&rarr;</span></a>
+  </section>`;
 }
 
 function rangeToolbar(range) {
@@ -299,9 +320,10 @@ function renderDashboard(root, d) {
   if (a.estimates.visible) mixCards.push(estimateCard(a.estimates));
   const mixes = `<div class="dashboard-mix-grid">${mixCards.join('')}</div>`;
 
+  const todayPreview=d.today.slice(0,8); const todayRemaining=Math.max(0,d.today.length-todayPreview.length);
   const todayCard = `<div class="card">
     <div class="card-head"><h3>Today's schedule</h3><div class="actions"><a class="link-btn" href="/admin/schedule">Open schedule →</a></div></div>
-    ${d.today.length ? `<div class="table-wrap"><table class="tbl"><tbody>${d.today.map(apptRow).join('')}</tbody></table></div>`
+    ${d.today.length ? `<div class="table-wrap"><table class="tbl"><tbody>${todayPreview.map(apptRow).join('')}</tbody></table></div>${todayRemaining?`<div class="card-pad center small muted" style="padding-block:12px"><a href="/admin/schedule?view=day">View ${todayRemaining} more job${todayRemaining===1?'':'s'} on today’s run sheet →</a></div>`:''}`
       : `<div class="empty"><div class="ic">${OF.icon('schedule', 22)}</div><p>No appointments scheduled today.</p></div>`}
   </div>`;
 
@@ -341,7 +363,7 @@ function renderDashboard(root, d) {
       </div>`).join('') : `<div class="empty"><div class="ic">${OF.icon('followups', 22)}</div><p>No follow-ups due.</p></div>`}
   </div>`;
 
-  root.innerHTML = dashboardStyles() + rangeToolbar(a.range) + tiles + charts + mixes +
+  root.innerHTML = dashboardStyles() + planningCta() + rangeToolbar(a.range) + tiles + charts + mixes +
     '<div class="dashboard-section-title"><h2>Today & upcoming</h2><span class="small muted">Your live operations queue</span></div>' +
     `<div class="grid" style="grid-template-columns:1.55fr 1fr;align-items:start"><div class="stack">${todayCard}${upcomingCard}</div><div class="stack">${requestsCard}${outstandingCard}${followupsCard}</div></div>`;
 }
