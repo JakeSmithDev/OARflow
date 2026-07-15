@@ -3,6 +3,9 @@
    primitives (toast/modal/drawer/confirm) and formatting helpers. */
 (function () {
   const OF = {};
+  const ADMIN_ASSET_VERSION = '20260714-1';
+  OF.adminAssetVersion = ADMIN_ASSET_VERSION;
+  OF.adminAssetUrl = (path) => `${path}${String(path).includes('?') ? '&' : '?'}v=${encodeURIComponent(ADMIN_ASSET_VERSION)}`;
   OF.session = null;
   OF.tenant = null;
 
@@ -561,7 +564,7 @@
     const loading = '<div class="loading-page"><span class="spinner"></span></div>';
     content.innerHTML = loading;
     if (!OF._views[route.view] && route.file) {
-      try { await import(`/assets/app/views/${route.file}.js`); }
+      try { await import(OF.adminAssetUrl(`/assets/app/views/${route.file}.js`)); }
       catch (e) {
         if (seq !== routeSeq) return;
         content.innerHTML = `<div class="empty"><div class="ic">${OF.icon('bell', 22)}</div><p>Couldn't load this page.</p></div>`;

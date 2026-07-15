@@ -30,7 +30,8 @@ const OF = window.OF;
     let dispatchMapGeneration = 0;
 
     async function loadAdminSurface(name, method) {
-      if (typeof OF[method] !== 'function') await import(`/assets/app/views/${name}.js`);
+      const path = `/assets/app/views/${name}.js`;
+      if (typeof OF[method] !== 'function') await import(typeof OF.adminAssetUrl === 'function' ? OF.adminAssetUrl(path) : path);
       if (typeof OF[method] !== 'function') throw new Error('That detail panel is unavailable.');
       return OF[method];
     }
@@ -297,10 +298,13 @@ const OF = window.OF;
       dispatchLeafletMap.remove();
       dispatchLeafletMap=null;
     }
-    function focusTimelineStop(stop, route) {
+    function timelineStopElement(stop, route) {
       const lane=String(route?.technician?.id||stop?.technicianId||'unassigned');
       const id=`dispatch-job-${encodeURIComponent(String(stop?.appointmentId))}-${encodeURIComponent(lane)}`;
-      const job=document.getElementById(id); if(!job)return;
+      return document.getElementById(id);
+    }
+    function focusTimelineStop(stop, route) {
+      const job=timelineStopElement(stop,route); if(!job)return;
       const scroller=job.closest('.dispatch-timeline-scroll');
       if(scroller){
         const laneElement=job.closest('.dispatch-lane');
@@ -309,6 +313,11 @@ const OF = window.OF;
           left:Math.max(0,(laneElement?.offsetLeft||0)-70),
           behavior:'smooth',
         });
+      }
+      if(window.matchMedia?.('(max-width: 1250px)').matches){
+        // In the stacked layout the map and timeline cannot both be visible.
+        // Bring the timeline panel into view before drawing attention to the job.
+        job.closest('.dispatch-calendar-panel')?.scrollIntoView({behavior:'smooth',block:'start'});
       }
       job.focus({preventScroll:true});
       job.classList.remove('map-focus');
@@ -444,12 +453,51 @@ const OF = window.OF;
             });
             const customer=stop.customerName||'Customer';
             const marker=L.marker([point.lat,point.lng],{
-              icon,keyboard:true,title:`Stop ${number}: ${customer}`,alt:`Stop ${number}: ${customer}`,zIndexOffset:100+number,
+              icon,keyboard:true,title:`Stop ${number}: ${customer}. Open stop details.`,alt:`Stop ${number}: ${customer}. Open stop details.`,zIndexOffset:100+number,
             });
             const time=stop.time?OF.time(stop.time):'';
-            marker.bindTooltip(`<div class="dispatch-map-tooltip"><strong>${number}. ${OF.escape(customer)}</strong><span>${OF.escape([time,repName].filter(Boolean).join(' · '))}</span>${stop.address?`<span>${OF.escape(stop.address)}</span>`:''}<small>Click to find on timeline</small></div>`,{direction:'top',offset:[0,-28]});
-            marker.on('click',()=>focusTimelineStop(stop,route));
-            marker.addTo(map); bounds.extend([point.lat,point.lng]);
+            const stopMeta=OF.escape([time,repName].filter(Boolean).join(' · '));
+            marker.bindTooltip(`<div class="dispatch-map-tooltip"><strong>${number}. ${OF.escape(customer)}</strong><span>${stopMeta}</span>${stop.address?`<span>${OF.escape(stop.address)}</span>`:''}<small>Select for stop actions</small></div>`,{direction:'top',offset:[0,-28]});
+            marker.bindPopup(`<div class="dispatch-map-popup">
+              <div class="dispatch-map-popup-title"><span style="--marker:${color}">${number}</span><div><strong>${OF.escape(customer)}</strong><small>${OF.escape(repName)}${proposed?' · Suggested stop':''}</small></div></div>
+              ${time?`<span class="dispatch-map-popup-meta">${OF.icon('clock',13)} ${OF.escape(time)}</span>`:''}
+              ${stop.address?`<span class="dispatch-map-popup-address">${OF.escape(stop.address)}</span>`:''}
+              <div class="dispatch-map-popup-actions"><button type="button" class="btn btn-primary btn-sm" data-dispatch-map-open>Open details</button><button type="button" class="btn btn-secondary btn-sm" data-dispatch-map-find>Find on timeline</button></div>
+            </div>`,{className:'dispatch-map-stop-popup',offset:[0,-30],minWidth:250,maxWidth:280,autoPan:true,keepInView:true});
+            marker.on('popupopen',(event)=>{
+              marker.closeTooltip();
+              stage?.classList.add('has-stop-popup');
+              const markerElement=marker.getElement();
+              markerElement?.setAttribute('aria-expanded','true');
+              markerElement?.querySelector('.dispatch-map-pin')?.classList.add('is-selected');
+              const job=timelineStopElement(stop,route);
+              job?.classList.add('map-selected');
+              const popupElement=event.popup.getElement();
+              popupElement?.setAttribute('role','dialog');
+              popupElement?.setAttribute('aria-label',`Stop ${number} details for ${customer}`);
+              const openButton=popupElement?.querySelector('[data-dispatch-map-open]');
+              const findButton=popupElement?.querySelector('[data-dispatch-map-find]');
+              if(openButton)openButton.onclick=(clickEvent)=>{
+                clickEvent.preventDefault(); clickEvent.stopPropagation();
+                openAppointmentDetails(stop.appointmentId);
+              };
+              if(findButton)findButton.onclick=(clickEvent)=>{
+                clickEvent.preventDefault(); clickEvent.stopPropagation();
+                focusTimelineStop(stop,route);
+              };
+              requestAnimationFrame(()=>openButton?.focus({preventScroll:true}));
+            });
+            marker.on('popupclose',()=>{
+              stage?.classList.remove('has-stop-popup');
+              const markerElement=marker.getElement();
+              markerElement?.setAttribute('aria-expanded','false');
+              markerElement?.querySelector('.dispatch-map-pin')?.classList.remove('is-selected');
+              timelineStopElement(stop,route)?.classList.remove('map-selected');
+            });
+            marker.addTo(map);
+            marker.getElement()?.setAttribute('aria-haspopup','dialog');
+            marker.getElement()?.setAttribute('aria-expanded','false');
+            bounds.extend([point.lat,point.lng]);
           });
         }
 
@@ -510,7 +558,7 @@ const OF = window.OF;
         <div class="dispatch-map-stage">${mapBody}</div>
         ${missing?`<div class="dispatch-map-warning">${OF.icon('bell',14)} ${missing} stop${missing===1?' is':'s are'} missing coordinates; ${missing===1?'its':'their'} route ${missing===1?'line':'lines'} may be incomplete.</div>`:''}
         <div class="dispatch-route-list">${routeList}</div>
-        <div class="dispatch-map-credit">Click a numbered stop to find it on the timeline · Dashed lines show estimated stop order, not turn-by-turn roads.</div>
+        <div class="dispatch-map-credit">Select a numbered stop for details or to find it on the timeline · Dashed lines show estimated stop order, not turn-by-turn roads.</div>
       </section>`;
     }
     function dispatchTimeline(appts, plan) {

@@ -463,6 +463,7 @@ button.plan-card { font:inherit; text-align:left; width:100%; appearance:none; }
 .dispatch-map-pin { display:grid; place-items:center; width:31px; height:31px; border:2px solid #fff; border-radius:50% 50% 50% 7px; transform:rotate(-45deg); background:var(--marker); color:#fff; box-shadow:0 5px 12px rgba(15,23,42,.29),0 0 0 1px rgba(15,23,42,.1); font-size:11px; font-weight:900; font-variant-numeric:tabular-nums; text-shadow:0 1px 1px rgba(15,23,42,.25); }
 .dispatch-map-pin span { transform:rotate(45deg); }
 .dispatch-map-pin.proposed { border-style:dashed; background:color-mix(in srgb,var(--marker) 74%,#fff); }
+.dispatch-map-pin.is-selected { transform:rotate(-45deg) scale(1.14); box-shadow:0 0 0 4px rgba(255,255,255,.92),0 0 0 7px color-mix(in srgb,var(--marker) 46%,transparent),0 8px 18px rgba(15,23,42,.32); }
 .dispatch-map-start { display:flex; align-items:center; gap:6px; width:max-content; min-width:42px; height:34px; padding:4px 7px 4px 5px; border:2px solid #fff; border-radius:18px 18px 18px 6px; background:#0f172a; color:#fff; box-shadow:0 5px 14px rgba(15,23,42,.28),0 0 0 1px rgba(15,23,42,.08); }
 .dispatch-map-start>span { display:grid; place-items:center; width:21px; height:21px; border-radius:50%; background:rgba(255,255,255,.12); }
 .dispatch-map-start>span b { color:inherit; font-size:10px; font-weight:900; }
@@ -480,8 +481,25 @@ button.plan-card { font:inherit; text-align:left; width:100%; appearance:none; }
 .dispatch-map-tooltip strong { overflow:hidden; font-size:11px; text-overflow:ellipsis; white-space:nowrap; }
 .dispatch-map-tooltip span { overflow:hidden; color:var(--muted); font-size:10px; text-overflow:ellipsis; white-space:nowrap; }
 .dispatch-map-tooltip small { margin-top:2px; color:var(--brand-700); font-size:9px; font-weight:750; }
-.dispatch-map-fit { position:absolute; z-index:7; top:12px; left:12px; display:inline-flex; align-items:center; gap:5px; min-height:34px; padding:6px 10px; border:1px solid rgba(148,163,184,.42); border-radius:10px; background:rgba(255,255,255,.94); color:var(--ink-2); box-shadow:0 5px 18px rgba(15,23,42,.12); font:inherit; font-size:10px; font-weight:800; cursor:pointer; backdrop-filter:blur(7px); }
+.leaflet-popup.dispatch-map-stop-popup .leaflet-popup-content-wrapper { overflow:hidden; border:1px solid rgba(148,163,184,.34); border-radius:12px; background:rgba(255,255,255,.985); box-shadow:0 12px 32px rgba(15,23,42,.2); color:var(--ink); }
+.leaflet-popup.dispatch-map-stop-popup .leaflet-popup-content { margin:0; font-family:inherit; line-height:1.3; }
+.leaflet-popup.dispatch-map-stop-popup .leaflet-popup-tip { background:rgba(255,255,255,.985); box-shadow:3px 3px 8px rgba(15,23,42,.12); }
+.dispatch-leaflet-map .leaflet-popup.dispatch-map-stop-popup .leaflet-popup-close-button { z-index:2; top:5px; right:5px; display:grid; place-items:center; width:28px; height:28px; border-radius:8px; color:var(--muted); font-family:inherit; font-size:20px; line-height:1; }
+.dispatch-leaflet-map .leaflet-popup.dispatch-map-stop-popup .leaflet-popup-close-button:hover,.dispatch-leaflet-map .leaflet-popup.dispatch-map-stop-popup .leaflet-popup-close-button:focus { background:var(--surface-2); color:var(--ink); }
+.dispatch-map-popup { display:flex; flex-direction:column; gap:7px; width:250px; padding:12px; text-align:left; }
+.dispatch-map-popup-title { display:flex; align-items:center; gap:9px; min-width:0; padding-right:24px; }
+.dispatch-map-popup-title>span { display:grid; place-items:center; width:27px; height:27px; flex:none; border:2px solid #fff; border-radius:50%; background:var(--marker); color:#fff; box-shadow:0 0 0 1px color-mix(in srgb,var(--marker) 35%,transparent); font-size:10px; font-weight:900; }
+.dispatch-map-popup-title>div { display:flex; flex-direction:column; min-width:0; }
+.dispatch-map-popup-title strong { overflow:hidden; font-size:12px; text-overflow:ellipsis; white-space:nowrap; }
+.dispatch-map-popup-title small { overflow:hidden; color:var(--muted); font-size:10px; text-overflow:ellipsis; white-space:nowrap; }
+.dispatch-map-popup-meta { display:flex; align-items:center; gap:5px; color:var(--ink-2); font-size:11px; font-weight:750; }
+.dispatch-map-popup-address { display:-webkit-box; overflow:hidden; color:var(--muted); font-size:10px; line-height:1.35; -webkit-box-orient:vertical; -webkit-line-clamp:2; }
+.dispatch-map-popup-actions { display:flex; gap:7px; margin-top:3px; }
+.dispatch-map-popup-actions .btn { flex:1; min-height:32px; padding:7px 8px; font-size:11px; }
+.dispatch-map-popup-actions .btn:focus-visible { outline:none; box-shadow:var(--ring); }
+.dispatch-map-fit { position:absolute; z-index:7; top:12px; left:12px; display:inline-flex; align-items:center; gap:5px; min-height:34px; padding:6px 10px; border:1px solid rgba(148,163,184,.42); border-radius:10px; background:rgba(255,255,255,.94); color:var(--ink-2); box-shadow:0 5px 18px rgba(15,23,42,.12); font:inherit; font-size:10px; font-weight:800; cursor:pointer; backdrop-filter:blur(7px); transition:opacity .12s,transform .12s,background .12s,color .12s; }
 .dispatch-map-fit:hover { background:#fff; color:var(--brand-700); }
+.dispatch-map-stage.has-stop-popup .dispatch-map-fit { opacity:0; pointer-events:none; transform:translateY(-4px); }
 .dispatch-map-status { position:absolute; z-index:8; display:flex; align-items:center; justify-content:center; gap:8px; color:var(--muted); font-size:11px; font-weight:700; }
 .dispatch-map-status[hidden] { display:none; }
 .dispatch-map-status.is-loading { inset:0; background:linear-gradient(145deg,rgba(248,250,252,.84),rgba(239,246,243,.84)); backdrop-filter:blur(2px); }
@@ -528,6 +546,7 @@ button.plan-card { font:inherit; text-align:left; width:100%; appearance:none; }
 .dispatch-job.suggested { border-style:dashed; background:repeating-linear-gradient(135deg,color-mix(in srgb,var(--job-color) 11%,#fff) 0 8px,color-mix(in srgb,var(--job-color) 5%,#fff) 8px 16px); }
 .dispatch-job.status-completed { opacity:.68; filter:saturate(.55); }
 .dispatch-job.status-no_show { --job-color:var(--danger)!important; }
+.dispatch-job.map-selected { z-index:6; outline:2px solid color-mix(in srgb,var(--job-color) 72%,#fff); outline-offset:1px; background:color-mix(in srgb,var(--job-color) 16%,#fff); }
 .dispatch-job.map-focus { z-index:7; animation:dispatch-map-focus 1.35s ease both; }
 @keyframes dispatch-map-focus { 0%,100% { box-shadow:0 1px 2px rgba(15,23,42,.08); } 22%,70% { box-shadow:0 0 0 4px color-mix(in srgb,var(--job-color) 22%,transparent),0 7px 20px rgba(15,23,42,.18); } }
 

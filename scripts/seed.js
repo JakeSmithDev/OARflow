@@ -7,6 +7,7 @@ import { hashPassword, randomToken } from '../src/lib/crypto.js';
 import { defaultTenantSettings, defaultEmailTemplates } from '../src/lib/defaults.js';
 import { config } from '../src/config.js';
 import { zonedWallTimeToUtc, ymdInTimeZone, addDays } from '../src/lib/dates.js';
+import { seedDemoAppointments } from './seed-demo-appointments.js';
 
 const TZ = 'America/New_York';
 const j = (v) => JSON.stringify(v);
@@ -222,6 +223,12 @@ export async function runSeed() {
   await seedPlans(tenantId);
   await seedTemplates(tenantId);
   await seedDemoData(tenantId);
+  // Keep production/Postgres bootstrap clean. Developers using a configured
+  // Postgres database can opt in explicitly with `npm run seed:appointments`.
+  if (!config.isProduction && !config.databaseUrl) {
+    const demoSchedule = await seedDemoAppointments(tenantId);
+    console.log(`✓ ${demoSchedule.count} demo appointments ready (${demoSchedule.firstDate} through ${demoSchedule.lastDate}).`);
+  }
   console.log(`✓ Tenant "${config.defaultTenantSlug}" ready (id=${tenantId}, ${fresh ? 'created' : 'existing'}).`);
   console.log(`  Admin login: ${config.bootstrap.username} / ${config.bootstrap.password}`);
 }

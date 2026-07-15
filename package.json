@@ -13,6 +13,7 @@
     "migrate": "node scripts/migrate.js",
     "migrate:status": "node scripts/migrate.js --status",
     "seed": "node scripts/seed.js",
+    "seed:appointments": "node scripts/seed-demo-appointments.js",
     "setup": "node scripts/migrate.js && node scripts/seed.js",
     "encrypt-secrets": "node scripts/encrypt-secrets.js",
     "doctor": "node scripts/doctor.js",

@@ -38,6 +38,16 @@ async function check(name, fn) {
 }
 const ymd = (d) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
 
+async function firstAvailableSlot(serviceId, { startDays = 1, searchDays = 14 } = {}) {
+  for (let offset = startDays; offset < startDays + searchDays; offset += 1) {
+    const date = ymd(new Date(Date.now() + offset * 86_400_000));
+    const { data } = await call(`/api/public/default/availability?serviceId=${serviceId}&date=${date}`, { auth: false });
+    const slot = data?.slots?.find((candidate) => candidate.available);
+    if (slot) return { date, slot, data };
+  }
+  return null;
+}
+
 async function collectFiles(dir, prefix = '') {
   const entries = await fs.readdir(dir, { withFileTypes: true });
   const files = [];
@@ -117,11 +127,11 @@ async function main() {
     svcRequest = data.services.find((s) => s.mode === 'request');
     assert.ok(svcInstant && svcRequest);
   });
-  const date = ymd(new Date(Date.now() + 4 * 86400000));
-  let openSlot;
+  let date; let openSlot;
   await check('availability returns bookable slots', async () => {
-    const { data } = await call(`/api/public/default/availability?serviceId=${svcInstant.id}&date=${date}`, { auth: false });
-    assert.ok(data.ok); openSlot = data.slots.find((s) => s.available); assert.ok(openSlot, 'has an open slot');
+    const available = await firstAvailableSlot(svcInstant.id, { startDays: 4 });
+    assert.ok(available, 'has an open slot within the next two weeks');
+    date = available.date; openSlot = available.slot; assert.ok(available.data.ok);
   });
   await check('month availability returns detailed service days', async () => {
     const [year, month] = date.split('-').map(Number);
@@ -452,16 +462,19 @@ async function main() {
     const rejected = await call('/api/admin/technicians', { method: 'POST', body: { name: 'Wrong Tenant Rep', userId: foreignUser.id } });
     assert.equal(rejected.status, 400); assert.match(rejected.data.error, /does not belong/i);
   });
-  let assignApptId;
+  let assignApptId; let assignApptDate;
   await check('assign a technician to an appointment (lead)', async () => {
-    assignApptId = (await call('/api/admin/appointments')).data.appointments.find((a) => a.scheduled_start).id;
+    const appointment = (await call('/api/admin/appointments')).data.appointments.find((a) => a.scheduled_start);
+    assignApptId = appointment.id;
+    assignApptDate = ymd(new Date(appointment.scheduled_start));
     const { data } = await call(`/api/admin/appointments/${assignApptId}/assign`, { method: 'POST', body: { technicianIds: [techId], leadId: techId } });
     assert.ok(data.ok); assert.equal(data.technicians.length, 1); assert.equal(data.technicians[0].is_lead, true);
   });
   await check('assignment shows on appointment detail + calendar', async () => {
     const detail = (await call('/api/admin/appointments/' + assignApptId)).data;
     assert.equal(detail.technicians[0].name, 'Marco Diaz');
-    const cal = (await call('/api/admin/appointments/calendar?from=2026-01-01T00:00:00.000Z&to=2027-01-01T00:00:00.000Z')).data;
+    const year = Number(assignApptDate.slice(0, 4));
+    const cal = (await call(`/api/admin/appointments/calendar?from=${year}-01-01T00:00:00.000Z&to=${year + 1}-01-01T00:00:00.000Z`)).data;
     const appt = cal.appointments.find((a) => a.id === assignApptId);
     assert.ok(appt.technicians.some((t) => t.id === techId));
   });
@@ -580,12 +593,11 @@ async function main() {
 
   // --- Drag-and-drop reschedule (date+time PATCH used by the calendar) ---
   await check('reschedule appointment by date+time (DnD path)', async () => {
-    const appt = (await call('/api/admin/appointments')).data.appointments.find((a) => a.scheduled_start);
-    assert.ok(appt, 'need a scheduled appointment');
     const newYmd = '2026-07-15';
-    const { data } = await call(`/api/admin/appointments/${appt.id}`, { method: 'PATCH', body: { date: newYmd, time: '09:00', force: true } });
+    const { data } = await call(`/api/admin/appointments/${assignApptId}`, { method: 'PATCH', body: { date: newYmd, time: '09:00', force: true } });
     assert.ok(data.ok, JSON.stringify(data));
-    assert.ok(String(data.appointment.scheduled_start).startsWith('2026-07-15'), `moved to ${data.appointment.scheduled_start}`);
+    assignApptDate = ymd(new Date(data.appointment.scheduled_start));
+    assert.equal(assignApptDate, newYmd, `moved to ${data.appointment.scheduled_start}`);
     assert.equal(data.appointment.status, 'scheduled');
   });
 
@@ -644,7 +656,7 @@ async function main() {
     fieldToken = new URL(data.url).searchParams.get('token'); assert.ok(fieldToken);
   });
   await check("field /me lists the tech's jobs for a day", async () => {
-    const { data } = await call(`/api/field/me?token=${fieldToken}&date=2026-07-15`, { auth: false });
+    const { data } = await call(`/api/field/me?token=${fieldToken}&date=${assignApptDate}`, { auth: false });
     assert.ok(data.ok); assert.equal(data.technician.name, 'Marco Diaz');
     assert.ok(data.jobs.some((j) => j.id === assignApptId), 'assigned job appears on that day');
   });
@@ -821,14 +833,14 @@ async function main() {
   });
   await check('routing requires technicianId + date', async () => {
     assert.equal((await call('/api/admin/routing')).status, 400);
-    assert.equal((await call('/api/admin/routing?technicianId=99999999&date=2026-07-15')).status, 400);
+    assert.equal((await call(`/api/admin/routing?technicianId=99999999&date=${assignApptDate}`)).status, 400);
   });
   await check('route lists the tech stops + builds a maps link', async () => {
     await query('UPDATE appointments SET service_lat=39.0000, service_lng=-76.0000 WHERE id=$1', [assignApptId]);
     await call(`/api/admin/appointments/${assignApptId}`, { method: 'PATCH', body: { serviceAddress: '123 Main St, Baltimore, MD' } });
     const changed = (await call('/api/admin/appointments/' + assignApptId)).data.appointment;
     assert.equal(changed.service_lat, null); assert.equal(changed.service_lng, null);
-    const { data } = await call(`/api/admin/routing?technicianId=${techId}&date=2026-07-15`);
+    const { data } = await call(`/api/admin/routing?technicianId=${techId}&date=${assignApptDate}`);
     assert.ok(data.ok); assert.ok(data.stops.some((s) => s.appointmentId === assignApptId));
     assert.equal(data.geocoder, false); // no geocoder in dev
     assert.ok(data.mapsUrl && data.mapsUrl.includes('google.com/maps/dir'));
@@ -863,7 +875,7 @@ async function main() {
         return { ok: true, json: async () => ({ results: [{ geometry: { location } }] }) };
       };
       const plan = await planRoutes(tenant, {
-        date: '2026-07-15', technicianIds: [techId, Number(fallback.id)], includeUnassigned: false,
+        date: assignApptDate, technicianIds: [techId, Number(fallback.id)], includeUnassigned: false,
       });
       const customRoute = plan.routes.find((route) => route.technician.id === Number(techId));
       const fallbackRoute = plan.routes.find((route) => route.technician.id === Number(fallback.id));
@@ -959,7 +971,7 @@ async function main() {
     await call(`/api/admin/appointments/${candidate.id}`, { method: 'PATCH', body: { status: 'canceled' } });
   });
   await check('field /me includes a route map link', async () => {
-    const { data } = await call(`/api/field/me?token=${fieldToken}&date=2026-07-15`, { auth: false });
+    const { data } = await call(`/api/field/me?token=${fieldToken}&date=${assignApptDate}`, { auth: false });
     assert.ok(data.routeUrl && data.routeUrl.includes('maps'));
     assert.equal(new URL(data.routeUrl).searchParams.get('origin'), marcoRouteStart);
   });
@@ -1524,8 +1536,9 @@ async function main() {
   });
   await check('[fix] capacity guard blocks overbooking', async () => {
     await call('/api/admin/settings/settings', { method: 'PUT', body: { availability: { capacityPerSlot: 1 } } });
-    const d = ymd(new Date(Date.now() + 25 * 86400000));
-    const slot = (await call(`/api/public/default/availability?serviceId=${svcInstant.id}&date=${d}`, { auth: false })).data.slots.find((s) => s.available);
+    const available = await firstAvailableSlot(svcInstant.id, { startDays: 25 });
+    assert.ok(available, 'has a future slot for the capacity test');
+    const { date: d, slot } = available;
     const b1 = await call('/api/public/default/book', { auth: false, method: 'POST', body: { serviceId: svcInstant.id, slot: { start: slot.start, end: slot.end }, customer: { name: 'Cap One', email: 'cap1@example.com', address: '1 st' } } });
     assert.equal(b1.data.status, 'scheduled');
     const b2 = await call('/api/public/default/book', { auth: false, method: 'POST', body: { serviceId: svcInstant.id, slot: { start: slot.start, end: slot.end }, customer: { name: 'Cap Two', email: 'cap2@example.com', address: '2 st' } } });
